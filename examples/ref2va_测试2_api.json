@@ -1,0 +1,262 @@
+{
+  "1": {
+    "inputs": {
+      "file": "d6edc20ac82aa980c9cbd0b05b371f60d12dc8d018492e571b42de0086819c41.mp4",
+      "keep_audio": true,
+      "trim_time": "0",
+      "video-preview": ""
+    },
+    "class_type": "LoadVideo",
+    "_meta": {
+      "title": "Load Ref2VA Reference Video"
+    }
+  },
+  "2": {
+    "inputs": {
+      "video": [
+        "1",
+        0
+      ]
+    },
+    "class_type": "GetVideoComponents",
+    "_meta": {
+      "title": "Get Video Components"
+    }
+  },
+  "3": {
+    "inputs": {
+      "upscale_method": "lanczos",
+      "width": 832,
+      "height": 480,
+      "crop": "disabled",
+      "image": [
+        "2",
+        0
+      ]
+    },
+    "class_type": "ImageScale",
+    "_meta": {
+      "title": "Ref Video Scale · 832x480"
+    }
+  },
+  "4": {
+    "inputs": {
+      "fps": [
+        "2",
+        2
+      ],
+      "bit_depth": 8,
+      "images": [
+        "3",
+        0
+      ]
+    },
+    "class_type": "CreateVideo",
+    "_meta": {
+      "title": "Rebuild Scaled Ref Video"
+    }
+  },
+  "5": {
+    "inputs": {
+      "reference_type": "video",
+      "video": [
+        "4",
+        0
+      ]
+    },
+    "class_type": "MiniMaxH3Ref2VAVideoReference",
+    "_meta": {
+      "title": "MiniMax H3 Ref2VA Video Reference"
+    }
+  },
+  "6": {
+    "inputs": {
+      "audio": "2a48d447b343b38a2c504d5281a0c97c688db0ba87931ed9282c598bd6752454.mp3",
+      "audioUI": ""
+    },
+    "class_type": "LoadAudio",
+    "_meta": {
+      "title": "Load Ref2VA Reference Audio"
+    }
+  },
+  "7": {
+    "inputs": {
+      "audio": [
+        "6",
+        0
+      ],
+      "references": [
+        "5",
+        0
+      ]
+    },
+    "class_type": "MiniMaxH3Ref2VAAudioReference",
+    "_meta": {
+      "title": "MiniMax H3 Ref2VA Audio Reference"
+    }
+  },
+  "8": {
+    "inputs": {
+      "aspect_ratio": "16:9",
+      "duration_seconds": 5,
+      "width": 832,
+      "height": 480,
+      "references": [
+        "7",
+        0
+      ]
+    },
+    "class_type": "MiniMaxH3Ref2VATarget",
+    "_meta": {
+      "title": "Ref2VA Target · 832x480 · 5s"
+    }
+  },
+  "9": {
+    "inputs": {
+      "model_root": "/workspace/ComfyUI/models/diffusers/MiniMax-H3",
+      "dtype": "auto",
+      "text_encoder_path": "qwen3-vl-32b-int8_convrot.safetensors"
+    },
+    "class_type": "MiniMaxH3Ref2VATextEncoderLoader",
+    "_meta": {
+      "title": "Ref2VA Qwen3-VL Loader"
+    }
+  },
+  "10": {
+    "inputs": {
+      "model_root": "/workspace/ComfyUI/models/diffusers/MiniMax-H3",
+      "vae_path": "MiniMax-H3-vae"
+    },
+    "class_type": "MiniMaxH3Ref2VAVAELoader",
+    "_meta": {
+      "title": "Ref2VA Dual VAE Loader"
+    }
+  },
+  "11": {
+    "inputs": {
+      "model_root": "/workspace/ComfyUI/models/diffusers/MiniMax-H3",
+      "dtype": "auto",
+      "transformer_path": "MiniMax-H3-Ref2VA-int8_convrot.safetensors"
+    },
+    "class_type": "MiniMaxH3Ref2VAModelLoader",
+    "_meta": {
+      "title": "Ref2VA DiT Loader"
+    }
+  },
+  "12": {
+    "inputs": {
+      "prompt": "视频中的角色说话：Follow the wind, live free. Leave worries behind, enjoy the moment，音色参考音频1",
+      "h3_text_encoder": [
+        "9",
+        0
+      ],
+      "h3_vae_bundle": [
+        "10",
+        0
+      ],
+      "target": [
+        "8",
+        0
+      ],
+      "references": [
+        "7",
+        0
+      ]
+    },
+    "class_type": "MiniMaxH3Ref2VAEncode",
+    "_meta": {
+      "title": "Ref2VA Encode"
+    }
+  },
+  "13": {
+    "inputs": {
+      "target": [
+        "8",
+        0
+      ]
+    },
+    "class_type": "MiniMaxH3EmptyAVLatent",
+    "_meta": {
+      "title": "MiniMax H3 Empty AV Latent"
+    }
+  },
+  "14": {
+    "inputs": {
+      "seed": 42,
+      "sigma_points": 50,
+      "video_shift": 12,
+      "audio_shift": 3,
+      "accel": "manual-velocity",
+      "cache_dit_rdt": 0.12,
+      "cache_dit_mc": 2,
+      "cache_dit_warmup": 4,
+      "velocity_stride": 4,
+      "h3_model": [
+        "11",
+        0
+      ],
+      "conditioning": [
+        "12",
+        0
+      ],
+      "av_latent": [
+        "13",
+        0
+      ]
+    },
+    "class_type": "MiniMaxH3DualSigmaSampler",
+    "_meta": {
+      "title": "Dual Sigma · manual-velocity"
+    }
+  },
+  "15": {
+    "inputs": {
+      "h3_vae_bundle": [
+        "10",
+        0
+      ],
+      "sampled_av_latent": [
+        "14",
+        0
+      ]
+    },
+    "class_type": "MiniMaxH3DecodeAV",
+    "_meta": {
+      "title": "MiniMax H3 Decode Video + Audio"
+    }
+  },
+  "16": {
+    "inputs": {
+      "fps": 24,
+      "bit_depth": 8,
+      "images": [
+        "15",
+        0
+      ],
+      "audio": [
+        "15",
+        1
+      ]
+    },
+    "class_type": "CreateVideo",
+    "_meta": {
+      "title": "Create Video"
+    }
+  },
+  "17": {
+    "inputs": {
+      "filename_prefix": "minimax_h3/ref2va_video_audio_832x480_velocity",
+      "format": "mp4",
+      "codec": "h264",
+      "fw_video_preview": "",
+      "video": [
+        "16",
+        0
+      ]
+    },
+    "class_type": "SaveVideo",
+    "_meta": {
+      "title": "💾 Save Video"
+    }
+  }
+}

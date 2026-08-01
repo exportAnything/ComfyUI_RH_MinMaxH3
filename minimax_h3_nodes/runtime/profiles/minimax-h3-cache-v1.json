@@ -2,10 +2,11 @@
   "schema_version": 1,
   "profile_id": "minimax-h3-cache-v1",
   "status": "validated",
+  "technique": "cache-dit",
   "source_profile_id": "minimax-h3-h200x4-cache-v1",
   "source_repo": "MiniMax-AI-Dev/Internal-0727-private-3",
   "source_pr": 17,
-  "notes": "Comfy 单机移植：旋钮与官方 Cache-DiT quality profile 一致；证据来自 4×H200 Ulysses=4，不强制本机 GPU/拓扑匹配。",
+  "notes": "面向单卡 Comfy：旋钮与官方 Cache-DiT quality profile 一致。官方约 2× 测于 4×H200，单卡只启用同一 DBCache 旋钮，不做多卡/Ulysses 门禁；需 pip install cache-dit。",
   "workloads": [
     {
       "task": "t2va",

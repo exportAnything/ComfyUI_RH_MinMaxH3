@@ -1109,10 +1109,10 @@ def _require_accelerated_sampler_device(device: Any) -> None:
         )
 
 
-def _prepare_cache_dit_for_sample(
+def _prepare_accel_for_sample(
     transformer: Any,
     *,
-    cache_dit: str | None,
+    accel: str | None,
     task: str,
     target: Mapping[str, Any],
     sigma_points: int,
@@ -1122,28 +1122,82 @@ def _prepare_cache_dit_for_sample(
     cache_dit_rdt: float | None = None,
     cache_dit_mc: int | None = None,
     cache_dit_warmup: int | None = None,
-) -> None:
-    """官方 denoise 前挂 Cache-DiT；off/auto 未命中时无空操作。"""
-    from .runtime.h3_settings import CACHE_DIT_MODE_OFF
-    from .runtime.quality_profiles import resolve_cache_dit_request
+    velocity_stride: int | None = None,
+):
+    """单卡加速：velocity-cache→runtime；cache-dit→挂接；off→None。无多卡门禁。"""
+    from .runtime.h3_settings import ACCEL_OFF
+    from .runtime.quality_profiles import resolve_accel_request
     from .runtime.cache_dit_integration import prepare_transformer_cache_dit
+    from .runtime.velocity_cache import VelocityCacheRuntime
 
-    mode = CACHE_DIT_MODE_OFF if cache_dit is None else str(cache_dit)
-    cfg = resolve_cache_dit_request(
-        mode,
-        task=task,
-        target=target,
-        sigma_points=sigma_points,
-        video_shift=video_shift,
-        audio_shift=audio_shift,
-        rdt=cache_dit_rdt,
-        mc=cache_dit_mc,
-        warmup=cache_dit_warmup,
+    mode = ACCEL_OFF if accel is None else str(accel)
+    resolved = resolve_accel_request(
+        mode, task=task, target=target, sigma_points=sigma_points,
+        video_shift=video_shift, audio_shift=audio_shift, rdt=cache_dit_rdt,
+        mc=cache_dit_mc, warmup=cache_dit_warmup, velocity_stride=velocity_stride,
     )
-    if cfg is not None:
+    if resolved is None:
+        return None
+    if resolved.kind == "velocity-cache" and resolved.velocity is not None:
+        return VelocityCacheRuntime(resolved.velocity).bind(int(num_denoise_steps))
+    if resolved.kind == "cache-dit" and resolved.cache_dit is not None:
         prepare_transformer_cache_dit(
-            transformer, cfg, num_denoise_steps=int(num_denoise_steps)
+            transformer, resolved.cache_dit, num_denoise_steps=int(num_denoise_steps)
         )
+    return None
+
+
+def _prepare_cache_dit_for_sample(transformer: Any, *, cache_dit: str | None, **kw):
+    return _prepare_accel_for_sample(transformer, accel=cache_dit, **kw)
+
+
+
+
+def _dit_velocity_for_step(
+    *,
+    transformer: Any,
+    kwargs: Mapping[str, Any],
+    video_rows: Any,
+    audio_rows: Any,
+    video_update: Any | None,
+    audio_update: Any | None,
+    velocity_rt: Any | None,
+    task: str,
+    step: int,
+):
+    """单步 velocity：可选 whole-step cache（只缓存 update rows，对齐官方）。"""
+    t = _require_torch()
+    if velocity_rt is not None and not velocity_rt.refresh(step):
+        mv, ma = velocity_rt.on_hit(step)
+        _require_finite_step_tensor(mv, task=task, step=step + 1, modality="video", phase="cached velocity")
+        _require_finite_step_tensor(ma, task=task, step=step + 1, modality="audio", phase="cached velocity")
+        return mv, ma
+    with t.inference_mode():
+        velocity_video, velocity_audio = transformer(**kwargs)
+    if tuple(velocity_video.shape) != tuple(video_rows.shape):
+        raise ValueError(
+            "DiT video velocity shape 不匹配："
+            f"{tuple(velocity_video.shape)} vs {tuple(video_rows.shape)}"
+        )
+    if tuple(velocity_audio.shape) != tuple(audio_rows.shape):
+        raise ValueError(
+            "DiT audio velocity shape 不匹配："
+            f"{tuple(velocity_audio.shape)} vs {tuple(audio_rows.shape)}"
+        )
+    _require_finite_step_tensor(
+        velocity_video, task=task, step=step + 1, modality="video", phase="transformer velocity"
+    )
+    _require_finite_step_tensor(
+        velocity_audio, task=task, step=step + 1, modality="audio", phase="transformer velocity"
+    )
+    if video_update is None:
+        mv, ma = velocity_video.float(), velocity_audio.float()
+    else:
+        mv = velocity_video.float()[video_update]
+        ma = velocity_audio.float()[audio_update]
+    if velocity_rt is not None:
+        mv, ma = velocity_rt.on_dit(step, mv, ma)
+    return mv, ma
 
 
 def sample_h3(
@@ -1164,10 +1218,12 @@ def sample_h3(
     audio_reference_noise: float = H3_AUDIO_REF_COND_TIMESTEP,
     progress: Callable[[int, int], None] | None = None,
     check_cancelled: Callable[[], None] | None = None,
+    accel: str | None = None,
     cache_dit: str | None = None,
     cache_dit_rdt: float | None = None,
     cache_dit_mc: int | None = None,
     cache_dit_warmup: int | None = None,
+    velocity_stride: int | None = None,
 ) -> dict[str, Any]:
     """Run task-neutral H3 denoising with frozen visual/audio anchors.
 
@@ -1374,9 +1430,9 @@ def sample_h3(
         for sigma in audio_sigmas[:-1]
     ]
 
-    _prepare_cache_dit_for_sample(
+    velocity_rt = _prepare_accel_for_sample(
         transformer,
-        cache_dit=cache_dit,
+        accel=accel if accel is not None else cache_dit,
         task=task,
         target=clean_latent["target"],
         sigma_points=sigma_points,
@@ -1386,6 +1442,7 @@ def sample_h3(
         cache_dit_rdt=cache_dit_rdt,
         cache_dit_mc=cache_dit_mc,
         cache_dit_warmup=cache_dit_warmup,
+        velocity_stride=velocity_stride,
     )
 
     video_update = branch.update_mask_dev
@@ -1403,36 +1460,21 @@ def sample_h3(
             imgvid_cond_timestep_floor=visual_condition_noise,
             audio_ref_cond_timestep_floor=audio_reference_noise,
         )
-        with t.inference_mode():
-            velocity_video, velocity_audio = transformer(**kwargs)
-        if tuple(velocity_video.shape) != tuple(video_rows.shape):
-            raise ValueError(
-                "DiT video velocity shape 不匹配："
-                f"{tuple(velocity_video.shape)} vs {tuple(video_rows.shape)}"
-            )
-        if tuple(velocity_audio.shape) != tuple(audio_rows.shape):
-            raise ValueError(
-                "DiT audio velocity shape 不匹配："
-                f"{tuple(velocity_audio.shape)} vs {tuple(audio_rows.shape)}"
-            )
-        _require_finite_step_tensor(
-            velocity_video,
+        mv_video, mv_audio = _dit_velocity_for_step(
+            transformer=transformer,
+            kwargs=kwargs,
+            video_rows=video_rows,
+            audio_rows=audio_rows,
+            video_update=video_update,
+            audio_update=audio_update,
+            velocity_rt=velocity_rt,
             task=task,
-            step=step + 1,
-            modality="video",
-            phase="transformer velocity",
-        )
-        _require_finite_step_tensor(
-            velocity_audio,
-            task=task,
-            step=step + 1,
-            modality="audio",
-            phase="transformer velocity",
+            step=step,
         )
 
         denoised_video = rf_velocity_to_x0(
             video_rows[video_update],
-            velocity_video.float()[video_update],
+            mv_video,
             video_timesteps[step],
         )
         next_video_target = euler_eta0_step(
@@ -1457,7 +1499,7 @@ def sample_h3(
 
         denoised_audio = rf_velocity_to_x0(
             audio_rows[audio_update],
-            velocity_audio.float()[audio_update],
+            mv_audio,
             audio_timesteps[step],
         )
         next_audio_target = euler_eta0_step(
@@ -1523,10 +1565,12 @@ def sample_t2va(
     audio_shift: float,
     progress: Callable[[int, int], None] | None = None,
     check_cancelled: Callable[[], None] | None = None,
+    accel: str | None = None,
     cache_dit: str | None = None,
     cache_dit_rdt: float | None = None,
     cache_dit_mc: int | None = None,
     cache_dit_warmup: int | None = None,
+    velocity_stride: int | None = None,
 ) -> dict[str, Any]:
     """Run a complete in-process T2VA denoise and return native VAE latents."""
 
@@ -1631,9 +1675,9 @@ def sample_t2va(
         for sigma in audio_sigmas[:-1]
     ]
 
-    _prepare_cache_dit_for_sample(
+    velocity_rt = _prepare_accel_for_sample(
         transformer,
-        cache_dit=cache_dit,
+        accel=accel if accel is not None else cache_dit,
         task=H3_TASK_T2VA,
         target=target,
         sigma_points=sigma_points,
@@ -1643,6 +1687,7 @@ def sample_t2va(
         cache_dit_rdt=cache_dit_rdt,
         cache_dit_mc=cache_dit_mc,
         cache_dit_warmup=cache_dit_warmup,
+        velocity_stride=velocity_stride,
     )
 
     for step in range(total):
@@ -1656,37 +1701,22 @@ def sample_t2va(
             video_timestep=1.0 - sigma_video,
             audio_timestep=1.0 - sigma_audio,
         )
-        with t.inference_mode():
-            velocity_video, velocity_audio = transformer(**kwargs)
-        if tuple(velocity_video.shape) != tuple(video_rows.shape):
-            raise ValueError(
-                "DiT video velocity shape 不匹配："
-                f"{tuple(velocity_video.shape)} vs {tuple(video_rows.shape)}"
-            )
-        if tuple(velocity_audio.shape) != tuple(audio_rows.shape):
-            raise ValueError(
-                "DiT audio velocity shape 不匹配："
-                f"{tuple(velocity_audio.shape)} vs {tuple(audio_rows.shape)}"
-            )
-        _require_finite_step_tensor(
-            velocity_video,
+        mv_video, mv_audio = _dit_velocity_for_step(
+            transformer=transformer,
+            kwargs=kwargs,
+            video_rows=video_rows,
+            audio_rows=audio_rows,
+            video_update=None,
+            audio_update=None,
+            velocity_rt=velocity_rt,
             task=H3_TASK_T2VA,
-            step=step + 1,
-            modality="video",
-            phase="transformer velocity",
-        )
-        _require_finite_step_tensor(
-            velocity_audio,
-            task=H3_TASK_T2VA,
-            step=step + 1,
-            modality="audio",
-            phase="transformer velocity",
+            step=step,
         )
         denoised_video = rf_velocity_to_x0(
-            video_rows, velocity_video.float(), video_timesteps[step]
+            video_rows, mv_video, video_timesteps[step]
         )
         denoised_audio = rf_velocity_to_x0(
-            audio_rows, velocity_audio.float(), audio_timesteps[step]
+            audio_rows, mv_audio, audio_timesteps[step]
         )
         video_rows = euler_eta0_step(
             video_rows,

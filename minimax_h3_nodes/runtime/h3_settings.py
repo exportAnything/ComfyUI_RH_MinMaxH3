@@ -1,4 +1,4 @@
-"""H3 runtime 统一常量（量化标记 / 加载策略），禁止在别处重复定义。"""
+"""H3 runtime 统一常量（量化标记 / 加载策略 / 加速），禁止在别处重复定义。"""
 
 MODEL_NAME = "MiniMax-H3"
 DEFAULT_PARTITION = "FL2VA"
@@ -29,20 +29,30 @@ ALLOW_PARTIAL_OFFLOAD_INT8 = True  # MixedPrecisionOps 可部分 offload
 TE_GPU_HEADROOM = 3 << 30  # TE 上卡前额外预留的 encode 工作区显存（字节）
 TE_VISUAL_ON_CPU = True  # 纯文本编码不搬 visual 塔，常驻 CPU 省 ~7GB 显存
 DIT_INFERENCE_RESERVE = 6 << 30  # DiT partial load 时给采样激活预留的显存（字节）
-# Cache-DiT（官方 MiniMax-H3 BlockAdapter / quality profile；近似加速，默认关闭）
-CACHE_DIT_PKG = "cache-dit"
-CACHE_DIT_MIN_VERSION = "1.3.0"
-CACHE_DIT_MODE_OFF, CACHE_DIT_MODE_AUTO, CACHE_DIT_MODE_MANUAL = "off", "auto", "manual"
-CACHE_DIT_PROFILE_ID = "minimax-h3-cache-v1"  # 本地 profile；源自官方 h200x4-cache-v1 旋钮
-CACHE_DIT_MODE_CHOICES = (CACHE_DIT_MODE_OFF, CACHE_DIT_MODE_AUTO, CACHE_DIT_PROFILE_ID, CACHE_DIT_MODE_MANUAL)
-CACHE_DIT_BLOCKS_ATTR = "blocks"  # MiniMaxH3DiTModel 主栈
-CACHE_DIT_FORWARD_PATTERN = "Pattern_3"  # hidden-state in/out，与官方测试一致
-CACHE_DIT_FN, CACHE_DIT_BN, CACHE_DIT_WARMUP = 1, 0, 4  # cookbook / profile 共用
-CACHE_DIT_RDT_COOKBOOK, CACHE_DIT_RDT_PROFILE = 0.12, 0.08  # cookbook 保守 / 官方已验证
+# ---- 采样加速（近似；默认 off；Cache-DiT / velocity-cache 互斥）----
+ACCEL_OFF, ACCEL_AUTO = "off", "auto"
+ACCEL_CACHE_DIT_PROFILE = "minimax-h3-cache-v1"
+ACCEL_VELOCITY_PROFILE = "minimax-h3-velocity-cache-v1"
+ACCEL_MANUAL_CACHE_DIT, ACCEL_MANUAL_VELOCITY = "manual-cache-dit", "manual-velocity"
+ACCEL_MODE_CHOICES = (
+    ACCEL_OFF, ACCEL_AUTO, ACCEL_VELOCITY_PROFILE, ACCEL_CACHE_DIT_PROFILE,
+    ACCEL_MANUAL_VELOCITY, ACCEL_MANUAL_CACHE_DIT,
+)
+# 兼容上一版节点字段名
+CACHE_DIT_MODE_OFF, CACHE_DIT_MODE_AUTO, CACHE_DIT_MODE_MANUAL = ACCEL_OFF, ACCEL_AUTO, ACCEL_MANUAL_CACHE_DIT
+CACHE_DIT_PROFILE_ID = ACCEL_CACHE_DIT_PROFILE
+CACHE_DIT_MODE_CHOICES = ACCEL_MODE_CHOICES
+CACHE_DIT_PKG, CACHE_DIT_MIN_VERSION = "cache-dit", "1.3.0"
+CACHE_DIT_BLOCKS_ATTR, CACHE_DIT_FORWARD_PATTERN = "blocks", "Pattern_3"
+CACHE_DIT_FN, CACHE_DIT_BN, CACHE_DIT_WARMUP = 1, 0, 4
+CACHE_DIT_RDT_COOKBOOK, CACHE_DIT_RDT_PROFILE = 0.12, 0.08
 CACHE_DIT_MC = 2
 CACHE_DIT_TAYLORSEER, CACHE_DIT_TS_ORDER = False, 1
 CACHE_DIT_SCM_PRESET, CACHE_DIT_SCM_POLICY = "none", "dynamic"
-CACHE_DIT_MARK = "_h3_cache_dit_enabled"  # 挂在 transformer 上，避免重复 enable
+CACHE_DIT_MARK = "_h3_cache_dit_enabled"
+# velocity-cache 官方验证旋钮（PR#20 manifest）
+VELOCITY_STRIDE, VELOCITY_TAYLORSEER, VELOCITY_TS_ORDER = 4, True, 1
+VELOCITY_TAIL_DENSE, VELOCITY_TAIL_REBALANCE, VELOCITY_FINAL_REFRESH = 2, True, True
 
 
 def int8_dit_filename(partition: str | None = None) -> str:  # MiniMax-H3+模型类型+量化格式

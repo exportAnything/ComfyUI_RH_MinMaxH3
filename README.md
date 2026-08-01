@@ -133,28 +133,30 @@ for the model's stereo/32 kHz VAE path.
   fingerprints are checked across encoder, sampler, and decoder. Cross-wiring
   FL2VA/Ref2VA components fails closed instead of producing undefined output.
 
-## Optional Cache-DiT acceleration
+## Optional single-GPU acceleration
 
-`Dual Sigma Sampler` ports the upstream MiniMax-H3 Cache-DiT `BlockAdapter`
-(`blocks` + `Pattern_3`) and the validated quality-profile knobs. The default
-`cache_dit=off` path is unchanged.
+This plugin targets **single-GPU** Comfy. There is no multi-GPU / Ulysses gate.
+Upstream 4×H200 numbers are knobs/quality references only; single-GPU gains come
+from fewer DiT calls (velocity-cache) or skipped blocks (Cache-DiT). Default
+`accel=off`.
 
-```bash
-pip install "cache-dit>=1.3.0"
-# or: pip install -e ".[cache-dit]"
-```
+| Value | Behavior | Single-GPU note |
+| --- | --- | --- |
+| `off` | Disabled (GT-safe) | Default |
+| `auto` | On validated 1344×768/124f/50steps/shifts 12·3, prefer velocity-cache | Good first try |
+| `minimax-h3-velocity-cache-v1` | Whole-step velocity reuse + Taylor (no extra package) | **Preferred** |
+| `minimax-h3-cache-v1` | Cache-DiT DBCache (`pip install cache-dit>=1.3.0`) | Alternative |
+| `manual-velocity` / `manual-cache-dit` | Tune stride or RDT/MC/warmup | Debug |
 
-| Value | Behavior |
-| --- | --- |
-| `off` | Disabled (default; safe for GT) |
-| `auto` | Enable only when the request matches the validated T2VA workload (1344×768, 124 frames, 24 fps, 50 steps, shifts 12/3) |
-| `minimax-h3-cache-v1` | Force that profile; mismatch raises |
-| `manual` | Cookbook knobs; optional `cache_dit_rdt` / `mc` / `warmup` override |
+Upstream references: ~**3.2×** velocity-cache, ~**2×** Cache-DiT on 4×H200.
+Approximate—do **not** use as consistency GT. Profiles live under
+`minimax_h3_nodes/runtime/profiles/`.
 
-Upstream 4×H200 evidence is about **1.99×** end-to-end with non-inferior
-VBench. This is approximate acceleration—do **not** use Cache-DiT outputs as
-consistency ground truth. Profile JSON lives at
-`minimax_h3_nodes/runtime/profiles/minimax-h3-cache-v1.json`.
+Frontend workflow (not API): [`examples/t2va_velocity_cache_5s.json`](examples/t2va_velocity_cache_5s.json)  
+T2VA · 1344×768 · 5s · `accel=minimax-h3-velocity-cache-v1`. Confirm local INT8/VAE model names before queueing.
+
+Ref2VA speed example: [`examples/ref2va_video_audio_832x480_velocity_5s.json`](examples/ref2va_video_audio_832x480_velocity_5s.json)  
+Explicit 832×480 target + `accel=manual-velocity`. Leaving Ref2VA Target width/height empty resolves to 1344×768 by aspect ratio and costs far more.
 
 ## INT8 conversion and VAE merge
 

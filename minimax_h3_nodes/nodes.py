@@ -86,10 +86,10 @@ from .contracts import (
     validate_target,
 )
 from .runtime.h3_settings import (
+    ACCEL_MODE_CHOICES,
+    ACCEL_OFF,
     BF16_TE_MODEL_NAME,
     CACHE_DIT_MC,
-    CACHE_DIT_MODE_CHOICES,
-    CACHE_DIT_MODE_OFF,
     CACHE_DIT_RDT_COOKBOOK,
     CACHE_DIT_WARMUP,
     INT8_DIT_DIRNAME,
@@ -97,6 +97,7 @@ from .runtime.h3_settings import (
     INT8_TE_FILENAME,
     VAE_MERGED_DIRNAME,
     VAE_MERGED_MODEL_NAME,
+    VELOCITY_STRIDE,
     bf16_dit_model_name,
     int8_dit_filename,
 )
@@ -3308,15 +3309,15 @@ class MiniMaxH3DualSigmaSampler:
                         "step": 0.01,
                     },
                 ),
-                "cache_dit": (
-                    list(CACHE_DIT_MODE_CHOICES),
+                "accel": (
+                    list(ACCEL_MODE_CHOICES),
                     {
-                        "default": CACHE_DIT_MODE_OFF,
+                        "default": ACCEL_OFF,
                         "tooltip": (
-                            "官方 Cache-DiT 近似加速。off=关闭；auto=命中已验证 "
-                            "1344×768/124f/50steps 合同才启用；minimax-h3-cache-v1="
-                            "强制该 profile（不匹配则报错）；manual=cookbook 旋钮。"
-                            "需 pip install 'cache-dit>=1.3.0'。不可作 consistency GT。"
+                            "单卡近似加速。off=关闭；auto=优先 velocity-cache profile，"
+                            "否则 Cache-DiT；minimax-h3-velocity-cache-v1≈少 DiT 次数（推荐单卡）；"
+                            "minimax-h3-cache-v1=Cache-DiT（需 cache-dit）；manual-* 手调。"
+                            "仅验证 1344×768/124f/50steps/shift12·3。不可作 GT。"
                         ),
                     },
                 ),
@@ -3329,7 +3330,7 @@ class MiniMaxH3DualSigmaSampler:
                         "min": 0.0,
                         "max": 1.0,
                         "step": 0.01,
-                        "tooltip": "仅 cache_dit=manual 生效；残差阈值，越大越快越糙。",
+                        "tooltip": "仅 accel=manual-cache-dit：残差阈值，越大越快越糙。",
                     },
                 ),
                 "cache_dit_mc": (
@@ -3338,7 +3339,7 @@ class MiniMaxH3DualSigmaSampler:
                         "default": CACHE_DIT_MC,
                         "min": 1,
                         "max": 32,
-                        "tooltip": "仅 cache_dit=manual：最大连续缓存步数。",
+                        "tooltip": "仅 accel=manual-cache-dit：最大连续缓存步数。",
                     },
                 ),
                 "cache_dit_warmup": (
@@ -3347,7 +3348,16 @@ class MiniMaxH3DualSigmaSampler:
                         "default": CACHE_DIT_WARMUP,
                         "min": 0,
                         "max": 64,
-                        "tooltip": "仅 cache_dit=manual：缓存前 warmup 步数。",
+                        "tooltip": "仅 accel=manual-cache-dit：warmup 步数。",
+                    },
+                ),
+                "velocity_stride": (
+                    "INT",
+                    {
+                        "default": VELOCITY_STRIDE,
+                        "min": 1,
+                        "max": 32,
+                        "tooltip": "仅 accel=manual-velocity：DiT 刷新步距；1=精确无缓存。",
                     },
                 ),
             },
@@ -3367,10 +3377,11 @@ class MiniMaxH3DualSigmaSampler:
         sigma_points: int,
         video_shift: float,
         audio_shift: float,
-        cache_dit: str = CACHE_DIT_MODE_OFF,
+        accel: str = ACCEL_OFF,
         cache_dit_rdt: float = CACHE_DIT_RDT_COOKBOOK,
         cache_dit_mc: int = CACHE_DIT_MC,
         cache_dit_warmup: int = CACHE_DIT_WARMUP,
+        velocity_stride: int = VELOCITY_STRIDE,
     ):
         is_v2 = (
             isinstance(conditioning, Mapping)
@@ -3445,10 +3456,11 @@ class MiniMaxH3DualSigmaSampler:
                 audio_shift=float(audio_shift),
                 progress=update_progress,
                 check_cancelled=check_cancelled,
-                cache_dit=str(cache_dit),
+                accel=str(accel),
                 cache_dit_rdt=float(cache_dit_rdt),
                 cache_dit_mc=int(cache_dit_mc),
                 cache_dit_warmup=int(cache_dit_warmup),
+                velocity_stride=int(velocity_stride),
             )
         if is_v2:
             output.update(

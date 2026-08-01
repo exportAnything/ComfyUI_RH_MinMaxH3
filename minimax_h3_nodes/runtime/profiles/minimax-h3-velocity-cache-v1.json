@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "profile_id": "minimax-h3-velocity-cache-v1",
+  "status": "validated",
+  "technique": "velocity-cache",
+  "source_profile_id": "minimax-h3-h200x4-velocity-cache-v1",
+  "source_repo": "MiniMax-AI-Dev/Internal-0727-private-3",
+  "source_pr": 20,
+  "notes": "面向单卡 Comfy：整步 velocity 复用 + 一阶 Taylor。旋钮对齐官方验证合同；官方约 3.2× 测于 4×H200，单卡只复用相同调度（降 DiT 次数），不做多卡/Ulysses 门禁。",
+  "workloads": [
+    {
+      "task": "t2va",
+      "width": 1344,
+      "height": 768,
+      "fps": 24,
+      "frame_count": 124,
+      "num_inference_steps": 50,
+      "flow_shift": 12.0,
+      "audio_flow_shift": 3.0
+    }
+  ],
+  "velocity_cache": {
+    "stride": 4,
+    "taylorseer": true,
+    "taylorseer_order": 1,
+    "tail_dense_steps": 2,
+    "tail_rebalance": true,
+    "final_refresh": true
+  },
+  "evidence": {
+    "baseline_e2e_seconds": 388.24729832203593,
+    "candidate_e2e_seconds": 121.41853749600705,
+    "speedup": 3.1976,
+    "observed_dit_calls": 14,
+    "observed_cache_hits": 35,
+    "observed_taylor_steps": 32,
+    "vbench_relative_change": -0.001088585959307904,
+    "lpips_mean": 0.4261451651732768,
+    "lpips_max": 0.6393095254898071
+  }
+}

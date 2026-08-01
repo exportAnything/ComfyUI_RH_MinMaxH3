@@ -93,6 +93,8 @@ Ref2VA 的参考素材有严格顺序。添加每一个图片、音频、视频�
 
 前端工作流示例：[`examples/ref2va_image_audio_5s.json`](examples/ref2va_image_audio_5s.json)。
 API 示例：[`examples/ref2va_image_audio_5s_api.json`](examples/ref2va_image_audio_5s_api.json)。
+加速示例：[`examples/ref2va_video_audio_832x480_velocity_5s.json`](examples/ref2va_video_audio_832x480_velocity_5s.json)
+（Target 显式 832×480 + `accel=manual-velocity`；Ref2VA 的 Target 不填 width/height 时按 aspect_ratio 默认解析到 1344×768，序列和耗时会大幅上升）。
 运行前请替换图片和音频占位文件名。
 
 Ref2VA 视频参考按官方路径规范为 24 fps，Qwen 展示序列再从该序列按 2 fps 采样。
@@ -116,28 +118,28 @@ Ref2VA 视频参考按官方路径规范为 24 fps，Qwen 展示序列再从该�
 - 编码、采样、解码之间会校验 target、条件顺序、任务分区、release 和组件指纹。
   FL2VA/Ref2VA 组件交叉连接会直接报错，不会继续生成未定义结果。
 
-## Cache-DiT 加速（可选）
+## 单卡采样加速（可选）
 
-`Dual Sigma Sampler` 已接入官方 MiniMax-H3 `BlockAdapter`（`blocks` +
-`Pattern_3`）与 quality profile 旋钮。默认 `cache_dit=off`，行为与原先一致。
+开发/部署按**单卡**设计：不做多卡或 Ulysses 门禁。官方 4×H200 数字只作旋钮与
+质量参考；单卡收益来自减少 DiT 次数（velocity-cache）或跳过 block 计算
+（Cache-DiT）。默认 `accel=off`。
 
-```bash
-pip install "cache-dit>=1.3.0"
-# 或：pip install -e ".[cache-dit]"
-```
+`Dual Sigma Sampler` 的 `accel`：
 
-采样器选项：
+| 值 | 行为 | 单卡建议 |
+| --- | --- | --- |
+| `off` | 关闭（可作 GT） | 默认 |
+| `auto` | 命中 1344×768/124f/50steps/shift12·3 时优先 velocity-cache | 推荐试 |
+| `minimax-h3-velocity-cache-v1` | 整步 velocity 复用 + Taylor（无额外依赖） | **首选** |
+| `minimax-h3-cache-v1` | Cache-DiT DBCache（需 `pip install cache-dit>=1.3.0`） | 备选 |
+| `manual-velocity` / `manual-cache-dit` | 手调 stride 或 RDT/MC/warmup | 调试 |
 
-| 值 | 行为 |
-| --- | --- |
-| `off` | 关闭（默认，可作 GT） |
-| `auto` | 仅当 workload 命中已验证合同（T2VA 1344×768、124 帧、24fps、50 steps、shift 12/3）时启用 profile |
-| `minimax-h3-cache-v1` | 强制该 profile；参数不匹配直接报错 |
-| `manual` | 使用 cookbook 旋钮；可用可选 `cache_dit_rdt` / `mc` / `warmup` 覆盖 |
+官方参考：velocity-cache 约 **3.2×**、Cache-DiT 约 **2×**（均为 4×H200 证据）。
+近似加速，**不要**当 consistency GT。profile 在
+`minimax_h3_nodes/runtime/profiles/`。
 
-官方 4×H200 证据约 **1.99×** 端到端（VBench 不降）。这是近似加速，**不要**用
-Cache-DiT 结果做 consistency ground truth。profile JSON 在
-`minimax_h3_nodes/runtime/profiles/minimax-h3-cache-v1.json`。
+前端示例（非 API）：[`examples/t2va_velocity_cache_5s.json`](examples/t2va_velocity_cache_5s.json)  
+T2VA · 1344×768 · 5s · `accel=minimax-h3-velocity-cache-v1`。导入前确认模型名与本地 INT8/VAE 选择一致。
 
 ## INT8 转换与 VAE 合并
 
