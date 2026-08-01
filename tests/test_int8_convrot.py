@@ -25,6 +25,34 @@ def _load_quant_tool():
     return mod
 
 
+def _load_text_encoder_quant_tool():
+    path = ROOT / "tools" / "quantize_text_encoder_int8_convrot.py"
+    spec = importlib.util.spec_from_file_location("h3_quantize_te_int8", path)
+    mod = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(mod)
+    return mod
+
+
+class Int8TextEncoderMetadataTests(unittest.TestCase):
+    def test_new_converter_defaults_to_shared_partition_provenance(self):
+        import inspect
+
+        qt = _load_text_encoder_quant_tool()
+        self.assertEqual(qt.normalize_te_partition("shared"), "shared")
+        self.assertEqual(qt.normalize_te_partition("fl2va"), "FL2VA")
+        self.assertEqual(qt.normalize_te_partition("Ref2VA"), "Ref2VA")
+        with self.assertRaisesRegex(ValueError, "partition"):
+            qt.normalize_te_partition("unknown")
+        self.assertEqual(
+            inspect.signature(qt.run_quantize).parameters["partition"].default,
+            "shared",
+        )
+        source = inspect.getsource(qt.run_quantize)
+        self.assertIn('"partition": partition', source)
+        self.assertIn("expected_linears = TEXT_ENCODER_SELECTED_LAYERS * 7", source)
+
+
 @unittest.skipUnless(HAS_TORCH, "no torch")
 class Int8ConvrotToolTests(unittest.TestCase):
     def test_best_gs_and_structure_excludes(self):

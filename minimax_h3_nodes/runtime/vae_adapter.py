@@ -26,6 +26,7 @@ from __future__ import annotations
 import inspect
 import json
 import logging
+import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,9 +36,17 @@ import torch
 
 from ..vendor.minimax_h3_audio_vae import DacAudioVAE
 from ..vendor.minimax_h3_video_vae import AutoencoderKLLegacy
+from .backend_state import TORCH_BACKEND_STATE_LOCK
 
 
 LOGGER = logging.getLogger(__name__)
+
+# Both release condition encoders temporarily mutate shared state: Video VAE
+# encoding changes the model dtype/tiling mode and forks the default generators,
+# while Audio VAE encoding changes CUDA/cuDNN/SDP backend flags.  Decode/model
+# moves must not observe those transient states, so every adapter model action
+# shares one re-entrant critical section.
+_VAE_CONDITION_ENCODE_LOCK = threading.RLock()
 
 VIDEO_LATENT_CHANNELS = 24
 AUDIO_LATENT_CHANNELS = 32
@@ -150,8 +159,50 @@ def _read_json(path: Path) -> dict[str, Any]:
     return value
 
 
+def _resolve_within_root(root: Path, candidate: Path, *, label: str) -> Path:
+    """Resolve symlinks while keeping a VAE artifact below its selected root."""
+
+    resolved_root = root.resolve()
+    resolved_candidate = candidate.resolve()
+    try:
+        resolved_candidate.relative_to(resolved_root)
+    except ValueError as exc:
+        raise H3VAEError(
+            f"{label} resolves outside selected VAE root {resolved_root}: "
+            f"{resolved_candidate}"
+        ) from exc
+    return resolved_candidate
+
+
+def _safe_relative_path(raw_value: Any, *, label: str) -> Path:
+    if not isinstance(raw_value, str) or not raw_value.strip():
+        raise H3VAEError(f"{label} must be a non-empty relative path")
+    relative = Path(raw_value.strip())
+    if relative.is_absolute() or ".." in relative.parts:
+        raise H3VAEError(
+            f"{label} must be relative and must not contain '..': {raw_value!r}"
+        )
+    return relative
+
+
+def _component_config(
+    component_dir: Path,
+    component_name: str,
+) -> dict[str, Any]:
+    config_path = _resolve_within_root(
+        component_dir,
+        component_dir / "config.json",
+        label=f"{component_name} config",
+    )
+    return _read_json(config_path)
+
+
 def _looks_like_component(path: Path, component_name: str) -> bool:
-    config_path = path / "config.json"
+    config_path = _resolve_within_root(
+        path,
+        path / "config.json",
+        label=f"{component_name} config",
+    )
     if not config_path.is_file():
         return False
     try:
@@ -195,20 +246,35 @@ def resolve_h3_component_dir(
         ]
     )
 
-    model_index = root / "model_index.json"
+    model_index = _resolve_within_root(
+        root,
+        root / "model_index.json",
+        label="VAE model_index",
+    )
     if model_index.is_file():
         index = _read_json(model_index)
         entry = index.get(component_name)
         if isinstance(entry, Mapping):
             relative = entry.get("path") or entry.get("subfolder")
             if isinstance(relative, str):
-                candidates.insert(0, root / relative)
+                candidates.insert(
+                    0,
+                    root
+                    / _safe_relative_path(
+                        relative,
+                        label=f"model_index {component_name} path",
+                    ),
+                )
         # Diffusers-style entries are [library, class]; their subfolder is the
         # key itself and is already covered by root/component_name.
 
     seen: set[Path] = set()
     for candidate in candidates:
-        candidate = candidate.resolve()
+        candidate = _resolve_within_root(
+            root,
+            candidate,
+            label=f"{component_name} component",
+        )
         if candidate in seen:
             continue
         seen.add(candidate)
@@ -220,12 +286,35 @@ def resolve_h3_component_dir(
     )
 
 
-def _files_from_safetensors_index(index_path: Path) -> list[Path]:
+def _files_from_safetensors_index(
+    index_path: Path,
+    *,
+    component_root: Path | None = None,
+) -> list[Path]:
+    root = (component_root or index_path.parent).resolve()
+    index_path = _resolve_within_root(
+        root,
+        index_path,
+        label="Safetensors index",
+    )
     index = _read_json(index_path)
     weight_map = index.get("weight_map")
-    if not isinstance(weight_map, Mapping):
+    if not isinstance(weight_map, Mapping) or not weight_map:
         raise H3VAEError(f"Invalid safetensors index: {index_path}")
-    paths = sorted({index_path.parent / str(name) for name in weight_map.values()})
+    paths = sorted(
+        {
+            _resolve_within_root(
+                root,
+                index_path.parent
+                / _safe_relative_path(
+                    name,
+                    label=f"Safetensors shard in {index_path}",
+                ),
+                label=f"Safetensors shard in {index_path}",
+            )
+            for name in weight_map.values()
+        }
+    )
     missing = [path for path in paths if not path.is_file()]
     if missing:
         raise H3VAEError(
@@ -241,17 +330,12 @@ def _safe_component_relative_path(
     *,
     field_name: str,
 ) -> Path:
-    if not isinstance(raw_value, str) or not raw_value.strip():
-        raise H3VAEError(f"{field_name} must be a non-empty relative path")
-    relative = Path(raw_value.strip())
-    if relative.is_absolute() or ".." in relative.parts:
-        raise H3VAEError(f"Unsafe {field_name}: {raw_value!r}")
-    candidate = (component_dir / relative).resolve()
-    try:
-        candidate.relative_to(component_dir.resolve())
-    except ValueError as exc:
-        raise H3VAEError(f"Unsafe {field_name}: {raw_value!r}") from exc
-    return candidate
+    relative = _safe_relative_path(raw_value, label=field_name)
+    return _resolve_within_root(
+        component_dir,
+        component_dir / relative,
+        label=field_name,
+    )
 
 
 def _declared_weight_files(
@@ -290,14 +374,20 @@ def _declared_weight_files(
         attempted.append(candidate)
         if candidate.is_file():
             if candidate.name.endswith(".safetensors.index.json"):
-                return _files_from_safetensors_index(candidate)
+                return _files_from_safetensors_index(
+                    candidate,
+                    component_root=component_dir,
+                )
             return [candidate]
         index_candidate = candidate.with_name(
             candidate.name + ".index.json"
         )
         attempted.append(index_candidate)
         if index_candidate.is_file():
-            return _files_from_safetensors_index(index_candidate)
+            return _files_from_safetensors_index(
+                index_candidate,
+                component_root=component_dir,
+            )
     raise H3VAEError(
         f"Declared {component_name} checkpoint does not exist; checked: "
         + ", ".join(str(path) for path in attempted)
@@ -314,7 +404,11 @@ def _component_weight_files(
         return declared
 
     if component_name == "video_vae":
-        canonical = component_dir / "source" / "model.safetensors"
+        canonical = _resolve_within_root(
+            component_dir,
+            component_dir / "source" / "model.safetensors",
+            label="video_vae canonical checkpoint",
+        )
         if canonical.is_file():
             return [canonical]
 
@@ -325,12 +419,35 @@ def _component_weight_files(
         else []
     )
     if index_candidates:
-        return _files_from_safetensors_index(index_candidates[0])
+        return _files_from_safetensors_index(
+            index_candidates[0],
+            component_root=component_dir,
+        )
 
-    top_level = sorted(component_dir.glob("*.safetensors"))
+    top_level = sorted(
+        {
+            _resolve_within_root(
+                component_dir,
+                path,
+                label=f"{component_name} checkpoint",
+            )
+            for path in component_dir.glob("*.safetensors")
+        }
+    )
+    top_level = [path for path in top_level if path.is_file()]
     if top_level:
         return top_level
-    recursive = sorted(component_dir.rglob("*.safetensors"))
+    recursive = sorted(
+        {
+            _resolve_within_root(
+                component_dir,
+                path,
+                label=f"{component_name} checkpoint",
+            )
+            for path in component_dir.rglob("*.safetensors")
+        }
+    )
+    recursive = [path for path in recursive if path.is_file()]
     if recursive:
         return recursive
     raise H3VAEError(f"No safetensors checkpoint found under {component_dir}")
@@ -359,12 +476,13 @@ def _resolve_dtype(value: Any, *, default: torch.dtype) -> torch.dtype:
 
 @contextmanager
 def _default_dtype(dtype: torch.dtype):
-    previous = torch.get_default_dtype()
-    torch.set_default_dtype(dtype)
-    try:
-        yield
-    finally:
-        torch.set_default_dtype(previous)
+    with TORCH_BACKEND_STATE_LOCK:
+        previous = torch.get_default_dtype()
+        torch.set_default_dtype(dtype)
+        try:
+            yield
+        finally:
+            torch.set_default_dtype(previous)
 
 
 def _can_assign_state_dict() -> bool:
@@ -585,41 +703,42 @@ def _fork_rng(device: torch.device, seed: int):
 def _audio_vae_determinism():
     """Match the released deterministic reference-audio encode recipe."""
 
-    backends = torch.backends
-    saved = (
-        backends.cuda.matmul.allow_tf32,
-        backends.cudnn.allow_tf32,
-        backends.cudnn.benchmark,
-        backends.cudnn.deterministic,
-        backends.cudnn.enabled,
-        backends.cuda.flash_sdp_enabled(),
-        backends.cuda.mem_efficient_sdp_enabled(),
-        backends.cuda.math_sdp_enabled(),
-    )
-    backends.cuda.matmul.allow_tf32 = False
-    backends.cudnn.allow_tf32 = False
-    backends.cudnn.benchmark = False
-    backends.cudnn.deterministic = True
-    backends.cudnn.enabled = False
-    backends.cuda.enable_flash_sdp(False)
-    backends.cuda.enable_mem_efficient_sdp(False)
-    backends.cuda.enable_math_sdp(True)
-    try:
-        yield
-    finally:
-        (
+    with TORCH_BACKEND_STATE_LOCK:
+        backends = torch.backends
+        saved = (
             backends.cuda.matmul.allow_tf32,
             backends.cudnn.allow_tf32,
             backends.cudnn.benchmark,
             backends.cudnn.deterministic,
             backends.cudnn.enabled,
-            flash,
-            memory_efficient,
-            math_sdp,
-        ) = saved
-        backends.cuda.enable_flash_sdp(flash)
-        backends.cuda.enable_mem_efficient_sdp(memory_efficient)
-        backends.cuda.enable_math_sdp(math_sdp)
+            backends.cuda.flash_sdp_enabled(),
+            backends.cuda.mem_efficient_sdp_enabled(),
+            backends.cuda.math_sdp_enabled(),
+        )
+        backends.cuda.matmul.allow_tf32 = False
+        backends.cudnn.allow_tf32 = False
+        backends.cudnn.benchmark = False
+        backends.cudnn.deterministic = True
+        backends.cudnn.enabled = False
+        backends.cuda.enable_flash_sdp(False)
+        backends.cuda.enable_mem_efficient_sdp(False)
+        backends.cuda.enable_math_sdp(True)
+        try:
+            yield
+        finally:
+            (
+                backends.cuda.matmul.allow_tf32,
+                backends.cudnn.allow_tf32,
+                backends.cudnn.benchmark,
+                backends.cudnn.deterministic,
+                backends.cudnn.enabled,
+                flash,
+                memory_efficient,
+                math_sdp,
+            ) = saved
+            backends.cuda.enable_flash_sdp(flash)
+            backends.cuda.enable_mem_efficient_sdp(memory_efficient)
+            backends.cuda.enable_math_sdp(math_sdp)
 
 
 class MiniMaxH3VideoVAEAdapter:
@@ -669,7 +788,8 @@ class MiniMaxH3VideoVAEAdapter:
         kwargs: dict[str, Any] = {"device": torch.device(device)}
         if dtype is not None:
             kwargs["dtype"] = _resolve_dtype(dtype, default=torch.float32)
-        self.model.to(**kwargs)
+        with _VAE_CONDITION_ENCODE_LOCK:
+            self.model.to(**kwargs)
         return self
 
     def offload(self) -> "MiniMaxH3VideoVAEAdapter":
@@ -684,9 +804,11 @@ class MiniMaxH3VideoVAEAdapter:
     ) -> torch.Tensor:
         """Decode unnormalized latents to model-native normalized pixels."""
 
-        raw_latents = raw_latents.to(device=self.device, dtype=torch.float32)
-        with _autocast_for(self.device, self.compute_dtype):
-            return self.model.decode_base(raw_latents, frame_num=frame_count)
+        with _VAE_CONDITION_ENCODE_LOCK:
+            device = self.device
+            raw_latents = raw_latents.to(device=device, dtype=torch.float32)
+            with _autocast_for(device, self.compute_dtype):
+                return self.model.decode_base(raw_latents, frame_num=frame_count)
 
     @torch.inference_mode()
     def decode_bcthw(
@@ -705,11 +827,13 @@ class MiniMaxH3VideoVAEAdapter:
                 "MiniMax H3 video latents must be [B,24,T,H,W], got "
                 f"{tuple(latents.shape)}"
             )
-        latents = latents.to(device=self.device, dtype=torch.float32)
-        raw = self.stats.denormalize(latents)
-        with _autocast_for(self.device, self.compute_dtype):
-            frames = self.model.decode_base(raw, frame_num=frame_count)
-            frames = self.model.processor.revert_tensor(frames)
+        with _VAE_CONDITION_ENCODE_LOCK:
+            device = self.device
+            latents = latents.to(device=device, dtype=torch.float32)
+            raw = self.stats.denormalize(latents)
+            with _autocast_for(device, self.compute_dtype):
+                frames = self.model.decode_base(raw, frame_num=frame_count)
+                frames = self.model.processor.revert_tensor(frames)
         if frames.ndim != 5 or int(frames.shape[1]) != 3:
             raise H3VAEError(
                 "MiniMax H3 video VAE returned an invalid tensor: "
@@ -771,22 +895,25 @@ class MiniMaxH3VideoVAEAdapter:
         *,
         process_image: bool | None = None,
         seed: int = 42,
+        use_fp16_latent: bool = True,
+        parallel_tiling: bool | None = False,
     ) -> torch.Tensor:
         """Encode ``[0,1]`` pixels and return normalized ``[B,24,T,H,W]``.
 
         The release keyframe/reference-image recipe samples the VAE posterior
         under seed 42, hence sampling (rather than posterior mean) is retained.
-        Callers encoding a multi-frame reference must perform H3's temporal
-        alignment before this method.
+        The official condition path also disables parallel tiling, runs the
+        VAE in fp32, casts the sampled latent to fp16, then converts back to
+        fp32 for normalization.  That fp16 round-trip is numerically material
+        and therefore enabled by default.  Multi-frame inputs are trimmed with
+        the vendored VAE processor's native temporal alignment rule.
         """
 
         if not isinstance(pixels, torch.Tensor):
             raise TypeError("Video VAE pixels must be a torch.Tensor")
         if process_image is None:
             process_image = pixels.ndim in (3, 4)
-        pixels = self._canonical_pixels(pixels).to(
-            device=self.device, dtype=torch.float32
-        )
+        pixels = self._canonical_pixels(pixels)
         batch, channels, frames, height, width = pixels.shape
         if channels != 3:
             raise H3VAEError("Video VAE input must contain three RGB channels")
@@ -795,35 +922,83 @@ class MiniMaxH3VideoVAEAdapter:
                 f"Video VAE input must be divisible by 16, got {height}x{width}"
             )
 
-        flat = pixels.permute(0, 2, 1, 3, 4).reshape(
-            batch * frames, channels, height, width
-        )
-        flat = self.model.transform(flat)
-        transformed = flat.reshape(batch, frames, channels, height, width)
-        transformed = transformed.permute(0, 2, 1, 3, 4).contiguous()
+        with _VAE_CONDITION_ENCODE_LOCK:
+            device = self.device
+            pixels = pixels.to(device=device, dtype=torch.float32)
+            flat = pixels.permute(0, 2, 1, 3, 4).reshape(
+                batch * frames, channels, height, width
+            )
+            flat = self.model.transform(flat)
+            transformed = flat.reshape(batch, frames, channels, height, width)
+            transformed = transformed.permute(0, 2, 1, 3, 4).contiguous()
 
-        parameter = next(self.model.parameters())
-        previous_dtype = parameter.dtype
-        # The release contract explicitly encodes keyframes/references with
-        # fp32 VAE weights, even though visual decode uses fp16 autocast.
-        if previous_dtype != torch.float32:
-            self.model.to(dtype=torch.float32)
-        try:
-            with _fork_rng(self.device, seed):
-                torch.default_generator.manual_seed(seed)
-                if self.device.type == "cuda":
-                    with torch.cuda.device(self.device):
-                        torch.cuda.manual_seed(seed)
-                raw = self.model.encode_base(
+            # Match encode_images/encode_videos: align to the complete spatial
+            # patch and, for video, keep the longest supported leading chunk.
+            processor = self.model.processor
+            if process_image:
+                if frames != 1:
+                    raise H3VAEError(
+                        "process_image=True requires exactly one frame per batch item"
+                    )
+            else:
+                used_frames = int(processor.get_suitable_video_length(frames))
+                transformed = transformed[:, :, :used_frames]
+            new_height, new_width = processor._align_to_total_patch_size(
+                height, width
+            )
+            if process_image:
+                transformed = processor._crop_to_align(
+                    transformed[:, :, 0],
+                    new_height,
+                    new_width,
+                    is_video=False,
+                ).unsqueeze(2)
+            else:
+                transformed = processor._crop_to_align(
                     transformed,
-                    process_image=process_image,
+                    new_height,
+                    new_width,
+                    is_video=True,
                 )
-        finally:
+
+            parameter = next(self.model.parameters())
+            previous_dtype = parameter.dtype
+            missing_tiling = object()
+            previous_parallel_tiling = getattr(
+                self.model, "parallel_tiling", missing_tiling
+            )
+            if (
+                parallel_tiling is not None
+                and previous_parallel_tiling is not missing_tiling
+            ):
+                self.model.parallel_tiling = bool(parallel_tiling)
+            # The release contract explicitly encodes keyframes/references with
+            # fp32 VAE weights, even though visual decode uses fp16 autocast.
             if previous_dtype != torch.float32:
-                self.model.to(dtype=previous_dtype)
-        if raw.ndim == 4:
-            raw = raw.unsqueeze(2)
-        return self.stats.normalize(raw.float()).contiguous()
+                self.model.to(dtype=torch.float32)
+            try:
+                with _fork_rng(device, seed):
+                    torch.default_generator.manual_seed(seed)
+                    if device.type == "cuda":
+                        with torch.cuda.device(device):
+                            torch.cuda.manual_seed(seed)
+                    raw = self.model.encode_base(
+                        transformed,
+                        process_image=process_image,
+                    )
+            finally:
+                if previous_parallel_tiling is not missing_tiling:
+                    self.model.parallel_tiling = previous_parallel_tiling
+                if previous_dtype != torch.float32:
+                    self.model.to(dtype=previous_dtype)
+            if raw.ndim == 4:
+                raw = raw.unsqueeze(2)
+            if use_fp16_latent:
+                raw = raw.to(torch.float16)
+            # Official conditioning normalizes fp32 latents on CPU after the
+            # numerically significant fp16 round-trip.
+            raw_cpu = raw.float().cpu()
+        return self.stats.normalize(raw_cpu).contiguous()
 
 
 class MiniMaxH3AudioVAEAdapter:
@@ -870,7 +1045,8 @@ class MiniMaxH3AudioVAEAdapter:
         kwargs: dict[str, Any] = {"device": torch.device(device)}
         if dtype is not None:
             kwargs["dtype"] = _resolve_dtype(dtype, default=torch.float32)
-        self.model.to(**kwargs)
+        with _VAE_CONDITION_ENCODE_LOCK:
+            self.model.to(**kwargs)
         return self
 
     def offload(self) -> "MiniMaxH3AudioVAEAdapter":
@@ -883,9 +1059,11 @@ class MiniMaxH3AudioVAEAdapter:
     ) -> torch.Tensor:
         """Decode unnormalized ``[C,32,T]`` to native ``[C,1,L]``."""
 
-        raw_latents = raw_latents.to(device=self.device, dtype=torch.float32)
-        with _autocast_for(self.device, self.compute_dtype):
-            return self.model.decode(raw_latents)
+        with _VAE_CONDITION_ENCODE_LOCK:
+            device = self.device
+            raw_latents = raw_latents.to(device=device, dtype=torch.float32)
+            with _autocast_for(device, self.compute_dtype):
+                return self.model.decode(raw_latents)
 
     @torch.inference_mode()
     def decode(
@@ -911,9 +1089,10 @@ class MiniMaxH3AudioVAEAdapter:
                 "MiniMax H3 audio latents must contain two channel rows, got "
                 f"{int(latents.shape[0])}"
             )
-        latents = latents.to(device=self.device, dtype=torch.float32)
-        raw = self.stats.denormalize(latents)
-        waveform = self.decode_native(raw)
+        with _VAE_CONDITION_ENCODE_LOCK:
+            latents = latents.to(device=self.device, dtype=torch.float32)
+            raw = self.stats.denormalize(latents)
+            waveform = self.decode_native(raw)
         if waveform.ndim != 3 or int(waveform.shape[1]) != 1:
             raise H3VAEError(
                 "MiniMax H3 audio VAE returned an invalid tensor: "
@@ -964,23 +1143,51 @@ class MiniMaxH3AudioVAEAdapter:
             waveform = waveform.repeat(2, 1)
         elif channels < 1:
             raise H3VAEError("Reference audio contains no channels")
-        else:
-            waveform = waveform[: self.output_channels]
-        waveform = waveform.to(self.device)
+        elif channels > self.output_channels:
+            raise H3VAEError(
+                "Comfy AUDIO with more than two channels has no channel-layout "
+                "metadata, so MiniMax H3 cannot downmix it safely. Convert the "
+                "source to mono/stereo first, or use the file/video reference "
+                "path which applies ffmpeg's layout-aware '-ac 2' downmix."
+            )
 
         # The released audio VAE treats stereo channels as its batch dimension.
-        with _audio_vae_determinism():
+        with _VAE_CONDITION_ENCODE_LOCK, _audio_vae_determinism():
+            device = self.device
+            waveform = waveform.to(device)
             audio_data = self.model.preprocess(
                 waveform.unsqueeze(1), self.sample_rate
             )
-            with _autocast_for(self.device, self.compute_dtype):
+            with _autocast_for(device, self.compute_dtype):
                 encoded = self.model.encoder(audio_data)
                 if bool(getattr(self.model, "attn_proj", False)):
                     encoded = self.model.pre_block(
                         encoded.transpose(1, 2)
                     ).transpose(1, 2)
                 raw = self.model.mean_proj(encoded)
-        return self.stats.normalize(raw.float()).contiguous()
+            # Match the official posterior-mean path: normalize fp32 rows on
+            # CPU, then keep their channel-major layout for packing.
+            raw_cpu = raw.float().cpu()
+        if raw_cpu.ndim != 3:
+            raise H3VAEError(
+                "MiniMax H3 audio VAE mean_proj must return a 3D latent, got "
+                f"{tuple(raw_cpu.shape)}"
+            )
+        if int(raw_cpu.shape[0]) != self.output_channels:
+            raise H3VAEError(
+                "MiniMax H3 audio VAE mean_proj must return two channel rows, got "
+                f"{int(raw_cpu.shape[0])}"
+            )
+        if int(raw_cpu.shape[1]) == self.latent_channels:
+            pass  # [2, 32, T], the adapter's native contract.
+        elif int(raw_cpu.shape[2]) == self.latent_channels:
+            raw_cpu = raw_cpu.transpose(1, 2).contiguous()  # [2,T,32] -> [2,32,T]
+        else:
+            raise H3VAEError(
+                "MiniMax H3 audio VAE cannot canonicalize mean_proj latent "
+                f"{tuple(raw_cpu.shape)}; expected [2,32,T] or [2,T,32]"
+            )
+        return self.stats.normalize(raw_cpu).contiguous()
 
 
 _VIDEO_SOURCE_CONTRACT: dict[str, Any] = {
@@ -1033,7 +1240,11 @@ def _video_source_config(
 ) -> dict[str, Any]:
     """Read and verify the real bundle's inner visual-VAE config."""
 
-    source_path = component_dir / "source" / "config.json"
+    source_path = _resolve_within_root(
+        component_dir,
+        component_dir / "source" / "config.json",
+        label="video_vae source config",
+    )
     source = _read_json(source_path)
     outer_source_class = outer_config.get("source_class_name")
     if outer_source_class not in (None, "AutoencoderKLLegacy"):
@@ -1155,7 +1366,7 @@ def load_video_vae(
     component_dir = resolve_h3_component_dir(
         model_or_component_path, "video_vae"
     )
-    config = _read_json(component_dir / "config.json")
+    config = _component_config(component_dir, "video_vae")
     class_name = config.get("_class_name")
     if class_name not in (None, "MiniMaxH3VideoVAE"):
         raise H3VAEError(
@@ -1210,7 +1421,7 @@ def load_audio_vae(
     component_dir = resolve_h3_component_dir(
         model_or_component_path, "audio_vae"
     )
-    config = _read_json(component_dir / "config.json")
+    config = _component_config(component_dir, "audio_vae")
     class_name = config.get("_class_name")
     if class_name not in (None, "MiniMaxH3AudioVAE"):
         raise H3VAEError(
@@ -1266,15 +1477,24 @@ def load_h3_vae_bundle(
 ) -> H3VAEBundle:
     """Load both native H3 VAEs from a release root."""
 
-    component_root = Path(model_root).expanduser()
+    selected_root = Path(model_root).expanduser().resolve()
+    component_root = selected_root
     if vae_path is not None:
         selected = Path(vae_path).expanduser()
-        component_root = (
+        if not selected.is_absolute() and ".." in selected.parts:
+            raise H3VAEError(
+                f"vae_path must not traverse outside model_root: {vae_path!r}"
+            )
+        candidate = (
             selected
             if selected.is_absolute()
-            else component_root / selected
+            else selected_root / selected
         )
-    component_root = component_root.resolve()
+        component_root = _resolve_within_root(
+            selected_root,
+            candidate,
+            label="Selected merged VAE",
+        )
 
     video = load_video_vae(
         component_root,

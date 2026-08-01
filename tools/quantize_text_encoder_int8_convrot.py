@@ -33,6 +33,18 @@ LINEAR_RE = re.compile(TEXT_ENCODER_QUANT_LINEAR)
 DROP_RE = re.compile(TEXT_ENCODER_DROP_KEY)
 
 
+def normalize_te_partition(value: str) -> str:
+    """Normalize TE provenance; Qwen weights are shared across both partitions."""
+
+    normalized = str(value).strip().lower()
+    names = {"shared": "shared", "fl2va": "FL2VA", "ref2va": "Ref2VA"}
+    if normalized not in names:
+        raise ValueError(
+            "text-encoder partition must be 'shared', 'FL2VA', or 'Ref2VA'"
+        )
+    return names[normalized]
+
+
 def classify_te_weight(base: str, shape: tuple[int, ...]) -> int | None:
     """返回 groupsize；不可量化返回 None。"""
     m = LINEAR_RE.match(base)
@@ -76,16 +88,24 @@ def run_quantize(
     mseclip: bool = True,
     warn_thresh: float = 2.0,
     keep_dropped: bool = False,
+    partition: str = "shared",
 ) -> dict[str, Any]:
     import torch
     from safetensors import safe_open
     from safetensors.torch import save_file
 
     src, dst = Path(src), Path(dst)
+    partition = normalize_te_partition(partition)
     if not (src / "config.json").is_file():
         raise SystemExit(f"缺少 config.json: {src}")
     shards, weight_map = QT._checkpoint_shards(src)
     qmap = plan_te(weight_map, src)
+    expected_linears = TEXT_ENCODER_SELECTED_LAYERS * 7
+    if len(qmap) != expected_linears:
+        raise RuntimeError(
+            "Qwen text-encoder quantization plan is incomplete: "
+            f"expected {expected_linears} linears, found {len(qmap)}"
+        )
     by_pat: dict[str, list] = collections.defaultdict(lambda: [0, None, None])
     for name, gs in qmap.items():
         pat = re.sub(r"\d+", "N", name)
@@ -98,7 +118,7 @@ def run_quantize(
         print(f"  x{c:<4d} gs{gs:<3d} {pat}")
     if dry_run:
         print("[dry-run] nothing written.")
-        return {"qmap": qmap}
+        return {"qmap": qmap, "partition": partition}
 
     dst.mkdir(parents=True, exist_ok=True)
     out_file = dst / INT8_TE_FILENAME  # 模型文件名带模型信息+量化格式
@@ -154,6 +174,11 @@ def run_quantize(
                     torch.cuda.empty_cache()
         print(f"  shard done {sn} ({nq}/{len(qmap)})", flush=True)
 
+    if nq != expected_linears:
+        raise RuntimeError(
+            "Qwen text-encoder quantization did not cover every planned "
+            f"Linear: expected {expected_linears}, quantized {nq}"
+        )
     save_file(out, str(out_file))
     (dst / "model.safetensors.index.json").write_text(
         json.dumps({"metadata": {"total_size": out_file.stat().st_size}, "weight_map": {k: out_file.name for k in out}}, indent=2),
@@ -168,6 +193,7 @@ def run_quantize(
     meta = {
         "format": INT8_FORMAT,
         "convrot": True,
+        "partition": partition,
         "arch": "qwen3_vl_text_encoder",
         "quantized_linears": nq,
         "dropped_keys": dropped,
@@ -198,12 +224,19 @@ def main():
     ap.add_argument("--no-mseclip", action="store_true")
     ap.add_argument("--keep-dropped", action="store_true", help="保留 lm_head 与 layer>=50（默认丢弃）")
     ap.add_argument("--warn-thresh", type=float, default=2.0)
+    ap.add_argument(
+        "--partition",
+        default="shared",
+        choices=("shared", "FL2VA", "Ref2VA"),
+        help="TE 权重归属；官方 Qwen 在两个 H3 分区共用，默认 shared",
+    )
     args = ap.parse_args()
     src = Path(args.src).expanduser().resolve()
     dst = Path(args.dst).expanduser().resolve() if args.dst else src.parent / INT8_TE_DIRNAME
     run_quantize(
         src, dst, device=args.device, dry_run=args.dry_run, verify=args.verify,
         mseclip=not args.no_mseclip, warn_thresh=args.warn_thresh, keep_dropped=args.keep_dropped,
+        partition=args.partition,
     )
 
 

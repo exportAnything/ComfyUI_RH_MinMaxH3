@@ -69,6 +69,31 @@ class StaticTests(unittest.TestCase):
         self.assertFalse(_is_quantized_map({"blocks.0.attn.qkv_proj.weight": "a.safetensors"}, []))
         self.assertTrue(any(s.endswith("comfy_quant") for s in QUANT_KEY_SUFFIXES))
 
+    def test_qwen_cut_key_whitelist_is_narrow(self):
+        from minimax_h3_nodes.runtime.qwen_encoder import (
+            _intentional_qwen_cut_key,
+        )
+
+        self.assertTrue(_intentional_qwen_cut_key("lm_head.weight"))
+        self.assertTrue(
+            _intentional_qwen_cut_key(
+                "language_model.layers.50.self_attn.q_proj.weight"
+            )
+        )
+        self.assertTrue(
+            _intentional_qwen_cut_key("language_model.rotary_emb.inv_freq")
+        )
+        self.assertTrue(
+            _intentional_qwen_cut_key("visual.rotary_emb.inv_freq")
+        )
+        self.assertFalse(
+            _intentional_qwen_cut_key(
+                "language_model.layers.49.self_attn.q_proj.weight"
+            )
+        )
+        self.assertFalse(_intentional_qwen_cut_key("lm_head.bias"))
+        self.assertFalse(_intentional_qwen_cut_key("evil.rotary_emb.inv_freq"))
+
     def test_loader_model_choices_are_explicit_and_required(self):
         from minimax_h3_nodes.nodes import (
             MiniMaxH3DirectModelLoader,

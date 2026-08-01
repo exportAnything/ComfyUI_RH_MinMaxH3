@@ -260,6 +260,310 @@ class TorchRuntimeTests(unittest.TestCase):
         object.__setattr__(model, "_h3_compute_device", torch.device("cuda:0"))
         self.assertEqual(_model_device(model), torch.device("cuda:0"))
 
+    def test_dit_handle_without_model_patcher_lifecycle(self):
+        from pathlib import Path
+
+        import torch
+
+        from minimax_h3_nodes.runtime.model_loader import H3ModelHandle
+
+        model = torch.nn.Linear(2, 2, device="cpu")
+        handle = H3ModelHandle(
+            model=model,
+            model_patcher=None,
+            component_path=Path("/tmp/fake-h3-transformer"),
+            load_device=torch.device("cpu"),
+            offload_device=torch.device("cpu"),
+            dtype=torch.float32,
+            metadata={},
+            checkpoint_files=(),
+        )
+
+        self.assertIs(handle.load_for_inference(), model)
+        self.assertEqual(model._h3_compute_device, torch.device("cpu"))
+        self.assertTrue(all(value.device.type == "cpu" for value in model.parameters()))
+
+        handle.offload_after_inference()
+        self.assertTrue(all(value.device.type == "cpu" for value in model.parameters()))
+        self.assertFalse(hasattr(model, "_h3_compute_device"))
+
+        # Comfy owns the patcher's physical residency, but the handle's compute
+        # marker is session-scoped and must not survive an offload boundary.
+        handle.model_patcher = object()
+        object.__setattr__(model, "_h3_compute_device", torch.device("cuda:0"))
+        handle.offload_after_inference()
+        self.assertFalse(hasattr(model, "_h3_compute_device"))
+
+    def test_plain_linear_casts_bf16_checkpoint_to_float16_target(self):
+        import torch
+
+        from minimax_h3_nodes.runtime.model_loader import _flush_linear
+
+        linear = torch.nn.Linear(
+            3,
+            2,
+            bias=True,
+            device="meta",
+            dtype=torch.float16,
+        )
+        checkpoint_weight = torch.randn(2, 3, dtype=torch.bfloat16)
+        checkpoint_bias = torch.randn(2, dtype=torch.bfloat16)
+
+        self.assertFalse(
+            _flush_linear(
+                linear,
+                "projection.",
+                {
+                    "weight": checkpoint_weight,
+                    "bias": checkpoint_bias,
+                },
+                torch.device("cpu"),
+            )
+        )
+        self.assertEqual(linear.weight.dtype, torch.float16)
+        self.assertEqual(linear.bias.dtype, torch.float16)
+        self.assertTrue(
+            torch.equal(linear.weight, checkpoint_weight.to(torch.float16))
+        )
+        self.assertTrue(
+            torch.equal(linear.bias, checkpoint_bias.to(torch.float16))
+        )
+
+    def test_nonstreamable_dit_tensor_budget_and_placement_are_explicit(self):
+        import torch
+
+        from minimax_h3_nodes.runtime.model_loader import (
+            _misplaced_nonstreamable_tensors,
+            _nonstreamable_tensor_bytes,
+            _nonstreamable_tensor_items,
+        )
+
+        class Streamable(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.weight = torch.nn.Parameter(torch.ones(4, 4))
+                self.comfy_cast_weights = True
+
+        class TinyModel(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.native = torch.nn.Linear(4, 3)
+                self.streamed = Streamable()
+                self.register_buffer("native_buffer", torch.ones(2))
+
+        model = TinyModel()
+        items = dict(_nonstreamable_tensor_items(model))
+        self.assertIn("native.weight", items)
+        self.assertIn("native.bias", items)
+        self.assertIn("native_buffer", items)
+        self.assertNotIn("streamed.weight", items)
+        self.assertEqual(
+            _nonstreamable_tensor_bytes(model),
+            sum(tensor.nbytes for tensor in items.values()),
+        )
+        self.assertEqual(
+            _misplaced_nonstreamable_tensors(model, torch.device("cpu")),
+            [],
+        )
+        misplaced = _misplaced_nonstreamable_tensors(
+            model,
+            torch.device("meta"),
+        )
+        self.assertTrue(any(item.startswith("native.weight=") for item in misplaced))
+        self.assertFalse(any(item.startswith("streamed.weight=") for item in misplaced))
+
+    def test_full_load_placement_failure_unloads_model_patcher(self):
+        import sys
+        import types
+        from pathlib import Path
+        from unittest import mock
+
+        import torch
+
+        from minimax_h3_nodes.runtime.model_loader import H3ModelHandle
+
+        class FakePatcher:
+            model = object()
+            pinned = ()
+
+            def __init__(self):
+                self.loaded = 0
+
+            def loaded_size(self):
+                return self.loaded
+
+            def detach(self):
+                self.loaded = 0
+
+        patcher = FakePatcher()
+        unload_calls = []
+        comfy = types.ModuleType("comfy")
+        comfy.__path__ = []
+        management = types.ModuleType("comfy.model_management")
+
+        def load_models_gpu(_patchers, **_kwargs):
+            patcher.loaded = 1
+
+        def unload_model_and_clones(value):
+            unload_calls.append(value)
+            value.loaded = 0
+
+        management.load_models_gpu = load_models_gpu
+        management.unload_model_and_clones = unload_model_and_clones
+        comfy.model_management = management
+        model = torch.nn.Linear(2, 2, device="cpu")
+        handle = H3ModelHandle(
+            model=model,
+            model_patcher=patcher,
+            component_path=Path("/tmp/fake-h3-transformer"),
+            load_device=torch.device("cuda:0"),
+            offload_device=torch.device("cpu"),
+            dtype=torch.bfloat16,
+            metadata={},
+            checkpoint_files=(),
+            quantized=False,
+        )
+        with mock.patch.dict(
+            sys.modules,
+            {"comfy": comfy, "comfy.model_management": management},
+        ), self.assertRaisesRegex(RuntimeError, "did not fully load"):
+            handle.load_for_inference()
+
+        self.assertEqual(unload_calls, [patcher])
+        self.assertEqual(patcher.loaded, 0)
+        self.assertFalse(hasattr(model, "_h3_compute_device"))
+
+    def test_indexless_quant_detection_scans_every_shard(self):
+        import tempfile
+        from pathlib import Path
+
+        import torch
+        from safetensors.torch import save_file
+
+        from minimax_h3_nodes.runtime.model_loader import _is_quantized_map
+
+        with tempfile.TemporaryDirectory() as raw:
+            first = Path(raw) / "model-00001.safetensors"
+            second = Path(raw) / "model-00002.safetensors"
+            save_file({"plain.weight": torch.ones(1)}, str(first))
+            save_file(
+                {"quantized.comfy_quant": torch.ones(1, dtype=torch.uint8)},
+                str(second),
+            )
+            self.assertTrue(_is_quantized_map(None, [first, second]))
+
+    def test_vae_component_and_shards_cannot_escape_selected_root(self):
+        import json
+        import tempfile
+        from pathlib import Path
+
+        from minimax_h3_nodes.runtime.vae_adapter import (
+            H3VAEError,
+            _component_config,
+            _component_weight_files,
+            _files_from_safetensors_index,
+            _video_source_config,
+            resolve_h3_component_dir,
+        )
+
+        with tempfile.TemporaryDirectory() as raw:
+            base = Path(raw)
+            root = base / "vae"
+            root.mkdir()
+            outside_component = base / "outside-video-vae"
+            outside_component.mkdir()
+            (outside_component / "config.json").write_text(
+                json.dumps({"latent_channels": 24}),
+                encoding="utf-8",
+            )
+
+            (root / "model_index.json").write_text(
+                json.dumps(
+                    {"video_vae": {"path": "../outside-video-vae"}}
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(H3VAEError, "must not contain"):
+                resolve_h3_component_dir(root, "video_vae")
+
+            (root / "model_index.json").unlink()
+            (root / "video_vae").symlink_to(outside_component)
+            with self.assertRaisesRegex(H3VAEError, "outside selected VAE root"):
+                resolve_h3_component_dir(root, "video_vae")
+
+            component = base / "audio_vae"
+            component.mkdir()
+            outside_shard = base / "outside.safetensors"
+            outside_shard.touch()
+            index = component / "model.safetensors.index.json"
+            for shard_name in (
+                "../outside.safetensors",
+                str(outside_shard.resolve()),
+            ):
+                with self.subTest(shard_name=shard_name):
+                    index.write_text(
+                        json.dumps({"weight_map": {"x": shard_name}}),
+                        encoding="utf-8",
+                    )
+                    with self.assertRaisesRegex(H3VAEError, "must be relative"):
+                        _files_from_safetensors_index(
+                            index,
+                            component_root=component,
+                        )
+
+            linked = component / "linked.safetensors"
+            linked.symlink_to(outside_shard)
+            index.write_text(
+                json.dumps({"weight_map": {"x": linked.name}}),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(H3VAEError, "outside selected VAE root"):
+                _files_from_safetensors_index(
+                    index,
+                    component_root=component,
+                )
+
+            index.unlink()
+            linked.unlink()
+            (component / "model.safetensors").symlink_to(outside_shard)
+            with self.assertRaisesRegex(H3VAEError, "outside selected VAE root"):
+                _component_weight_files(component, "audio_vae", {})
+
+            outside_config = base / "outside-config.json"
+            outside_config.write_text("{}", encoding="utf-8")
+            for component_name in ("video_vae", "audio_vae"):
+                escaped_component = base / f"escaped-{component_name}"
+                escaped_component.mkdir()
+                (escaped_component / "config.json").symlink_to(outside_config)
+                with self.subTest(component_name=component_name), self.assertRaisesRegex(
+                    H3VAEError, "outside selected VAE root"
+                ):
+                    _component_config(escaped_component, component_name)
+
+            video_component = base / "video-source-config-escape"
+            (video_component / "source").mkdir(parents=True)
+            (video_component / "source" / "config.json").symlink_to(
+                outside_config
+            )
+            with self.assertRaisesRegex(H3VAEError, "outside selected VAE root"):
+                _video_source_config(video_component, {})
+
+    def test_vae_official_source_checkpoint_remains_allowed(self):
+        import tempfile
+        from pathlib import Path
+
+        from minimax_h3_nodes.runtime.vae_adapter import _component_weight_files
+
+        with tempfile.TemporaryDirectory() as raw:
+            component = Path(raw) / "video_vae"
+            checkpoint = component / "source" / "model.safetensors"
+            checkpoint.parent.mkdir(parents=True)
+            checkpoint.touch()
+            self.assertEqual(
+                _component_weight_files(component, "video_vae", {}),
+                [checkpoint.resolve()],
+            )
+
     def test_tiny_dit_meta_and_forward_contract(self):
         import torch
 

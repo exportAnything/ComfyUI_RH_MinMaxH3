@@ -9,11 +9,11 @@ from typing import Any
 
 from .components import (
     H3ComponentError,
-    model_root_path,
     read_json,
     release_metadata,
     resolve_component,
-    validate_t2va_partition,
+    resolve_partition_root,
+    validate_task_partition,
 )
 import logging
 
@@ -51,6 +51,32 @@ _TRANSFORMER_CONFIG_FIELDS = frozenset(
         "final_norm_eps",
     }
 )
+
+# The public H3 releases all use this one DiT architecture.  Keep this gate in
+# the loader (rather than MiniMaxH3DiTConfig itself) so tiny configurations
+# remain useful for unit tests while an untrusted release config cannot make us
+# allocate an arbitrarily large meta-module graph before checkpoint validation.
+_OFFICIAL_H3_DIT_ARCHITECTURE = {
+    "num_layers": 50,
+    "token_refiner_num_layers": 2,
+    "hidden_size": 5376,
+    "num_attention_heads": 56,
+    "attention_head_dim": 128,
+    "ffn_hidden_size": 14336,
+    "latents_dim": 24,
+    "audio_latents_dim": 32,
+    "patch_size": (1, 2, 2),
+    "text_dim": 5120,
+    "timestep_input_dim": 256,
+    "time_embed_hidden_size": 5376,
+    "time_embed_dim": 2688,
+    "adaln_out_features": 18 * 5376,
+    "final_adaln_out_features": 2 * 5376,
+    "rope_inv_freq_len": 16,
+    "norm_eps": 1e-5,
+    "qk_norm_eps": 1e-5,
+    "final_norm_eps": 1e-5,
+}
 _LINEAR_LEAVES = frozenset(
     {"weight", "bias", "weight_scale", "weight_scale_2", "comfy_quant", "input_scale"}
 )
@@ -79,11 +105,98 @@ def _validate_transformer_config(raw: dict, path: Path) -> None:
             f"{path} declares unsupported _class_name={class_name!r}; "
             "expected 'MiniMaxH3DiTModel'"
         )
-    missing = sorted(_TRANSFORMER_CONFIG_FIELDS - set(raw))
+
+    # Mirror MiniMaxH3DiTConfig.from_dict: published configs may wrap the
+    # architecture while Diffusers-style configs keep these fields at top
+    # level.  Validate the exact mapping that will reach the constructor.
+    architecture = raw
+    for wrapper_key in ("arch_config", "transformer_config", "dit_config"):
+        nested = architecture.get(wrapper_key)
+        if isinstance(nested, dict):
+            architecture = nested
+            break
+
+    missing = sorted(_TRANSFORMER_CONFIG_FIELDS - set(architecture))
     if missing:
         raise H3ComponentError(
             f"{path} is missing H3 transformer config fields: {missing!r}"
         )
+
+    mismatches: list[str] = []
+    for field, expected in _OFFICIAL_H3_DIT_ARCHITECTURE.items():
+        actual = architecture[field]
+        if field == "patch_size":
+            if (
+                not isinstance(actual, (list, tuple))
+                or any(type(value) is not int for value in actual)
+                or tuple(actual) != expected
+            ):
+                mismatches.append(f"{field}={actual!r} (expected {expected!r})")
+            continue
+        if type(expected) is int:
+            matches = type(actual) is int and actual == expected
+        else:
+            matches = (
+                isinstance(actual, (int, float))
+                and not isinstance(actual, bool)
+                and float(actual) == expected
+            )
+        if not matches:
+            mismatches.append(f"{field}={actual!r} (expected {expected!r})")
+
+    if mismatches:
+        raise H3ComponentError(
+            f"{path} does not match the official MiniMax-H3 DiT architecture: "
+            + "; ".join(mismatches)
+        )
+
+
+def _validate_quant_meta_partition(
+    component: Path,
+    partition: str,
+    *,
+    required: bool = False,
+) -> dict:
+    """Validate the converter manifest for an INT8/convrot DiT.
+
+    A BF16 component legitimately has no ``quant_meta.json``.  Once checkpoint
+    inspection identifies quantized tensors, however, this manifest is the
+    partition proof and is mandatory.
+    """
+
+    path = component / "quant_meta.json"
+    if not path.is_file():
+        if required:
+            raise H3ComponentError(
+                f"INT8/convrot checkpoint requires {path} with format, "
+                "convrot, and partition metadata"
+            )
+        return {}
+    metadata = read_json(path)
+    if metadata.get("format") != INT8_FORMAT:
+        raise H3ComponentError(
+            f"{path}.format must be {INT8_FORMAT!r} for an INT8 H3 DiT"
+        )
+    if metadata.get("convrot") is not True:
+        raise H3ComponentError(
+            f"{path}.convrot must be true for an INT8 H3 DiT"
+        )
+    declared = metadata.get("partition")
+    if not isinstance(declared, str) or not declared.strip():
+        raise H3ComponentError(
+            f"{path}.partition must be a non-empty string for an INT8 H3 DiT"
+        )
+    normalized = declared.strip().lower()
+    if normalized not in {"fl2va", "ref2va"}:
+        raise H3ComponentError(
+            f"{path}.partition must be 'FL2VA' or 'Ref2VA', got {declared!r}"
+        )
+    if normalized != partition:
+        raise H3ComponentError(
+            f"INT8 checkpoint partition mismatch: requested {partition!r}, "
+            f"but {path} declares {declared!r}"
+        )
+    return metadata
 
 
 def _dtype(value: str):
@@ -130,20 +243,49 @@ def _devices(device: str, offload_device: str):
 
 def _checkpoint_index(component: Path) -> tuple[list[Path], dict[str, str] | None]:
     """返回 (分片路径列表, weight_map 或 None)。"""
+
+    component = component.resolve()
+
+    def contained_checkpoint(raw: str | Path, *, label: str) -> Path:
+        if not isinstance(raw, (str, Path)) or not str(raw).strip():
+            raise H3ComponentError(f"{label} must be a non-empty relative path")
+        relative = Path(raw)
+        if relative.is_absolute() or ".." in relative.parts:
+            raise H3ComponentError(
+                f"{label} must stay below {component}; got {str(raw)!r}"
+            )
+        candidate = (component / relative).resolve()
+        try:
+            candidate.relative_to(component)
+        except ValueError as exc:
+            raise H3ComponentError(
+                f"{label} resolves outside checkpoint component {component}: "
+                f"{candidate}"
+            ) from exc
+        return candidate
+
     index_candidates = (
         "diffusion_pytorch_model.safetensors.index.json",
         "model.safetensors.index.json",
         "transformer.safetensors.index.json",
     )
     for name in index_candidates:
-        path = component / name
+        path = contained_checkpoint(name, label="Checkpoint index")
         if not path.is_file():
             continue
         value = read_json(path)
         weight_map = value.get("weight_map")
         if not isinstance(weight_map, dict) or not weight_map:
             raise H3ComponentError(f"{path} has no non-empty weight_map")
-        files = sorted({component / str(item) for item in weight_map.values()})
+        files = sorted(
+            {
+                contained_checkpoint(
+                    item,
+                    label=f"Checkpoint shard referenced by {path}",
+                )
+                for item in weight_map.values()
+            }
+        )
         missing = [item for item in files if not item.is_file()]
         if missing:
             raise H3ComponentError(
@@ -158,7 +300,15 @@ def _checkpoint_index(component: Path) -> tuple[list[Path], dict[str, str] | Non
         "*.safetensors",
     )
     for pattern in patterns:
-        files = sorted(component.glob(pattern))
+        files = sorted(
+            {
+                contained_checkpoint(
+                    path.relative_to(component),
+                    label="Checkpoint shard",
+                )
+                for path in component.glob(pattern)
+            }
+        )
         if files:
             return files, None
     raise H3ComponentError(
@@ -171,8 +321,11 @@ def _is_quantized_map(weight_map: dict[str, str] | None, shards: list[Path]) -> 
         return any(k.endswith(QUANT_KEY_SUFFIXES) for k in weight_map)
     from safetensors import safe_open
 
-    with safe_open(str(shards[0]), framework="pt") as reader:
-        return any(k.endswith(QUANT_KEY_SUFFIXES) for k in reader.keys())
+    for shard in shards:
+        with safe_open(str(shard), framework="pt") as reader:
+            if any(k.endswith(QUANT_KEY_SUFFIXES) for k in reader.keys()):
+                return True
+    return False
 
 
 def _require_int8_ops(compute_dtype):
@@ -372,6 +525,20 @@ def _flush_linear(module, prefix: str, bag: dict[str, Any], device) -> bool:
     import torch
     import torch.nn as nn
 
+    # QuantizedTensor materialization validates the encoded qdata against the
+    # checkpoint bag, but it cannot infer the architecture's intended Linear
+    # dimensions after replacement.  Check the original meta slots first so a
+    # corrupt INT8 matrix cannot silently replace a differently-shaped layer.
+    for leaf in ("weight", "bias"):
+        tensor = bag.get(leaf)
+        target = getattr(module, leaf, None)
+        if tensor is not None and target is not None:
+            if tuple(tensor.shape) != tuple(target.shape):
+                raise H3ComponentError(
+                    f"Shape mismatch for {prefix}{leaf}: checkpoint "
+                    f"{tuple(tensor.shape)} vs model {tuple(target.shape)}"
+                )
+
     quant_config = _quantized_linear_config(prefix, bag)
     if type(module) is nn.Linear:
         if quant_config is not None:
@@ -382,12 +549,15 @@ def _flush_linear(module, prefix: str, bag: dict[str, Any], device) -> bool:
             if leaf not in {"weight", "bias"}:
                 continue
             target = getattr(module, leaf)
-            if target is not None and tuple(tensor.shape) != tuple(target.shape):
-                raise H3ComponentError(
-                    f"Shape mismatch for {prefix}{leaf}: checkpoint "
-                    f"{tuple(tensor.shape)} vs model {tuple(target.shape)}"
-                )
-            _assign_tensor(module, leaf, tensor.to(device=device))
+            value = tensor
+            if (
+                target is not None
+                and tensor.is_floating_point()
+                and target.is_floating_point()
+                and tensor.dtype != target.dtype
+            ):
+                value = tensor.to(dtype=target.dtype)
+            _assign_tensor(module, leaf, value.to(device=device))
         return False
 
     # Comfy's quantized loader allocates qdata and scale on factory_kwargs.device.
@@ -448,6 +618,87 @@ def _default_rope(config, *, device):
     )
 
 
+def _nonstreamable_tensor_items(model):
+    """Yield direct tensors that Comfy cannot stream through cast-weight ops."""
+
+    seen: set[int] = set()
+    for module_name, module in model.named_modules():
+        if hasattr(module, "comfy_cast_weights"):
+            continue
+        for collection_name in ("_parameters", "_buffers"):
+            collection = getattr(module, collection_name, {})
+            for tensor_name, tensor in collection.items():
+                if tensor is None or id(tensor) in seen:
+                    continue
+                seen.add(id(tensor))
+                name = f"{module_name}.{tensor_name}" if module_name else tensor_name
+                yield name, tensor
+
+
+def _nonstreamable_tensor_bytes(model) -> int:
+    return sum(_tensor_nbytes(tensor) for _name, tensor in _nonstreamable_tensor_items(model))
+
+
+def _misplaced_nonstreamable_tensors(model, device, *, limit: int = 8) -> list[str]:
+    import torch
+
+    target = torch.device(device)
+    misplaced: list[str] = []
+    for name, tensor in _nonstreamable_tensor_items(model):
+        if tensor.device != target:
+            misplaced.append(f"{name}={tensor.device}")
+            if len(misplaced) >= int(limit):
+                break
+    return misplaced
+
+
+def _unload_model_patcher(patcher) -> None:
+    """Release a Comfy ModelPatcher, detaching if manager cleanup is unavailable."""
+
+    manager_error: Exception | None = None
+    try:
+        import comfy.model_management as mm
+
+        unload = getattr(mm, "unload_model_and_clones", None)
+        if callable(unload):
+            unload(patcher)
+        else:
+            manager_error = RuntimeError(
+                "comfy.model_management.unload_model_and_clones is unavailable"
+            )
+    except Exception as exc:
+        manager_error = exc
+
+    loaded_size = getattr(patcher, "loaded_size", lambda: 0)()
+    bank = getattr(patcher, "model", None)
+    still_loaded = bool(
+        loaded_size
+        or getattr(bank, "model_lowvram", False)
+        or getattr(patcher, "pinned", ())
+    )
+    if manager_error is not None or still_loaded:
+        detach = getattr(patcher, "detach", None)
+        if not callable(detach):
+            if manager_error is not None:
+                raise manager_error
+            raise RuntimeError("H3 ModelPatcher remains loaded and cannot detach")
+        detach()
+        if manager_error is not None:
+            LOGGER.warning(
+                "Comfy ModelPatcher manager unload failed; detached directly: %s",
+                manager_error,
+            )
+
+
+def _clear_compute_device_marker(model) -> None:
+    """Remove the session marker safely even when cleanup runs more than once."""
+
+    try:
+        delattr(model, "_h3_compute_device")
+    except AttributeError:
+        pass
+
+
 @dataclass
 class H3ModelHandle:
     """Object passed through the custom ``H3_MODEL`` Comfy socket."""
@@ -471,65 +722,117 @@ class H3ModelHandle:
         return self.model_patcher
 
     def load_for_inference(self):
-        if self.model_patcher is not None:
-            import comfy.model_management as mm
+        import torch
 
-            force_full = FORCE_FULL_LOAD_BF16 and not (
-                self.quantized and ALLOW_PARTIAL_OFFLOAD_INT8
-            )
-            import torch
+        try:
+            if self.model_patcher is not None:
+                import comfy.model_management as mm
 
-            try:
-                if force_full:
-                    mm.load_models_gpu(
-                        [self.model_patcher],
-                        force_full_load=True,
+                force_full = FORCE_FULL_LOAD_BF16 and not (
+                    self.quantized and ALLOW_PARTIAL_OFFLOAD_INT8
+                )
+                nonstreamable_bytes = (
+                    _nonstreamable_tensor_bytes(self.model)
+                    if self.quantized and ALLOW_PARTIAL_OFFLOAD_INT8
+                    else 0
+                )
+                try:
+                    if force_full:
+                        mm.load_models_gpu(
+                            [self.model_patcher],
+                            force_full_load=True,
+                        )
+                    else:  # int8 partial：给采样激活及不可流式层留 reserve
+                        reserve = DIT_INFERENCE_RESERVE + nonstreamable_bytes
+                        try:
+                            mm.load_models_gpu(
+                                [self.model_patcher],
+                                memory_required=reserve,
+                            )
+                        except torch.OutOfMemoryError:  # 清卡后加倍激活预留重试一次
+                            LOGGER.warning("DiT partial load OOM，清卡后以 2x reserve 重试")
+                            mm.unload_all_models()
+                            mm.soft_empty_cache()
+                            mm.load_models_gpu(
+                                [self.model_patcher],
+                                memory_required=(
+                                    2 * DIT_INFERENCE_RESERVE
+                                    + nonstreamable_bytes
+                                ),
+                            )
+                except TypeError:
+                    mm.load_models_gpu([self.model_patcher])
+
+                if self.quantized and ALLOW_PARTIAL_OFFLOAD_INT8:
+                    misplaced_static = _misplaced_nonstreamable_tensors(
+                        self.model,
+                        self.load_device,
                     )
-                else:  # int8 partial：给采样激活留出 reserve，避免权重塞满后采样必 OOM
-                    try:
-                        mm.load_models_gpu([self.model_patcher], memory_required=DIT_INFERENCE_RESERVE)
-                    except torch.OutOfMemoryError:  # 兜底：清卡后加倍预留重试一次
-                        LOGGER.warning("DiT partial load OOM，清卡后以 2x reserve 重试")
-                        mm.unload_all_models()
-                        mm.soft_empty_cache()
-                        mm.load_models_gpu([self.model_patcher], memory_required=2 * DIT_INFERENCE_RESERVE)
-            except TypeError:
-                mm.load_models_gpu([self.model_patcher])
-        else:
-            self.model.to(self.load_device)
-        # Partial INT8 offload intentionally leaves some (often the first)
-        # parameters on CPU.  Sampling activations must still be created on
-        # ComfyUI's load device so mixed_precision_ops can stream/cast the
-        # resident and offloaded weights against CUDA inputs.
-        object.__setattr__(
-            self.model,
-            "_h3_compute_device",
-            torch.device(self.load_device),
-        )
-        if self.quantized and ALLOW_PARTIAL_OFFLOAD_INT8:
-            return self.model  # MixedPrecisionOps 允许 CPU/GPU 混驻
-        misplaced: list[str] = []
-        tensors = (
-            *self.model.named_parameters(),
-            *self.model.named_buffers(),
-        )
-        for name, tensor in tensors:
-            if tensor.device != self.load_device:
-                misplaced.append(f"{name}={tensor.device}")
-                if len(misplaced) == 8:
-                    break
-        if misplaced:
-            raise RuntimeError(
-                "ComfyUI did not fully load the H3 DiT onto "
-                f"{self.load_device}; first misplaced tensors: "
-                + ", ".join(misplaced)
-                + ". Update ComfyUI or use a memory mode/device with enough VRAM."
+                    if misplaced_static:
+                        raise RuntimeError(
+                            "ComfyUI left non-streamable H3 DiT tensors off the "
+                            f"compute device {self.load_device}: "
+                            + ", ".join(misplaced_static)
+                        )
+            else:
+                self.model.to(self.load_device)
+
+            # Partial INT8 offload intentionally leaves streamable weights on
+            # CPU. Activations still belong on Comfy's load device.
+            object.__setattr__(
+                self.model,
+                "_h3_compute_device",
+                torch.device(self.load_device),
             )
-        return self.model
+            if self.quantized and ALLOW_PARTIAL_OFFLOAD_INT8:
+                return self.model
+
+            misplaced: list[str] = []
+            tensors = (
+                *self.model.named_parameters(),
+                *self.model.named_buffers(),
+            )
+            for name, tensor in tensors:
+                if tensor.device != self.load_device:
+                    misplaced.append(f"{name}={tensor.device}")
+                    if len(misplaced) == 8:
+                        break
+            if misplaced:
+                raise RuntimeError(
+                    "ComfyUI did not fully load the H3 DiT onto "
+                    f"{self.load_device}; first misplaced tensors: "
+                    + ", ".join(misplaced)
+                    + ". Update ComfyUI or use a memory mode/device with enough VRAM."
+                )
+            return self.model
+        except Exception:
+            _clear_compute_device_marker(self.model)
+            if self.model_patcher is not None:
+                try:
+                    _unload_model_patcher(self.model_patcher)
+                except Exception as cleanup_exc:
+                    LOGGER.error(
+                        "Failed to clean up H3 ModelPatcher after load error: %s",
+                        cleanup_exc,
+                    )
+            else:
+                try:
+                    self.model.to(self.offload_device)
+                except Exception as cleanup_exc:
+                    LOGGER.error(
+                        "Failed to offload raw H3 DiT after load error: %s",
+                        cleanup_exc,
+                    )
+            raise
 
     def offload_after_inference(self) -> None:
-        if self.model_patcher is None:
-            self.model.to(self.offload_device)
+        try:
+            if self.model_patcher is None:
+                self.model.to(self.offload_device)
+            else:
+                _unload_model_patcher(self.model_patcher)
+        finally:
+            _clear_compute_device_marker(self.model)
 
 
 def _comfy_patcher(model, load_device, offload_device, size: int):
@@ -549,6 +852,7 @@ def load_h3_model(
     model_root: str,
     partition: str = "fl2va",
     *,
+    task: str = "t2va",
     transformer_path: str | None = None,
     dtype: str = "bfloat16",
     device: str = "auto",
@@ -561,6 +865,35 @@ def load_h3_model(
     自动识别 BF16 与 int8_convrot（``.comfy_quant`` / ``.weight_scale``）checkpoint。
     """
 
+    normalized_partition = str(partition).strip().lower()
+    if normalized_partition not in {"fl2va", "ref2va"}:
+        raise H3ComponentError("partition must be 'fl2va' or 'ref2va'")
+
+    # Resolve the requested release child first.  All explicit components are
+    # subsequently constrained to this concrete partition root.
+    root = resolve_partition_root(model_root, normalized_partition)
+    metadata = release_metadata(root)
+    validate_task_partition(metadata, task, normalized_partition)
+    if not transformer_path:  # 未显式指定时自动优先 int8 量化目录，避免 BF16 整模上卡 OOM
+        auto = root / INT8_DIT_DIRNAME
+        if auto.is_dir() and (auto / "config.json").is_file():
+            transformer_path = str(auto)
+            LOGGER.info("transformer_path 未指定，自动选用量化目录 %s", INT8_DIT_DIRNAME)
+    component = resolve_component(
+        root,
+        ("transformer", "dit"),
+        explicit=transformer_path,
+        required_files=("config.json",),
+    )
+    quant_metadata = _validate_quant_meta_partition(
+        component, normalized_partition
+    )
+    config_path = component / "config.json"
+    config_raw = read_json(config_path)
+    _validate_transformer_config(config_raw, config_path)
+
+    # Imports and checkpoint discovery stay below all cheap partition checks so
+    # a mixed FL2VA/Ref2VA release fails before model allocation/materialization.
     import torch
     from safetensors import safe_open
 
@@ -570,42 +903,23 @@ def load_h3_model(
         prepare_checkpoint_tensor,
     )
 
-    normalized_partition = str(partition).strip().lower()
-    if normalized_partition not in {"fl2va", "ref2va"}:
-        raise H3ComponentError("partition must be 'fl2va' or 'ref2va'")
-    if normalized_partition != "fl2va":
-        raise H3ComponentError(
-            "The direct v0.2 sampler currently supports T2VA only; "
-            "T2VA requires the FL2VA checkpoint partition"
-        )
-
-    metadata = release_metadata(model_root)
-    validate_t2va_partition(metadata)
-    declared_partition = metadata.get("partition") if metadata else None
-    if declared_partition and declared_partition != normalized_partition:
-        raise H3ComponentError(
-            f"Requested {normalized_partition!r} weights, but model_index declares "
-            f"{declared_partition!r}"
-        )
-    if not transformer_path:  # 未显式指定时自动优先 int8 量化目录，避免 BF16 整模上卡 OOM
-        auto = model_root_path(model_root) / INT8_DIT_DIRNAME
-        if auto.is_dir() and (auto / "config.json").is_file():
-            transformer_path = str(auto)
-            LOGGER.info("transformer_path 未指定，自动选用量化目录 %s", INT8_DIT_DIRNAME)
-    component = resolve_component(
-        model_root,
-        ("transformer", "dit"),
-        explicit=transformer_path,
-        required_files=("config.json",),
-    )
-    config_path = component / "config.json"
-    config_raw = read_json(config_path)
-    _validate_transformer_config(config_raw, config_path)
     config = MiniMaxH3DiTConfig.from_dict(config_raw)
     model_dtype = _dtype(dtype)
     load_device, target_offload = _devices(device, offload_device)
     shards, weight_map = _checkpoint_index(component)
     quantized = _is_quantized_map(weight_map, shards)
+    if quantized:
+        if not quant_metadata:
+            quant_metadata = _validate_quant_meta_partition(
+                component,
+                normalized_partition,
+                required=True,
+            )
+    elif quant_metadata:
+        raise H3ComponentError(
+            f"{component / 'quant_meta.json'} declares INT8/convrot, but the "
+            "checkpoint contains no quantized tensor markers"
+        )
     operations = _require_int8_ops(model_dtype) if quantized else None
 
     model = MiniMaxH3DiTModel.from_config(

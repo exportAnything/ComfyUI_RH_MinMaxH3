@@ -1,83 +1,165 @@
 # ComfyUI-MiniMax-H3
 
-ComfyUI 进程内直接推理 MiniMax-H3（T2VA）的自定义节点，不依赖 SGLang / Diffusers Pipeline。
+[Chinese documentation](README_CN.md)
 
-## 要求
+Local, in-process MiniMax-H3 audio-video diffusion nodes for ComfyUI. The
+plugin runs the model components inside the ComfyUI process; it does not call
+an SGLang server or a Diffusers pipeline.
 
-- ComfyUI ≥ 0.27（原生 `int8_tensorwise` + convrot；推荐 0.28+）
-- `comfy-kitchen`、PyTorch CUDA、Triton
-- 权重目录：`models/diffusers/MiniMax-H3/{FL2VA|Ref2VA}/`（含 `transformer` / `text_encoder` / `video_vae` / `audio_vae`）
-- 注意：`tools/` 不是 Python 包（无 `__init__.py`），避免遮蔽 ComfyUI 自带的 `tools` 模块
+The task-aware path now exposes T2VA, FL2VA (first/last-frame-to-video+audio),
+and Ref2VA (ordered image/audio/video references). FL2VA and Ref2VA have passed
+local contract, packing, sampler, media-preprocessing, static-node, and unit
+validation. A full end-to-end run with the released CUDA checkpoints has not
+yet been completed for these two new paths, so treat them as an implementation
+preview until that validation is recorded.
 
-## 节点用法（T2VA）
+## Requirements
 
-1. `MiniMax H3 Direct Model Loader`：在 `transformer_path` 明确选择 DiT
-2. `MiniMax H3 Direct Text Encoder Loader`：在 `text_encoder_path` 明确选择 Qwen3-VL 条件编码器
-3. `MiniMax H3 Direct VAE Loader`：在 `vae_path` 明确选择合并后的 video/audio VAE 包
-4. `T2VA Target` → `T2VA Text Encode` → `Empty AV Latent` → `Dual Sigma Sampler` → `Decode AV`
+- ComfyUI 0.27 or newer (0.28+ recommended)
+- A CUDA build of PyTorch compatible with ComfyUI, plus Triton and
+  `comfy-kitchen`
+- `ffmpeg` and `ffprobe` on `PATH` for Ref2VA video/audio references
+- MiniMax-H3 weights downloaded separately; weights are not bundled here
+- Python dependencies from `requirements.txt`
 
-### 量化产物命名
+The runtime is large. INT8 reduces checkpoint storage and transfer cost, but
+does not make MiniMax-H3 a small model. Partial/streaming offload still needs
+substantial host RAM and fast storage.
 
-| 组件 | 目录 | 权重文件 |
-|------|------|----------|
-| DiT | `transformer_int8_convrot` | `MiniMax-H3-{FL2VA\|Ref2VA}-int8_convrot.safetensors` |
-| Text Encoder | `text_encoder_int8_convrot` | `qwen3-vl-32b-int8_convrot.safetensors` |
-| VAE（合并包） | `vae/` | `MiniMax-H3-video_vae.safetensors` / `MiniMax-H3-audio_vae.safetensors` |
+## Model layout
 
-三个 Loader 的 `transformer_path` / `text_encoder_path` / `vae_path` 都是**必填下拉直选**，不存在 `auto` 模型选择。推荐分别选择 `transformer_int8_convrot`、`text_encoder_int8_convrot`、`vae`。加载器识别 `.comfy_quant` / `.weight_scale`，Comfy 内部 format 仍为 `int8_tensorwise`。
+Place the release under either `ComfyUI/models/diffusers` or
+`ComfyUI/models/minimax_h3`. A single model root may contain both official task
+partitions:
 
-Text Encoder 上卡策略（`h3_settings.TE_GPU_HEADROOM` / `TE_VISUAL_ON_CPU`）：INT8 路径按真实 `qdata + scale` 字节数统计权重，embedding / norm / RoPE 常驻 GPU，350 个量化 Linear 由 Comfy ModelPatcher 按剩余显存部分常驻，其余逐层流式上卡；visual 塔默认常驻 CPU（纯文本编码用不到，省 ~7GB）。只有 CUDA OOM 时才清理并回退 CPU encode。BF16 路径仍需整个文本编码器容量。
+```text
+models/diffusers/MiniMax-H3/
+├── FL2VA/
+│   ├── transformer/                  # official BF16 DiT
+│   ├── transformer_int8_convrot/     # optional converted DiT
+│   ├── text_encoder/                 # official Qwen3-VL encoder
+│   ├── text_encoder_int8_convrot/    # optional converted encoder
+│   ├── video_vae/
+│   ├── audio_vae/
+│   └── vae/                          # generated merged VAE bundle
+│       ├── video_vae/
+│       └── audio_vae/
+└── Ref2VA/
+    └── ...                           # the same component layout
+```
 
-DiT 上卡策略（`h3_settings.DIT_INFERENCE_RESERVE`，默认 6GB）：int8 partial load 时把该额度留给采样激活，权重按剩余显存部分上卡（其余留 CPU 由 MixedPrecisionOps 兜底）；上卡 OOM 自动清卡并以 2 倍预留重试一次。
+FL2VA nodes only resolve the `FL2VA` partition; Ref2VA nodes only resolve the
+`Ref2VA` partition. Each task has three explicit component loaders:
 
-## 生成 int8_convrot 权重 / 合并 VAE
+- `... Model Loader (Direct)` selects the DiT directory.
+- `... Qwen3-VL Loader (Direct)` selects the text-encoder directory.
+- `... Dual VAE Loader (Direct)` selects the merged video/audio VAE directory.
+
+The selectors never silently switch between BF16 and INT8. Select
+`transformer`/`text_encoder` for official BF16 weights, or the corresponding
+`*_int8_convrot` directories for converted weights. Select `vae` for the
+merged VAE bundle.
+
+## FL2VA workflow
+
+The supported keyframe signatures are first frame, last frame, or first+last
+frame. Conditions and their semantic frame positions are carried together and
+validated again before sampling.
+
+1. Load an image with ComfyUI `LoadImage`.
+2. Build `MiniMax H3 FL2VA First / First+Last` (or `Last Only`).
+3. Load FL2VA DiT, Qwen3-VL, and VAE with the three FL2VA loaders.
+4. Build `MiniMax H3 FL2VA Target`, then run `FL2VA Encode`.
+5. Connect the same target to `Empty AV Latent`.
+6. Run `Dual Sigma Sampler`, `Decode Video + Audio`, `CreateVideo`, and
+   `SaveVideo`.
+
+Frontend workflow: [`examples/fl2va_first_frame_5s.json`](examples/fl2va_first_frame_5s.json).
+API workflow: [`examples/fl2va_first_frame_5s_api.json`](examples/fl2va_first_frame_5s_api.json).
+Replace the placeholder input image name before queueing either workflow.
+
+## Ref2VA workflow
+
+Ref2VA references are ordered. Chain the optional `references` input when
+adding each image, audio, video, or video+audio item; changing the chain order
+changes the multimodal presentation and conditioning rows.
+
+1. Load source media with the standard ComfyUI `LoadImage`, `LoadAudio`, or
+   `LoadVideo` nodes.
+2. Append each item with the matching `MiniMax H3 Ref2VA ... Reference` node.
+3. Load Ref2VA DiT, Qwen3-VL, and VAE with the three Ref2VA loaders.
+4. Feed the final ordered reference chain to both `Ref2VA Target` and
+   `Ref2VA Encode`.
+5. Finish with `Empty AV Latent`, `Dual Sigma Sampler`,
+   `Decode Video + Audio`, `CreateVideo`, and `SaveVideo`.
+
+Frontend workflow: [`examples/ref2va_image_audio_5s.json`](examples/ref2va_image_audio_5s.json).
+API workflow: [`examples/ref2va_image_audio_5s_api.json`](examples/ref2va_image_audio_5s_api.json).
+Replace both placeholder media names before queueing either workflow.
+
+Ref2VA video references are normalized to the official 24 fps preparation
+path; the Qwen presentation samples that prepared sequence at 2 fps. A
+`video_audio` reference must contain a soundtrack. Reference audio is prepared
+for the model's stereo/32 kHz VAE path.
+
+## Target and sampler semantics
+
+- Public target duration is 5–15 seconds. The runtime aligns the requested
+  frame count upward to MiniMax-H3's `17n+5` temporal boundary. For example,
+  a 5.0-second request at 24 fps resolves to 124 frames.
+- `auto` FL2VA geometry follows the keyframe media. A finite aspect ratio uses
+  the official `adapt_shape_v1` canvas policy. Ref2VA uses the official aspect
+  buckets (`21:9`, `16:9`, `4:3`, `1:1`, `3:4`, `9:16`); its `auto` default is
+  16:9.
+- Ref2VA duration `0` means infer the duration from exactly one real
+  audio-bearing reference. Use an explicit 5–15 second value when there are
+  zero or multiple audio-bearing references.
+- The sampler uses separate video and audio noise streams. Visual condition
+  rows are pinned at sigma `0.999`; audio-reference rows are pinned at sigma
+  `1.0` at every step. With 50 sigma points the model performs 49 DiT forwards.
+- The target, ordered conditions, partition, and release/component
+  fingerprints are checked across encoder, sampler, and decoder. Cross-wiring
+  FL2VA/Ref2VA components fails closed instead of producing undefined output.
+
+## INT8 conversion and VAE merge
+
+Run conversion from this repository and keep each partition separate:
 
 ```bash
 cd custom_nodes/ComfyUI-MiniMax-H3
-BASE=/path/to/models/diffusers/MiniMax-H3
+BASE=/path/to/ComfyUI/models/diffusers/MiniMax-H3
 
-# DiT（按分区分别量化；文件名自动带 FL2VA/Ref2VA）
-python3 tools/quantize_int8_convrot.py --src $BASE/FL2VA/transformer --device cuda --verify
-python3 tools/quantize_int8_convrot.py --src $BASE/Ref2VA/transformer --device cuda --verify
+python3 tools/quantize_int8_convrot.py \
+  --src "$BASE/FL2VA/transformer" --device cuda --verify
+python3 tools/quantize_int8_convrot.py \
+  --src "$BASE/Ref2VA/transformer" --device cuda --verify
 
-# Text Encoder（FL2VA/Ref2VA 权重相同可只转一次，再复制目录）
-python3 tools/quantize_text_encoder_int8_convrot.py --src $BASE/FL2VA/text_encoder --device cuda --verify
+python3 tools/quantize_text_encoder_int8_convrot.py \
+  --src "$BASE/FL2VA/text_encoder" --device cuda --verify
+python3 tools/quantize_text_encoder_int8_convrot.py \
+  --src "$BASE/Ref2VA/text_encoder" --device cuda --verify
 
-# 合并 video_vae + audio_vae，权重名带类型
-python3 tools/merge_vae.py --src $BASE/FL2VA
-python3 tools/merge_vae.py --src $BASE/Ref2VA
+python3 tools/merge_vae.py --src "$BASE/FL2VA"
+python3 tools/merge_vae.py --src "$BASE/Ref2VA"
 ```
 
-常用参数：`--dry-run` / `--verify` / `--exclude` / `--no-mseclip` / `--partition`。
+The VAE is merged, not INT8-quantized. Do not repair one partition with files
+from the other partition, even when filenames look identical. Verify the
+downloaded checkpoint before conversion.
 
-行为摘要：
+## Local validation
 
-- DiT：结构推导可量化 Linear；`adaln_proj|token_refiner` 默认排除；Hadamard+per-row int8
-- Text Encoder：量化 `language_model.layers[0..49]` 的 attn/mlp；visual/embed/norm 透传
-- VAE：不量化，仅合并打包并规范 `MiniMax-H3-{video|audio}_vae.safetensors`
+```bash
+python3 -m compileall -q minimax_h3_nodes tools tests
+python3 -m unittest discover -s tests -v
+```
 
-### 显存 / 磁盘
+These checks cover local structure and CPU-testable contracts. Passing them is
+not a substitute for a real CUDA run with the complete released weights.
 
-| 阶段 | 需求 |
-|------|------|
-| 量化 | 逐层上 GPU，4090 24GB 足够；系统内存建议 ≥ 48GB |
-| 推理 | int8 DiT ~44GB；int8 TE ~25.3GiB；4090D 均使用 partial/streaming offload |
-| 磁盘 | BF16 transformer ~59–62GB；int8 DiT ~44GB；int8 TE ~26GB；VAE 合并包 ~10.4GB |
+## License and upstream
 
-240.2 使用官方校验通过的干净权重实测：
-
-| 产物 | 规模 | 耗时 | mean relerr |
-|------|------|------|-------------|
-| `MiniMax-H3-FL2VA-int8_convrot.safetensors` | 201 Linear / 47.0GB | 475s | 0.915% |
-| `MiniMax-H3-Ref2VA-int8_convrot.safetensors` | 201 Linear / 47.0GB | 500s | 0.915% |
-| `qwen3-vl-32b-int8_convrot.safetensors` | 350 Linear / 27.1GB | 306s | 0.889% |
-| `vae/` 合并包 | video 9.8GB + audio 578MB | 复制改名 | — |
-
-单测：`python3 -m unittest tests.test_int8_convrot -v`
-
-## 限制
-
-- 当前采样路径仅 T2VA / FL2VA；Ref2VA 条件分支未接完
-- VAE 未做 int8 量化
-- 源 checkpoint 全零 Linear 会透传并打印 `SKIP zero/nonfinite`
-- 量化前应先用 `hf cache verify` 校验官方 checkpoint；不要跨 FL2VA/Ref2VA 修补权重
+Plugin code is distributed under the repository's Apache-2.0 license. Model
+weights are not included and remain subject to their upstream license and
+terms. The implementation is based on the official
+[MiniMax-H3 source package](https://github.com/MiniMax-AI-Dev/Internal-0727-private-3).

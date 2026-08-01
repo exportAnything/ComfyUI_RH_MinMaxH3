@@ -1,10 +1,10 @@
 [project]
 name = "comfyui-minimax-h3-direct"
-version = "0.2.1"
+version = "0.3.0"
 description = "Direct, in-process MiniMax-H3 audio-video custom nodes for ComfyUI"
 readme = "README.md"
-requires-python = ">=3.11"
-license = "Apache-2.0"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
 dependencies = [
   "transformers==5.8.1",
   "accelerate>=1.11.0",
@@ -17,7 +17,13 @@ dependencies = [
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py310"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.comfy]
+PublisherId = "yanghao"
+DisplayName = "RunningHub MiniMax H3 Direct"
+Icon = ""
+includes = ["examples"]

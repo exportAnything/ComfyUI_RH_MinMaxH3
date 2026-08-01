@@ -7,6 +7,6 @@ sentencepiece>=0.2.0
 einops>=0.7.0
 Pillow>=10.0.0
 
-# PyTorch and its matching torchvision build are supplied by ComfyUI.
-# torchaudio is optional and is only needed by future reference-audio encode
-# workflows when the input is not already 32 kHz.
+# PyTorch, torchvision, torchaudio, and PyAV are supplied by ComfyUI; keep
+# those builds aligned with the host. Ref2VA media preparation also requires
+# the system ffmpeg and ffprobe executables.
