@@ -119,6 +119,10 @@ for the model's stereo/32 kHz VAE path.
   the official `adapt_shape_v1` canvas policy. Ref2VA uses the official aspect
   buckets (`21:9`, `16:9`, `4:3`, `1:1`, `3:4`, `9:16`); its `auto` default is
   16:9.
+- `Ref2VA Target` also accepts optional `width` and `height`. Leaving both at
+  `0` preserves the bucket policy above; setting both makes that explicit
+  canvas authoritative. Values must be multiples of 32, stay within a 1:4–4:1
+  ratio, and respect the H3 pixel cap.
 - Ref2VA duration `0` means infer the duration from exactly one real
   audio-bearing reference. Use an explicit 5–15 second value when there are
   zero or multiple audio-bearing references.

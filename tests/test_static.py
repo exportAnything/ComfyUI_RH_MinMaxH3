@@ -156,6 +156,19 @@ class StaticTests(unittest.TestCase):
             INT8_DIT_DIRNAME,
         )
 
+    def test_ref2va_target_exposes_manual_resolution_pair(self):
+        from minimax_h3_nodes.nodes import MiniMaxH3Ref2VATarget
+
+        schema = MiniMaxH3Ref2VATarget.INPUT_TYPES()
+        self.assertIn("optional", schema)
+        for name in ("width", "height"):
+            with self.subTest(name=name):
+                self.assertIn(name, schema["optional"])
+                _type, options = schema["optional"][name]
+                self.assertEqual(_type, "INT")
+                self.assertEqual(options["default"], 0)
+                self.assertEqual(options["step"], 32)
+
 
 if __name__ == "__main__":
     unittest.main()

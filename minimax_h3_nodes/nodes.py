@@ -2647,7 +2647,29 @@ class MiniMaxH3Ref2VATarget:
                         "tooltip": "0 表示从唯一的实际音频 reference 推导时长。",
                     },
                 ),
-            }
+            },
+            "optional": {
+                "width": (
+                    "INT",
+                    {
+                        "default": 0,
+                        "min": 0,
+                        "max": 4096,
+                        "step": 32,
+                        "tooltip": "与 height 同时设为 0 时按 aspect_ratio；否则使用手动输出宽度。",
+                    },
+                ),
+                "height": (
+                    "INT",
+                    {
+                        "default": 0,
+                        "min": 0,
+                        "max": 4096,
+                        "step": 32,
+                        "tooltip": "与 width 同时设为 0 时按 aspect_ratio；否则使用手动输出高度。",
+                    },
+                ),
+            },
         }
 
     RETURN_TYPES = (TARGET_TYPE, "STRING")
@@ -2660,6 +2682,8 @@ class MiniMaxH3Ref2VATarget:
         references: Mapping[str, Any],
         aspect_ratio: str,
         duration_seconds: float,
+        width: int = 0,
+        height: int = 0,
     ):
         clean_references = validate_ref2va_references(references)
         requested_duration = (
@@ -2669,6 +2693,8 @@ class MiniMaxH3Ref2VATarget:
             aspect_ratio=str(aspect_ratio),
             duration_seconds=requested_duration,
             references=clean_references,
+            width=width,
+            height=height,
         )
         clean = validate_target_v2(
             target, expected_task=H3_TASK_REF2VA, require_resolved=True

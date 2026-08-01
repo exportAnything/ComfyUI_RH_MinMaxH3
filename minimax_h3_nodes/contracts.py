@@ -1001,20 +1001,41 @@ def resolve_ref2va_target_v2(
     aspect_ratio: str,
     duration_seconds: float | None,
     references: Any = None,
+    width: int | None = None,
+    height: int | None = None,
 ) -> H3TargetV2:
-    """Resolve Ref2VA's fixed target buckets and optional audio duration."""
+    """Resolve Ref2VA target geometry and optional audio-derived duration.
+
+    ``width`` and ``height`` form an all-or-nothing explicit canvas override.
+    Leaving both unset (or zero through the node UI) preserves the official
+    aspect-ratio bucket policy used by existing workflows.
+    """
 
     if aspect_ratio not in H3_ASPECT_RATIOS:
         raise H3ContractError(
             "Ref2VA aspect_ratio 只允许 'auto' 或官方六个比例桶："
             f"{', '.join(H3_FINITE_ASPECT_RATIOS)}"
         )
-    ratio = "16:9" if aspect_ratio == "auto" else aspect_ratio
-    ratio_width, ratio_height = parse_aspect_ratio(ratio)
-    shape = resolve_spatial_shape(ratio_width, ratio_height)
-    shape["geometry_source"] = (
-        "policy_default" if aspect_ratio == "auto" else "explicit_target"
-    )
+    explicit_width = None if width in (None, 0) else width
+    explicit_height = None if height in (None, 0) else height
+    if (explicit_width is None) != (explicit_height is None):
+        raise H3ContractError(
+            "width 和 height 必须同时填写，或同时设为 0 使用 aspect_ratio"
+        )
+    if explicit_width is None:
+        ratio = "16:9" if aspect_ratio == "auto" else aspect_ratio
+        ratio_width, ratio_height = parse_aspect_ratio(ratio)
+        shape = resolve_spatial_shape(ratio_width, ratio_height)
+        shape["geometry_source"] = (
+            "policy_default" if aspect_ratio == "auto" else "explicit_target"
+        )
+    else:
+        shape = resolve_explicit_spatial_shape(
+            explicit_width, explicit_height
+        )
+        shape["geometry_source"] = "explicit_target"
+        shape["requested_width"] = int(explicit_width)
+        shape["requested_height"] = int(explicit_height)
     clean_references = (
         validate_ref2va_references(references) if references is not None else []
     )
@@ -1075,10 +1096,22 @@ def resolve_deferred_target_v2(
         task == H3_TASK_REF2VA
         and clean.get("temporal") == "deferred_from_audio_reference"
     ):
+        explicit_width = (
+            int(clean["requested_width"])
+            if clean.get("geometry") == "explicit_v1"
+            else None
+        )
+        explicit_height = (
+            int(clean["requested_height"])
+            if clean.get("geometry") == "explicit_v1"
+            else None
+        )
         return resolve_ref2va_target_v2(
             aspect_ratio=str(clean["requested_aspect_ratio"]),
             duration_seconds=None,
             references=conditions,
+            width=explicit_width,
+            height=explicit_height,
         )
     return clean
 

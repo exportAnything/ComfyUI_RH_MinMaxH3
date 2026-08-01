@@ -270,6 +270,37 @@ class Ref2VAContractV2Tests(unittest.TestCase):
                 references=reference,
             )
 
+    def test_ref_target_accepts_explicit_resolution_pair(self):
+        reference = make_ref2va_references(
+            [make_ref2va_reference("image", object())]
+        )
+        target = resolve_ref2va_target_v2(
+            aspect_ratio="16:9",
+            duration_seconds=5.0,
+            references=reference,
+            width=832,
+            height=480,
+        )
+        self.assertEqual(target["geometry"], "explicit_v1")
+        self.assertEqual(target["geometry_source"], "explicit_target")
+        self.assertEqual((target["width"], target["height"]), (832, 480))
+        self.assertEqual(
+            (target["requested_width"], target["requested_height"]), (832, 480)
+        )
+        self.assertEqual(
+            (target["video_latent_h"], target["video_latent_w"]), (30, 52)
+        )
+        validate_target_v2(target, expected_task=H3_TASK_REF2VA)
+
+        with self.assertRaisesRegex(H3ContractError, "同时填写"):
+            resolve_ref2va_target_v2(
+                aspect_ratio="16:9",
+                duration_seconds=5.0,
+                references=reference,
+                width=832,
+                height=0,
+            )
+
     def test_single_audio_reference_may_resolve_or_defer_duration(self):
         resolved_refs = make_ref2va_references(
             [
@@ -303,6 +334,32 @@ class Ref2VAContractV2Tests(unittest.TestCase):
         validate_target_v2(deferred, require_resolved=False)
         resolved = resolve_deferred_target_v2(deferred, resolved_refs)
         self.assertEqual(resolved["frame_count"], 124)
+
+    def test_audio_deferred_ref_target_preserves_explicit_resolution(self):
+        unresolved_refs = make_ref2va_references(
+            [make_ref2va_reference("audio", object())]
+        )
+        deferred = resolve_ref2va_target_v2(
+            aspect_ratio="16:9",
+            duration_seconds=None,
+            references=unresolved_refs,
+            width=832,
+            height=480,
+        )
+        validate_target_v2(deferred, require_resolved=False)
+
+        resolved_refs = make_ref2va_references(
+            [
+                make_ref2va_reference(
+                    "audio",
+                    object(),
+                    audio_duration_seconds=5.0,
+                )
+            ]
+        )
+        resolved = resolve_deferred_target_v2(deferred, resolved_refs)
+        self.assertEqual((resolved["width"], resolved["height"]), (832, 480))
+        self.assertEqual(resolved["geometry"], "explicit_v1")
 
     def test_omitted_duration_rejects_zero_multiple_or_silent_sources(self):
         image_only = make_ref2va_references(
