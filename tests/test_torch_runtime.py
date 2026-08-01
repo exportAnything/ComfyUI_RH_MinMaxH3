@@ -3,10 +3,76 @@ import unittest
 
 
 HAS_TORCH = importlib.util.find_spec("torch") is not None
+HAS_COMFY = importlib.util.find_spec("comfy") is not None
 
 
 @unittest.skipUnless(HAS_TORCH, "artifact container has no ComfyUI torch")
 class TorchRuntimeTests(unittest.TestCase):
+    @unittest.skipUnless(HAS_COMFY, "requires ComfyUI quantized ops")
+    def test_meta_int8_linear_materializes_complete_quantized_tensor(self):
+        import json
+        import torch
+
+        import comfy.ops as cops
+        from comfy.quant_ops import QuantizedTensor
+        from minimax_h3_nodes.runtime.components import H3ComponentError
+        from minimax_h3_nodes.runtime.model_loader import _flush_linear
+        from minimax_h3_nodes.runtime.qwen_encoder import _flush_linear_bag
+
+        marker = torch.tensor(
+            list(
+                json.dumps(
+                    {
+                        "format": "int8_tensorwise",
+                        "convrot": True,
+                        "convrot_groupsize": 256,
+                    },
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ),
+            dtype=torch.uint8,
+        )
+        bag = {
+            "weight": torch.randint(-127, 128, (256, 256), dtype=torch.int8),
+            "weight_scale": torch.ones(256, 1, dtype=torch.float32),
+            "comfy_quant": marker,
+            "bias": torch.zeros(256, dtype=torch.bfloat16),
+        }
+        ops = cops.mixed_precision_ops({}, compute_dtype=torch.bfloat16)
+
+        for flush in (_flush_linear, _flush_linear_bag):
+            linear = ops.Linear(
+                256, 256, bias=True, device="meta", dtype=torch.bfloat16
+            )
+            self.assertTrue(flush(linear, "x.", dict(bag), torch.device("cpu")))
+            self.assertIsInstance(linear.weight, QuantizedTensor)
+            self.assertEqual(linear.weight._qdata.dtype, torch.int8)
+            self.assertEqual(linear.weight._qdata.device.type, "cpu")
+            self.assertTrue(torch.equal(linear.weight._qdata, bag["weight"]))
+            self.assertEqual(tuple(linear.weight._params.scale.shape), (256, 1))
+            self.assertTrue(
+                torch.equal(linear.weight._params.scale, bag["weight_scale"])
+            )
+            self.assertTrue(linear.weight._params.convrot)
+            self.assertEqual(linear.quant_format, "int8_tensorwise")
+            self.assertEqual(
+                set(linear.state_dict(prefix="x.")),
+                {"x.weight", "x.weight_scale", "x.comfy_quant", "x.bias"},
+            )
+
+        plain = torch.nn.Linear(
+            4, 3, bias=True, device="meta", dtype=torch.float32
+        )
+        plain_bag = {
+            "weight": torch.randn(3, 4),
+            "bias": torch.randn(3),
+        }
+        self.assertFalse(_flush_linear(plain, "x.", plain_bag, torch.device("cpu")))
+        self.assertTrue(torch.equal(plain.weight, plain_bag["weight"]))
+        self.assertTrue(torch.equal(plain.bias, plain_bag["bias"]))
+        with self.assertRaisesRegex(H3ComponentError, "plain nn.Linear"):
+            _flush_linear(plain, "x.", dict(bag), torch.device("cpu"))
+
     def test_partial_offload_uses_explicit_cuda_compute_device(self):
         import torch
 

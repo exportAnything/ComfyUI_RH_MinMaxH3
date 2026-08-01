@@ -373,28 +373,12 @@ def _assign_param(module, name: str, value) -> None:
     raise H3ComponentError(f"not a parameter/buffer: {name}")
 
 
-def _flush_linear_bag(module, prefix: str, bag: dict, device) -> None:
-    import inspect
-    import torch.nn as nn
-    if isinstance(module, nn.Linear) and type(module) is nn.Linear:
-        for leaf, tensor in bag.items():
-            if leaf in {"weight", "bias"}:
-                _assign_param(module, leaf, tensor.to(device=device))
-        return
-    state = {f"{prefix}{leaf}": tensor.to(device=device) for leaf, tensor in bag.items()}
-    missing, unexpected, errors = [], [], []
-    kwargs = {}
-    if "assign" in inspect.signature(module._load_from_state_dict).parameters:
-        kwargs["assign"] = True
-    module._load_from_state_dict(state, prefix, {"assign_to_params_buffers": True}, True, missing, unexpected, errors, **kwargs)
-    if errors:
-        raise H3ComponentError(f"quant load {prefix}: " + "; ".join(errors[:6]))
-    for leaf, tensor in bag.items():
-        if leaf not in {"weight", "bias"}:
-            continue
-        cur = getattr(module, leaf, None)
-        if cur is not None and getattr(cur, "device", None) is not None and cur.device.type == "meta":
-            _assign_param(module, leaf, tensor.to(device=device))
+def _flush_linear_bag(module, prefix: str, bag: dict, device) -> bool:
+    """Use the same strict meta-to-QuantizedTensor path as the DiT loader."""
+
+    from .model_loader import _flush_linear
+
+    return _flush_linear(module, prefix, bag, device)
 
 
 def _stream_load_quantized_backbone(model, component: Path, *, offload_device) -> None:
@@ -445,6 +429,10 @@ def _stream_load_quantized_backbone(model, component: Path, *, offload_device) -
 
     pending: dict[str, dict] = defaultdict(dict)
     loaded: set[str] = set()
+    expected_quantized = sum(
+        "comfy_quant" in leaves for leaves in needed.values()
+    )
+    loaded_quantized = 0
     for shard in shards:
         with safe_open(str(shard), framework="pt", device="cpu") as reader:
             for ck in reader.keys():
@@ -463,7 +451,11 @@ def _stream_load_quantized_backbone(model, component: Path, *, offload_device) -
                     lp, leaf = matched
                     pending[lp][leaf] = tensor
                     if needed[lp] <= set(pending[lp]):
-                        _flush_linear_bag(linears[lp], lp, pending.pop(lp), offload_device)
+                        loaded_quantized += int(
+                            _flush_linear_bag(
+                                linears[lp], lp, pending.pop(lp), offload_device
+                            )
+                        )
                         loaded.update(f"{lp}{x}" for x in needed[lp])
                     continue
                 if local not in expected:
@@ -478,8 +470,19 @@ def _stream_load_quantized_backbone(model, component: Path, *, offload_device) -
                 _assign_param(model, local, tensor.to(device=offload_device))
                 loaded.add(local)
     for lp, bag in list(pending.items()):
-        _flush_linear_bag(linears[lp], lp, bag, offload_device)
+        loaded_quantized += int(
+            _flush_linear_bag(linears[lp], lp, bag, offload_device)
+        )
         loaded.update(f"{lp}{x}" for x in bag)
+    if expected_quantized <= 0 or loaded_quantized != expected_quantized:
+        raise H3ComponentError(
+            "H3 text_encoder quantized Linear contract failed: "
+            f"materialized={loaded_quantized}, expected={expected_quantized}"
+        )
+    LOGGER.info(
+        "H3 text_encoder materialized %d complete INT8/convrot QuantizedTensor layers",
+        loaded_quantized,
+    )
     meta_left = [
         n for n, t in list(model.named_parameters()) + list(model.named_buffers())
         if getattr(t, "device", None) is not None and t.device.type == "meta"

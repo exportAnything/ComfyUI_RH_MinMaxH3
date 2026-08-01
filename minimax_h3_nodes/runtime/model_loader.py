@@ -270,11 +270,114 @@ def _assign_tensor(module, name: str, value) -> None:
     raise H3ComponentError(f"Checkpoint key is not a parameter or buffer: {name}")
 
 
-def _flush_linear(module, prefix: str, bag: dict[str, Any], device) -> None:
+def _quantized_linear_config(prefix: str, bag: dict[str, Any]) -> dict | None:
+    """Validate and decode one Comfy ``int8_tensorwise`` marker."""
+
+    import json
+    import torch
+
+    marker = bag.get("comfy_quant")
+    quant_aux = {
+        leaf for leaf in ("weight_scale", "weight_scale_2", "input_scale")
+        if leaf in bag
+    }
+    weight = bag.get("weight")
+    if marker is None:
+        if quant_aux or (weight is not None and weight.dtype == torch.int8):
+            raise H3ComponentError(
+                f"Incomplete quantized checkpoint entry for {prefix}: "
+                "int8/scale data is present without comfy_quant"
+            )
+        return None
+    missing = sorted({"weight", "weight_scale"} - set(bag))
+    if missing:
+        raise H3ComponentError(
+            f"Incomplete quantized checkpoint entry for {prefix}: missing={missing!r}"
+        )
+    if weight.dtype != torch.int8:
+        raise H3ComponentError(
+            f"Quantized checkpoint entry {prefix}weight must be int8, got {weight.dtype}"
+        )
+    try:
+        config = json.loads(bytes(marker.detach().cpu().tolist()))
+    except Exception as exc:
+        raise H3ComponentError(
+            f"Invalid comfy_quant marker for {prefix}"
+        ) from exc
+    if not isinstance(config, dict) or config.get("format") != INT8_FORMAT:
+        raise H3ComponentError(
+            f"Unsupported comfy_quant marker for {prefix}: {config!r}"
+        )
+    if config.get("convrot") is not True:
+        raise H3ComponentError(
+            f"H3 INT8 checkpoint requires convrot=true for {prefix}"
+        )
+    return config
+
+
+def _validate_quantized_linear(module, prefix: str, bag: dict[str, Any]) -> None:
+    """Reject the dangerous raw-int8 fallback after a quantized load."""
+
+    import torch
+
+    try:
+        from comfy.quant_ops import QuantizedTensor
+    except ImportError as exc:
+        raise H3ComponentError(
+            f"Cannot validate quantized Linear {prefix}: comfy.quant_ops is unavailable"
+        ) from exc
+
+    weight = getattr(module, "weight", None)
+    if not isinstance(weight, QuantizedTensor):
+        raise H3ComponentError(
+            f"Quantized Linear {prefix} did not materialize as QuantizedTensor; "
+            "refusing to use a raw int8 weight"
+        )
+    qdata = getattr(weight, "_qdata", None)
+    params = getattr(weight, "_params", None)
+    scale = getattr(params, "scale", None) if params is not None else None
+    problems: list[str] = []
+    if getattr(module, "quant_format", None) != INT8_FORMAT:
+        problems.append(
+            f"quant_format={getattr(module, 'quant_format', None)!r}"
+        )
+    if qdata is None or qdata.dtype != torch.int8:
+        problems.append("missing int8 qdata")
+    elif qdata.device.type == "meta":
+        problems.append("qdata is still meta")
+    elif tuple(qdata.shape) != tuple(bag["weight"].shape):
+        problems.append(
+            f"qdata shape {tuple(qdata.shape)} != {tuple(bag['weight'].shape)}"
+        )
+    if scale is None:
+        problems.append("missing scale")
+    elif scale.device.type == "meta":
+        problems.append("scale is still meta")
+    elif tuple(scale.shape) != tuple(bag["weight_scale"].shape):
+        problems.append(
+            f"scale shape {tuple(scale.shape)} != {tuple(bag['weight_scale'].shape)}"
+        )
+    if getattr(params, "convrot", None) is not True:
+        problems.append("convrot is not enabled")
+    if problems:
+        raise H3ComponentError(
+            f"Quantized Linear {prefix} materialization failed: " + "; ".join(problems)
+        )
+
+
+def _flush_linear(module, prefix: str, bag: dict[str, Any], device) -> bool:
+    """Materialize one Linear bag; return whether it is a full quantized layer."""
+
     import inspect
+    import torch
     import torch.nn as nn
 
-    if isinstance(module, nn.Linear):
+    quant_config = _quantized_linear_config(prefix, bag)
+    if type(module) is nn.Linear:
+        if quant_config is not None:
+            raise H3ComponentError(
+                f"Quantized checkpoint entry {prefix} was matched to plain nn.Linear"
+            )
         for leaf, tensor in bag.items():
             if leaf not in {"weight", "bias"}:
                 continue
@@ -285,8 +388,26 @@ def _flush_linear(module, prefix: str, bag: dict[str, Any], device) -> None:
                     f"{tuple(tensor.shape)} vs model {tuple(target.shape)}"
                 )
             _assign_tensor(module, leaf, tensor.to(device=device))
-        return
-    state = {f"{prefix}{leaf}": tensor.to(device=device) for leaf, tensor in bag.items()}
+        return False
+
+    # Comfy's quantized loader allocates qdata and scale on factory_kwargs.device.
+    # The module was intentionally constructed on meta, so leaving this untouched
+    # silently creates a meta QuantizedTensor.  The old raw-weight fallback then
+    # discarded weight_scale/comfy_quant/convrot and produced snow output.
+    factory_kwargs = getattr(module, "factory_kwargs", None)
+    if isinstance(factory_kwargs, dict):
+        factory_kwargs["device"] = torch.device(device)
+    elif quant_config is not None:
+        raise H3ComponentError(
+            f"Quantized Linear {prefix} has no mutable factory_kwargs device"
+        )
+
+    state = {
+        f"{prefix}{leaf}": tensor.to(
+            device=torch.device("cpu") if leaf == "comfy_quant" else device
+        )
+        for leaf, tensor in bag.items()
+    }
     missing: list[str] = []
     unexpected: list[str] = []
     errors: list[str] = []
@@ -302,12 +423,16 @@ def _flush_linear(module, prefix: str, bag: dict[str, Any], device) -> None:
         raise H3ComponentError(
             f"Quantized load failed for {prefix}: " + "; ".join(errors[:8])
         )
+    if quant_config is not None:
+        _validate_quantized_linear(module, prefix, bag)
+        return True
     for leaf, tensor in bag.items():  # 兜底：仍 meta 的 bias/weight 强制替换
         if leaf not in {"weight", "bias"}:
             continue
         cur = getattr(module, leaf, None)
         if cur is not None and getattr(cur, "device", None) is not None and cur.device.type == "meta":
             _assign_tensor(module, leaf, tensor.to(device=device))
+    return False
 
 
 def _default_rope(config, *, device):
@@ -516,6 +641,10 @@ def load_h3_model(
     loaded: set[str] = set()
     unexpected: list[str] = []
     pending: dict[str, dict[str, Any]] = defaultdict(dict)
+    expected_quantized = sum(
+        "comfy_quant" in leaves for leaves in needed.values()
+    )
+    loaded_quantized = 0
 
     for shard in shards:
         with safe_open(str(shard), framework="pt", device="cpu") as reader:
@@ -550,12 +679,12 @@ def load_h3_model(
                     pref, leaf = matched
                     pending[pref][leaf] = tensor
                     if needed[pref] <= set(pending[pref]):
-                        _flush_linear(
+                        loaded_quantized += int(_flush_linear(
                             linears[pref],
                             pref,
                             pending.pop(pref),
                             target_offload,
-                        )
+                        ))
                         loaded.update(f"{pref}{x}" for x in needed[pref])
                     continue
                 target = expected_tensors[local]
@@ -571,8 +700,21 @@ def load_h3_model(
                 loaded.add(local)
 
     for pref, bag in list(pending.items()):
-        _flush_linear(linears[pref], pref, bag, target_offload)
+        loaded_quantized += int(
+            _flush_linear(linears[pref], pref, bag, target_offload)
+        )
         loaded.update(f"{pref}{x}" for x in bag)
+
+    if quantized:
+        if expected_quantized <= 0 or loaded_quantized != expected_quantized:
+            raise H3ComponentError(
+                "H3 DiT quantized Linear contract failed: "
+                f"materialized={loaded_quantized}, expected={expected_quantized}"
+            )
+        LOGGER.info(
+            "H3 DiT materialized %d complete INT8/convrot QuantizedTensor layers",
+            loaded_quantized,
+        )
 
     if "rope.inv_freq" not in loaded and "rope.inv_freq" in expected:
         _assign_tensor(
