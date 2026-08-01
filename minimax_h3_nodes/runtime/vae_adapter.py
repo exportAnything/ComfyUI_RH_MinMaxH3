@@ -1,0 +1,1317 @@
+# SPDX-License-Identifier: Apache-2.0
+"""Direct, in-process MiniMax H3 video/audio VAE adapters.
+
+This module intentionally has no SGLang or Diffusers dependency.  The released
+inference-only VAE implementations are vendored next to the custom node and
+their distributed collectives are reduced to single-process operations.
+
+Checkpoint contract
+-------------------
+* video VAE: ``video_vae/source/model.safetensors`` (canonical release layout)
+* audio VAE: one or more ``*.safetensors`` under ``audio_vae``
+* both component ``config.json`` files must carry per-channel
+  ``latents_mean`` and ``latents_std`` values
+* the video wrapper config is paired with
+  ``video_vae/source/config.json``; model construction uses and validates that
+  inner ``AutoencoderKLLegacy`` architecture instead of guessing from the
+  outer remote-code wrapper
+
+The diffusion model predicts *normalized* H3 latents.  Adapter ``decode``
+methods therefore reverse the release normalization before invoking a VAE;
+the encode helpers apply the forward normalization.
+"""
+
+from __future__ import annotations
+
+import inspect
+import json
+import logging
+from contextlib import contextmanager
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Iterable, Mapping, Sequence
+
+import torch
+
+from ..vendor.minimax_h3_audio_vae import DacAudioVAE
+from ..vendor.minimax_h3_video_vae import AutoencoderKLLegacy
+
+
+LOGGER = logging.getLogger(__name__)
+
+VIDEO_LATENT_CHANNELS = 24
+AUDIO_LATENT_CHANNELS = 32
+AUDIO_SAMPLE_RATE = 32_000
+AUDIO_OUTPUT_CHANNELS = 2
+
+
+class H3VAEError(RuntimeError):
+    """Raised for an invalid component layout, checkpoint, or tensor contract."""
+
+
+@dataclass(frozen=True)
+class H3LatentStats:
+    mean: tuple[float, ...]
+    std: tuple[float, ...]
+
+    @classmethod
+    def from_config(
+        cls,
+        config: Mapping[str, Any],
+        *,
+        expected_channels: int,
+        component_name: str,
+    ) -> "H3LatentStats":
+        mean = _config_value(config, "latents_mean")
+        std = _config_value(config, "latents_std")
+        if not isinstance(mean, Sequence) or isinstance(mean, (str, bytes)):
+            raise H3VAEError(
+                f"{component_name}/config.json is missing numeric latents_mean"
+            )
+        if not isinstance(std, Sequence) or isinstance(std, (str, bytes)):
+            raise H3VAEError(
+                f"{component_name}/config.json is missing numeric latents_std"
+            )
+        try:
+            mean_tuple = tuple(float(value) for value in mean)
+            std_tuple = tuple(float(value) for value in std)
+        except (TypeError, ValueError) as exc:
+            raise H3VAEError(
+                f"{component_name} latent statistics must contain numbers"
+            ) from exc
+        if len(mean_tuple) != expected_channels or len(std_tuple) != expected_channels:
+            raise H3VAEError(
+                f"{component_name} latent statistics must contain "
+                f"{expected_channels} values; got mean={len(mean_tuple)}, "
+                f"std={len(std_tuple)}"
+            )
+        if any(not torch.isfinite(torch.tensor(value)) for value in mean_tuple):
+            raise H3VAEError(f"{component_name} latents_mean contains non-finite data")
+        if any(
+            not torch.isfinite(torch.tensor(value)) or value <= 0
+            for value in std_tuple
+        ):
+            raise H3VAEError(
+                f"{component_name} latents_std must be finite and greater than zero"
+            )
+        return cls(mean=mean_tuple, std=std_tuple)
+
+    def tensors_for(self, value: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        mean = torch.as_tensor(self.mean, device=value.device, dtype=value.dtype)
+        std = torch.as_tensor(self.std, device=value.device, dtype=value.dtype)
+        shape = [1] * value.ndim
+        shape[1] = len(self.mean)
+        return mean.view(shape), std.view(shape)
+
+    def normalize(self, value: torch.Tensor) -> torch.Tensor:
+        mean, std = self.tensors_for(value)
+        return (value - mean) / std
+
+    def denormalize(self, value: torch.Tensor) -> torch.Tensor:
+        mean, std = self.tensors_for(value)
+        return value * std + mean
+
+
+@dataclass
+class H3VAEBundle:
+    """Pair of direct VAE adapters used by H3 sampling/conditioning nodes."""
+
+    video_vae: "MiniMaxH3VideoVAEAdapter"
+    audio_vae: "MiniMaxH3AudioVAEAdapter"
+
+    def to(self, device: str | torch.device) -> "H3VAEBundle":
+        self.video_vae.to(device)
+        self.audio_vae.to(device)
+        return self
+
+    def offload(self) -> "H3VAEBundle":
+        return self.to("cpu")
+
+
+def _config_value(config: Mapping[str, Any], name: str, default: Any = None) -> Any:
+    if name in config:
+        return config[name]
+    for nested_name in ("arch_config", "vae_config", "config"):
+        nested = config.get(nested_name)
+        if isinstance(nested, Mapping) and name in nested:
+            return nested[name]
+    return default
+
+
+def _read_json(path: Path) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError as exc:
+        raise H3VAEError(f"Missing component config: {path}") from exc
+    except (OSError, json.JSONDecodeError) as exc:
+        raise H3VAEError(f"Cannot read component config: {path}") from exc
+    if not isinstance(value, dict):
+        raise H3VAEError(f"Expected a JSON object in {path}")
+    return value
+
+
+def _looks_like_component(path: Path, component_name: str) -> bool:
+    config_path = path / "config.json"
+    if not config_path.is_file():
+        return False
+    try:
+        config = _read_json(config_path)
+    except H3VAEError:
+        return False
+    class_name = str(config.get("_class_name", "")).lower()
+    if component_name == "video_vae":
+        return (
+            _config_value(config, "latent_channels") == VIDEO_LATENT_CHANNELS
+            or "video" in class_name
+            or (path / "source" / "model.safetensors").is_file()
+        )
+    return (
+        _config_value(config, "latent_channels") == AUDIO_LATENT_CHANNELS
+        or "audio" in class_name
+    )
+
+
+def resolve_h3_component_dir(
+    model_or_component_path: str | Path,
+    component_name: str,
+) -> Path:
+    """Resolve a release root or a direct component directory."""
+
+    if component_name not in {"video_vae", "audio_vae"}:
+        raise ValueError(f"Unsupported H3 VAE component {component_name!r}")
+    root = Path(model_or_component_path).expanduser().resolve()
+    if not root.exists():
+        raise H3VAEError(f"Model path does not exist: {root}")
+    if root.is_file():
+        root = root.parent
+
+    candidates: list[Path] = []
+    if root.name == component_name or _looks_like_component(root, component_name):
+        candidates.append(root)
+    candidates.extend(
+        [
+            root / component_name,
+            root / ("vae" if component_name == "video_vae" else component_name),
+        ]
+    )
+
+    model_index = root / "model_index.json"
+    if model_index.is_file():
+        index = _read_json(model_index)
+        entry = index.get(component_name)
+        if isinstance(entry, Mapping):
+            relative = entry.get("path") or entry.get("subfolder")
+            if isinstance(relative, str):
+                candidates.insert(0, root / relative)
+        # Diffusers-style entries are [library, class]; their subfolder is the
+        # key itself and is already covered by root/component_name.
+
+    seen: set[Path] = set()
+    for candidate in candidates:
+        candidate = candidate.resolve()
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if _looks_like_component(candidate, component_name):
+            return candidate
+    searched = ", ".join(str(path) for path in seen)
+    raise H3VAEError(
+        f"Could not resolve MiniMax H3 {component_name}; searched: {searched}"
+    )
+
+
+def _files_from_safetensors_index(index_path: Path) -> list[Path]:
+    index = _read_json(index_path)
+    weight_map = index.get("weight_map")
+    if not isinstance(weight_map, Mapping):
+        raise H3VAEError(f"Invalid safetensors index: {index_path}")
+    paths = sorted({index_path.parent / str(name) for name in weight_map.values()})
+    missing = [path for path in paths if not path.is_file()]
+    if missing:
+        raise H3VAEError(
+            "Safetensors index references missing files: "
+            + ", ".join(str(path) for path in missing)
+        )
+    return paths
+
+
+def _safe_component_relative_path(
+    component_dir: Path,
+    raw_value: Any,
+    *,
+    field_name: str,
+) -> Path:
+    if not isinstance(raw_value, str) or not raw_value.strip():
+        raise H3VAEError(f"{field_name} must be a non-empty relative path")
+    relative = Path(raw_value.strip())
+    if relative.is_absolute() or ".." in relative.parts:
+        raise H3VAEError(f"Unsafe {field_name}: {raw_value!r}")
+    candidate = (component_dir / relative).resolve()
+    try:
+        candidate.relative_to(component_dir.resolve())
+    except ValueError as exc:
+        raise H3VAEError(f"Unsafe {field_name}: {raw_value!r}") from exc
+    return candidate
+
+
+def _declared_weight_files(
+    component_dir: Path,
+    component_name: str,
+    config: Mapping[str, Any],
+) -> list[Path] | None:
+    """Resolve the release's ``source_safetensors_path`` declaration.
+
+    The real H3 bundle uses two different bases for the same basename:
+    ``video_vae/source/model.safetensors`` and
+    ``audio_vae/model.safetensors``.  The outer config stores only
+    ``model.safetensors``, so component type determines the preferred base.
+    """
+
+    declared = config.get("source_safetensors_path")
+    if declared is None:
+        return None
+    relative = _safe_component_relative_path(
+        component_dir,
+        declared,
+        field_name=f"{component_name}.source_safetensors_path",
+    ).relative_to(component_dir.resolve())
+    bases = (
+        (component_dir / "source", component_dir)
+        if component_name == "video_vae"
+        else (component_dir, component_dir / "source")
+    )
+    attempted: list[Path] = []
+    for base in bases:
+        candidate = (base / relative).resolve()
+        try:
+            candidate.relative_to(component_dir.resolve())
+        except ValueError:
+            continue
+        attempted.append(candidate)
+        if candidate.is_file():
+            if candidate.name.endswith(".safetensors.index.json"):
+                return _files_from_safetensors_index(candidate)
+            return [candidate]
+        index_candidate = candidate.with_name(
+            candidate.name + ".index.json"
+        )
+        attempted.append(index_candidate)
+        if index_candidate.is_file():
+            return _files_from_safetensors_index(index_candidate)
+    raise H3VAEError(
+        f"Declared {component_name} checkpoint does not exist; checked: "
+        + ", ".join(str(path) for path in attempted)
+    )
+
+
+def _component_weight_files(
+    component_dir: Path,
+    component_name: str,
+    config: Mapping[str, Any],
+) -> list[Path]:
+    declared = _declared_weight_files(component_dir, component_name, config)
+    if declared is not None:
+        return declared
+
+    if component_name == "video_vae":
+        canonical = component_dir / "source" / "model.safetensors"
+        if canonical.is_file():
+            return [canonical]
+
+    index_candidates = sorted(component_dir.glob("*.safetensors.index.json"))
+    index_candidates.extend(
+        sorted((component_dir / "source").glob("*.safetensors.index.json"))
+        if (component_dir / "source").is_dir()
+        else []
+    )
+    if index_candidates:
+        return _files_from_safetensors_index(index_candidates[0])
+
+    top_level = sorted(component_dir.glob("*.safetensors"))
+    if top_level:
+        return top_level
+    recursive = sorted(component_dir.rglob("*.safetensors"))
+    if recursive:
+        return recursive
+    raise H3VAEError(f"No safetensors checkpoint found under {component_dir}")
+
+
+def _resolve_dtype(value: Any, *, default: torch.dtype) -> torch.dtype:
+    if value is None:
+        return default
+    if isinstance(value, torch.dtype):
+        return value
+    normalized = str(value).strip().lower().replace("torch.", "")
+    mapping = {
+        "float": torch.float32,
+        "float32": torch.float32,
+        "fp32": torch.float32,
+        "float16": torch.float16,
+        "fp16": torch.float16,
+        "half": torch.float16,
+        "bfloat16": torch.bfloat16,
+        "bf16": torch.bfloat16,
+    }
+    if normalized not in mapping:
+        raise ValueError(f"Unsupported dtype {value!r}")
+    return mapping[normalized]
+
+
+@contextmanager
+def _default_dtype(dtype: torch.dtype):
+    previous = torch.get_default_dtype()
+    torch.set_default_dtype(dtype)
+    try:
+        yield
+    finally:
+        torch.set_default_dtype(previous)
+
+
+def _can_assign_state_dict() -> bool:
+    try:
+        return "assign" in inspect.signature(torch.nn.Module.load_state_dict).parameters
+    except (TypeError, ValueError):
+        return False
+
+
+def _best_key_prefix(
+    keys: Iterable[str],
+    model_keys: set[str],
+    component_name: str,
+) -> str:
+    source_keys = tuple(keys)
+    prefixes = (
+        "",
+        "module.",
+        "model.",
+        f"{component_name}.",
+        f"model.{component_name}.",
+        f"module.{component_name}.",
+        "vae.",
+        "first_stage_model.",
+    )
+    best_prefix = ""
+    best_score = (-1, -len(source_keys), 0)
+    for prefix in prefixes:
+        # Never partially strip a checkpoint.  The native release is
+        # unprefixed; wrapper prefixes are accepted only when every tensor uses
+        # that same namespace, avoiding key collisions and accidental remaps.
+        if prefix and not all(key.startswith(prefix) for key in source_keys):
+            continue
+        mapped = (
+            tuple(key[len(prefix) :] for key in source_keys)
+            if prefix
+            else source_keys
+        )
+        if len(set(mapped)) != len(mapped):
+            continue
+        hits = sum(key in model_keys for key in mapped)
+        unexpected = len(mapped) - hits
+        # Prefer exact/unprefixed keys when scores tie, matching the upstream
+        # native loader's strict state-dict contract.
+        score = (hits, -unexpected, 1 if not prefix else 0)
+        if score > best_score:
+            best_prefix, best_score = prefix, score
+    return best_prefix
+
+
+def _normalize_checkpoint_keys(
+    state: Mapping[str, torch.Tensor],
+    model_keys: set[str],
+    component_name: str,
+) -> dict[str, torch.Tensor]:
+    prefix = _best_key_prefix(state.keys(), model_keys, component_name)
+    if prefix:
+        LOGGER.info(
+            "Stripping uniform %s checkpoint prefix %r",
+            component_name,
+            prefix,
+        )
+        normalized = {key[len(prefix) :]: value for key, value in state.items()}
+    else:
+        normalized = dict(state)
+    if len(normalized) != len(state):
+        raise H3VAEError(
+            f"{component_name} checkpoint prefix {prefix!r} creates key collisions"
+        )
+
+    # PyTorch's legacy weight_norm checkpoints use ``weight_g``/``weight_v``.
+    # The parametrizations API exposes the same tensors as ``original0`` and
+    # ``original1``.  Convert only when the legacy key is not itself expected
+    # and the precise modern target exists in this concrete model.
+    weight_norm_suffixes = (
+        (".weight_g", ".parametrizations.weight.original0"),
+        (".weight_v", ".parametrizations.weight.original1"),
+    )
+    remapped: dict[str, torch.Tensor] = {}
+    remap_count = 0
+    for key, value in normalized.items():
+        target = key
+        if key not in model_keys:
+            for legacy_suffix, current_suffix in weight_norm_suffixes:
+                if not key.endswith(legacy_suffix):
+                    continue
+                candidate = key[: -len(legacy_suffix)] + current_suffix
+                if candidate in model_keys:
+                    target = candidate
+                    remap_count += 1
+                break
+        if target in remapped:
+            raise H3VAEError(
+                f"{component_name} checkpoint key conversion creates duplicate "
+                f"target {target!r}"
+            )
+        remapped[target] = value
+    if remap_count:
+        LOGGER.info(
+            "Remapped %d legacy weight_norm keys for %s",
+            remap_count,
+            component_name,
+        )
+    return remapped
+
+
+def _load_safetensors(path: Path) -> dict[str, torch.Tensor]:
+    try:
+        from safetensors.torch import load_file
+    except ImportError as exc:
+        raise H3VAEError(
+            "Loading MiniMax H3 weights requires the safetensors package"
+        ) from exc
+    return load_file(str(path), device="cpu")
+
+
+def _construct_and_load(
+    factory,
+    weight_files: Sequence[Path],
+    *,
+    component_name: str,
+    device: torch.device,
+    weight_dtype: torch.dtype,
+    strict: bool,
+    low_memory: bool,
+) -> torch.nn.Module:
+    use_meta = bool(low_memory and _can_assign_state_dict())
+    with _default_dtype(weight_dtype):
+        if use_meta:
+            with torch.device("meta"):
+                model = factory()
+        else:
+            model = factory()
+
+    model_keys = set(model.state_dict().keys())
+    loaded_keys: set[str] = set()
+    unexpected: set[str] = set()
+    for weight_file in weight_files:
+        LOGGER.info("Loading MiniMax H3 %s weights: %s", component_name, weight_file)
+        state = _normalize_checkpoint_keys(
+            _load_safetensors(weight_file), model_keys, component_name
+        )
+        unexpected.update(set(state) - model_keys)
+        usable = {key: value for key, value in state.items() if key in model_keys}
+        loaded_keys.update(usable)
+        if use_meta:
+            model.load_state_dict(usable, strict=False, assign=True)
+        else:
+            model.load_state_dict(usable, strict=False)
+        del state, usable
+
+    missing = model_keys - loaded_keys
+    if strict and (missing or unexpected):
+        missing_preview = ", ".join(sorted(missing)[:12])
+        unexpected_preview = ", ".join(sorted(unexpected)[:12])
+        raise H3VAEError(
+            f"{component_name} checkpoint mismatch: "
+            f"missing={len(missing)} [{missing_preview}], "
+            f"unexpected={len(unexpected)} [{unexpected_preview}]"
+        )
+    if use_meta:
+        meta_names = [
+            name
+            for name, tensor in (
+                *model.named_parameters(),
+                *model.named_buffers(),
+            )
+            if tensor.device.type == "meta"
+        ]
+        if meta_names:
+            raise H3VAEError(
+                f"{component_name} checkpoint left {len(meta_names)} meta tensors; "
+                f"first entries: {', '.join(meta_names[:12])}"
+            )
+
+    model = model.to(device=device, dtype=weight_dtype)
+    model.eval()
+    model.requires_grad_(False)
+    return model
+
+
+def _model_device(model: torch.nn.Module) -> torch.device:
+    try:
+        return next(model.parameters()).device
+    except StopIteration:
+        return torch.device("cpu")
+
+
+def _extract_samples(value: Any, *, name: str) -> torch.Tensor:
+    if isinstance(value, Mapping):
+        value = value.get("samples")
+    if not isinstance(value, torch.Tensor):
+        raise TypeError(f"{name} must be a Tensor or a mapping containing 'samples'")
+    return value
+
+
+@contextmanager
+def _autocast_for(device: torch.device, dtype: torch.dtype):
+    enabled = device.type in {"cuda", "xpu"} and dtype in {
+        torch.float16,
+        torch.bfloat16,
+    }
+    if not enabled:
+        yield
+        return
+    with torch.autocast(device_type=device.type, dtype=dtype):
+        yield
+
+
+def _fork_rng(device: torch.device, seed: int):
+    devices: list[int] = []
+    if device.type == "cuda":
+        devices = [device.index if device.index is not None else torch.cuda.current_device()]
+    return torch.random.fork_rng(devices=devices, enabled=True)
+
+
+@contextmanager
+def _audio_vae_determinism():
+    """Match the released deterministic reference-audio encode recipe."""
+
+    backends = torch.backends
+    saved = (
+        backends.cuda.matmul.allow_tf32,
+        backends.cudnn.allow_tf32,
+        backends.cudnn.benchmark,
+        backends.cudnn.deterministic,
+        backends.cudnn.enabled,
+        backends.cuda.flash_sdp_enabled(),
+        backends.cuda.mem_efficient_sdp_enabled(),
+        backends.cuda.math_sdp_enabled(),
+    )
+    backends.cuda.matmul.allow_tf32 = False
+    backends.cudnn.allow_tf32 = False
+    backends.cudnn.benchmark = False
+    backends.cudnn.deterministic = True
+    backends.cudnn.enabled = False
+    backends.cuda.enable_flash_sdp(False)
+    backends.cuda.enable_mem_efficient_sdp(False)
+    backends.cuda.enable_math_sdp(True)
+    try:
+        yield
+    finally:
+        (
+            backends.cuda.matmul.allow_tf32,
+            backends.cudnn.allow_tf32,
+            backends.cudnn.benchmark,
+            backends.cudnn.deterministic,
+            backends.cudnn.enabled,
+            flash,
+            memory_efficient,
+            math_sdp,
+        ) = saved
+        backends.cuda.enable_flash_sdp(flash)
+        backends.cuda.enable_mem_efficient_sdp(memory_efficient)
+        backends.cuda.enable_math_sdp(math_sdp)
+
+
+class MiniMaxH3VideoVAEAdapter:
+    """Direct visual VAE with H3 normalization and Comfy tensor conversion."""
+
+    latent_channels = VIDEO_LATENT_CHANNELS
+    spatial_compression_ratio = 16
+    temporal_compression_ratio = 4
+
+    def __init__(
+        self,
+        model: AutoencoderKLLegacy,
+        stats: H3LatentStats,
+        *,
+        component_dir: Path,
+        compute_dtype: torch.dtype = torch.float16,
+    ) -> None:
+        self.model = model
+        self.stats = stats
+        self.component_dir = component_dir
+        self.compute_dtype = compute_dtype
+
+    @property
+    def device(self) -> torch.device:
+        return _model_device(self.model)
+
+    @property
+    def raw_model(self) -> AutoencoderKLLegacy:
+        return self.model
+
+    @property
+    def processor(self):
+        return self.model.processor
+
+    def parameters(self, *args, **kwargs):
+        return self.model.parameters(*args, **kwargs)
+
+    def eval(self) -> "MiniMaxH3VideoVAEAdapter":
+        self.model.eval()
+        return self
+
+    def to(
+        self,
+        device: str | torch.device,
+        dtype: torch.dtype | str | None = None,
+    ) -> "MiniMaxH3VideoVAEAdapter":
+        kwargs: dict[str, Any] = {"device": torch.device(device)}
+        if dtype is not None:
+            kwargs["dtype"] = _resolve_dtype(dtype, default=torch.float32)
+        self.model.to(**kwargs)
+        return self
+
+    def offload(self) -> "MiniMaxH3VideoVAEAdapter":
+        return self.to("cpu")
+
+    @torch.inference_mode()
+    def decode_base(
+        self,
+        raw_latents: torch.Tensor,
+        *,
+        frame_count: int | None = None,
+    ) -> torch.Tensor:
+        """Decode unnormalized latents to model-native normalized pixels."""
+
+        raw_latents = raw_latents.to(device=self.device, dtype=torch.float32)
+        with _autocast_for(self.device, self.compute_dtype):
+            return self.model.decode_base(raw_latents, frame_num=frame_count)
+
+    @torch.inference_mode()
+    def decode_bcthw(
+        self,
+        normalized_latents: torch.Tensor | Mapping[str, torch.Tensor],
+        *,
+        frame_count: int | None = None,
+        target_height: int | None = None,
+        target_width: int | None = None,
+    ) -> torch.Tensor:
+        """Return decoded frames as float32 ``[B,3,T,H,W]`` in ``[0,1]``."""
+
+        latents = _extract_samples(normalized_latents, name="video latents")
+        if latents.ndim != 5 or int(latents.shape[1]) != self.latent_channels:
+            raise H3VAEError(
+                "MiniMax H3 video latents must be [B,24,T,H,W], got "
+                f"{tuple(latents.shape)}"
+            )
+        latents = latents.to(device=self.device, dtype=torch.float32)
+        raw = self.stats.denormalize(latents)
+        with _autocast_for(self.device, self.compute_dtype):
+            frames = self.model.decode_base(raw, frame_num=frame_count)
+            frames = self.model.processor.revert_tensor(frames)
+        if frames.ndim != 5 or int(frames.shape[1]) != 3:
+            raise H3VAEError(
+                "MiniMax H3 video VAE returned an invalid tensor: "
+                f"{tuple(frames.shape)}"
+            )
+        if target_height is not None:
+            if int(frames.shape[-2]) < int(target_height):
+                raise H3VAEError("Decoded video is shorter than target_height")
+            frames = frames[..., : int(target_height), :]
+        if target_width is not None:
+            if int(frames.shape[-1]) < int(target_width):
+                raise H3VAEError("Decoded video is narrower than target_width")
+            frames = frames[..., : int(target_width)]
+        return frames.float().contiguous()
+
+    @torch.inference_mode()
+    def decode(
+        self,
+        normalized_latents: torch.Tensor | Mapping[str, torch.Tensor],
+        *,
+        frame_count: int | None = None,
+        target_height: int | None = None,
+        target_width: int | None = None,
+    ) -> torch.Tensor:
+        """Return a ComfyUI ``IMAGE`` batch as ``[B*T,H,W,3]``."""
+
+        frames = self.decode_bcthw(
+            normalized_latents,
+            frame_count=frame_count,
+            target_height=target_height,
+            target_width=target_width,
+        )
+        return (
+            frames.permute(0, 2, 3, 4, 1)
+            .reshape(-1, frames.shape[-2], frames.shape[-1], 3)
+            .contiguous()
+        )
+
+    def _canonical_pixels(self, pixels: torch.Tensor) -> torch.Tensor:
+        if pixels.ndim == 3 and pixels.shape[-1] == 3:
+            pixels = pixels.unsqueeze(0).unsqueeze(0)  # [B=1,T=1,H,W,C]
+        elif pixels.ndim == 4 and pixels.shape[-1] == 3:
+            pixels = pixels.unsqueeze(1)  # [B,T=1,H,W,C]
+        elif pixels.ndim == 5 and pixels.shape[-1] == 3:
+            pass  # [B,T,H,W,C]
+        elif pixels.ndim == 5 and pixels.shape[1] == 3:
+            return pixels
+        else:
+            raise H3VAEError(
+                "Pixels must be [H,W,3], [B,H,W,3], [B,T,H,W,3], or "
+                f"[B,3,T,H,W]; got {tuple(pixels.shape)}"
+            )
+        return pixels.permute(0, 4, 1, 2, 3).contiguous()
+
+    @torch.inference_mode()
+    def encode(
+        self,
+        pixels: torch.Tensor,
+        *,
+        process_image: bool | None = None,
+        seed: int = 42,
+    ) -> torch.Tensor:
+        """Encode ``[0,1]`` pixels and return normalized ``[B,24,T,H,W]``.
+
+        The release keyframe/reference-image recipe samples the VAE posterior
+        under seed 42, hence sampling (rather than posterior mean) is retained.
+        Callers encoding a multi-frame reference must perform H3's temporal
+        alignment before this method.
+        """
+
+        if not isinstance(pixels, torch.Tensor):
+            raise TypeError("Video VAE pixels must be a torch.Tensor")
+        if process_image is None:
+            process_image = pixels.ndim in (3, 4)
+        pixels = self._canonical_pixels(pixels).to(
+            device=self.device, dtype=torch.float32
+        )
+        batch, channels, frames, height, width = pixels.shape
+        if channels != 3:
+            raise H3VAEError("Video VAE input must contain three RGB channels")
+        if height % 16 or width % 16:
+            raise H3VAEError(
+                f"Video VAE input must be divisible by 16, got {height}x{width}"
+            )
+
+        flat = pixels.permute(0, 2, 1, 3, 4).reshape(
+            batch * frames, channels, height, width
+        )
+        flat = self.model.transform(flat)
+        transformed = flat.reshape(batch, frames, channels, height, width)
+        transformed = transformed.permute(0, 2, 1, 3, 4).contiguous()
+
+        parameter = next(self.model.parameters())
+        previous_dtype = parameter.dtype
+        # The release contract explicitly encodes keyframes/references with
+        # fp32 VAE weights, even though visual decode uses fp16 autocast.
+        if previous_dtype != torch.float32:
+            self.model.to(dtype=torch.float32)
+        try:
+            with _fork_rng(self.device, seed):
+                torch.default_generator.manual_seed(seed)
+                if self.device.type == "cuda":
+                    with torch.cuda.device(self.device):
+                        torch.cuda.manual_seed(seed)
+                raw = self.model.encode_base(
+                    transformed,
+                    process_image=process_image,
+                )
+        finally:
+            if previous_dtype != torch.float32:
+                self.model.to(dtype=previous_dtype)
+        if raw.ndim == 4:
+            raw = raw.unsqueeze(2)
+        return self.stats.normalize(raw.float()).contiguous()
+
+
+class MiniMaxH3AudioVAEAdapter:
+    """Direct DAC/BigVGAN audio VAE with H3 latent normalization."""
+
+    latent_channels = AUDIO_LATENT_CHANNELS
+    sample_rate = AUDIO_SAMPLE_RATE
+    output_channels = AUDIO_OUTPUT_CHANNELS
+    latent_rate = 40
+
+    def __init__(
+        self,
+        model: DacAudioVAE,
+        stats: H3LatentStats,
+        *,
+        component_dir: Path,
+        compute_dtype: torch.dtype = torch.float32,
+    ) -> None:
+        self.model = model
+        self.stats = stats
+        self.component_dir = component_dir
+        self.compute_dtype = compute_dtype
+
+    @property
+    def device(self) -> torch.device:
+        return _model_device(self.model)
+
+    @property
+    def raw_model(self) -> DacAudioVAE:
+        return self.model
+
+    def parameters(self, *args, **kwargs):
+        return self.model.parameters(*args, **kwargs)
+
+    def eval(self) -> "MiniMaxH3AudioVAEAdapter":
+        self.model.eval()
+        return self
+
+    def to(
+        self,
+        device: str | torch.device,
+        dtype: torch.dtype | str | None = None,
+    ) -> "MiniMaxH3AudioVAEAdapter":
+        kwargs: dict[str, Any] = {"device": torch.device(device)}
+        if dtype is not None:
+            kwargs["dtype"] = _resolve_dtype(dtype, default=torch.float32)
+        self.model.to(**kwargs)
+        return self
+
+    def offload(self) -> "MiniMaxH3AudioVAEAdapter":
+        return self.to("cpu")
+
+    @torch.inference_mode()
+    def decode_native(
+        self,
+        raw_latents: torch.Tensor,
+    ) -> torch.Tensor:
+        """Decode unnormalized ``[C,32,T]`` to native ``[C,1,L]``."""
+
+        raw_latents = raw_latents.to(device=self.device, dtype=torch.float32)
+        with _autocast_for(self.device, self.compute_dtype):
+            return self.model.decode(raw_latents)
+
+    @torch.inference_mode()
+    def decode(
+        self,
+        normalized_latents: torch.Tensor | Mapping[str, torch.Tensor],
+        *,
+        sample_count: int | None = None,
+    ) -> torch.Tensor:
+        """Return a ComfyUI waveform tensor ``[1,2,L]``."""
+
+        latents = _extract_samples(normalized_latents, name="audio latents")
+        if latents.ndim == 4:
+            if int(latents.shape[0]) != 1:
+                raise H3VAEError("MiniMax H3 audio decode currently supports batch=1")
+            latents = latents.squeeze(0)
+        if latents.ndim != 3 or int(latents.shape[1]) != self.latent_channels:
+            raise H3VAEError(
+                "MiniMax H3 audio latents must be [2,32,T], got "
+                f"{tuple(latents.shape)}"
+            )
+        if int(latents.shape[0]) != self.output_channels:
+            raise H3VAEError(
+                "MiniMax H3 audio latents must contain two channel rows, got "
+                f"{int(latents.shape[0])}"
+            )
+        latents = latents.to(device=self.device, dtype=torch.float32)
+        raw = self.stats.denormalize(latents)
+        waveform = self.decode_native(raw)
+        if waveform.ndim != 3 or int(waveform.shape[1]) != 1:
+            raise H3VAEError(
+                "MiniMax H3 audio VAE returned an invalid tensor: "
+                f"{tuple(waveform.shape)}"
+            )
+        waveform = waveform.permute(1, 0, 2).float().contiguous()
+        if sample_count is not None:
+            waveform = waveform[..., : int(sample_count)]
+        return waveform
+
+    @torch.inference_mode()
+    def encode(
+        self,
+        waveform: torch.Tensor | Mapping[str, Any],
+        *,
+        sample_rate: int | None = None,
+    ) -> torch.Tensor:
+        """Encode audio to normalized ``[2,32,T]`` posterior-mean latents."""
+
+        if isinstance(waveform, Mapping):
+            if sample_rate is None:
+                sample_rate = int(waveform.get("sample_rate", self.sample_rate))
+            waveform = waveform.get("waveform")
+        if not isinstance(waveform, torch.Tensor):
+            raise TypeError("Audio input must be a Tensor or Comfy AUDIO mapping")
+        sample_rate = self.sample_rate if sample_rate is None else int(sample_rate)
+        if waveform.ndim == 2:
+            waveform = waveform.unsqueeze(0)
+        if waveform.ndim != 3 or int(waveform.shape[0]) != 1:
+            raise H3VAEError(
+                "MiniMax H3 audio encode expects [1,C,L] or [C,L], got "
+                f"{tuple(waveform.shape)}"
+            )
+        if sample_rate != self.sample_rate:
+            try:
+                import torchaudio
+            except ImportError as exc:
+                raise H3VAEError(
+                    "Resampling reference audio requires torchaudio, or provide 32 kHz"
+                ) from exc
+            waveform = torchaudio.transforms.Resample(
+                sample_rate, self.sample_rate
+            )(waveform.float())
+
+        waveform = waveform.squeeze(0).float()
+        channels = int(waveform.shape[0])
+        if channels == 1:
+            waveform = waveform.repeat(2, 1)
+        elif channels < 1:
+            raise H3VAEError("Reference audio contains no channels")
+        else:
+            waveform = waveform[: self.output_channels]
+        waveform = waveform.to(self.device)
+
+        # The released audio VAE treats stereo channels as its batch dimension.
+        with _audio_vae_determinism():
+            audio_data = self.model.preprocess(
+                waveform.unsqueeze(1), self.sample_rate
+            )
+            with _autocast_for(self.device, self.compute_dtype):
+                encoded = self.model.encoder(audio_data)
+                if bool(getattr(self.model, "attn_proj", False)):
+                    encoded = self.model.pre_block(
+                        encoded.transpose(1, 2)
+                    ).transpose(1, 2)
+                raw = self.model.mean_proj(encoded)
+        return self.stats.normalize(raw.float()).contiguous()
+
+
+_VIDEO_SOURCE_CONTRACT: dict[str, Any] = {
+    "_class_name": "AutoencoderKLLegacy",
+    "causal_decoder": False,
+    "causal_encoder": True,
+    "ch": 128,
+    "ch_mult": [1, 2, 2, 4, 4, 8],
+    "embed_dim": 24,
+    "in_channels": 3,
+    "num_res_blocks": 2,
+    "num_res_blocks_decoder": None,
+    "out_ch": 3,
+    "padding_mode": "reflect",
+    "padding_mode_t": None,
+    "pixel_norm_type": "imagenet",
+    "scaling_factor": 1.0,
+    "shift_factor": 0.0,
+    "space_down": [2, 2, 2, 2, 1, 1],
+    "space_up": [1, 2, 2, 2, 2, 1],
+    "time_down": [1, 2, 2, 1, 1, 1],
+    "time_up": None,
+    "use_3d_conv": True,
+    "use_t_isolated_gn": True,
+    "use_vit_decoder": True,
+    "vae_ratio": 16,
+    "vae_ratio_t": 4,
+    "vit_decoder_kwargs": {
+        "dim_head": 64,
+        "ffn_activation_fn": "silu",
+        "ffn_use_gated": True,
+        "heads": 32,
+        "norm_affine": True,
+        "norm_type": "rms_norm",
+        "num_layers": 36,
+        "qk_norm_affine": False,
+        "qk_norm_type": "rms_norm",
+        "rope_dim_ratio": 0.75,
+        "rope_theta": 100.0,
+    },
+    "z_channels": 24,
+    "zq_ch_decoder": None,
+    "zq_ch_encoder": None,
+}
+
+
+def _video_source_config(
+    component_dir: Path,
+    outer_config: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Read and verify the real bundle's inner visual-VAE config."""
+
+    source_path = component_dir / "source" / "config.json"
+    source = _read_json(source_path)
+    outer_source_class = outer_config.get("source_class_name")
+    if outer_source_class not in (None, "AutoencoderKLLegacy"):
+        raise H3VAEError(
+            "video_vae.source_class_name must be AutoencoderKLLegacy, got "
+            f"{outer_source_class!r}"
+        )
+    mismatches: list[str] = []
+    for key, expected in _VIDEO_SOURCE_CONTRACT.items():
+        if key not in source:
+            mismatches.append(f"{key}=<missing> (expected {expected!r})")
+        elif source[key] != expected:
+            mismatches.append(f"{key}={source[key]!r} (expected {expected!r})")
+    if mismatches:
+        raise H3VAEError(
+            "video_vae/source/config.json does not match the MiniMax H3 "
+            "release architecture: "
+            + "; ".join(mismatches[:12])
+        )
+    return source
+
+
+def _video_vae_factory(
+    outer_config: Mapping[str, Any],
+    source_config: Mapping[str, Any],
+    *,
+    use_tiling: bool,
+):
+    clip_length = int(_config_value(outer_config, "vae_clip_length", 17))
+    token_drop = int(_config_value(outer_config, "vae_token_drop", 3))
+    encoder_tiling = bool(
+        _config_value(outer_config, "vae_encoder_tiling", 1)
+    )
+    tile_size = int(_config_value(outer_config, "vae_tile_size", 256))
+    tile_overlap = int(
+        _config_value(outer_config, "vae_tile_overlap_min", 64)
+    )
+    chunk_dim = int(_config_value(outer_config, "vae_chunk_dim", -1))
+    if chunk_dim != -1:
+        raise H3VAEError(
+            "ComfyUI single-process video VAE requires vae_chunk_dim=-1"
+        )
+    if bool(_config_value(outer_config, "vae_encoder_parallel", 0)):
+        raise H3VAEError("video_vae requests unsupported encoder parallelism")
+    if bool(_config_value(outer_config, "vae_decoder_parallel", 0)):
+        raise H3VAEError("video_vae requests unsupported decoder parallelism")
+
+    def factory():
+        return AutoencoderKLLegacy(
+            in_channels=int(source_config["in_channels"]),
+            out_ch=int(source_config["out_ch"]),
+            ch=int(source_config["ch"]),
+            embed_dim=int(source_config["embed_dim"]),
+            z_channels=int(source_config["z_channels"]),
+            use_3d_conv=bool(source_config["use_3d_conv"]),
+            zq_ch_encoder=source_config["zq_ch_encoder"],
+            zq_ch_decoder=source_config["zq_ch_decoder"],
+            num_res_blocks=int(source_config["num_res_blocks"]),
+            num_res_blocks_decoder=source_config["num_res_blocks_decoder"],
+            ch_mult=list(source_config["ch_mult"]),
+            space_down=list(source_config["space_down"]),
+            space_up=list(source_config["space_up"]),
+            time_down=list(source_config["time_down"]),
+            time_up=source_config["time_up"],
+            padding_mode=str(source_config["padding_mode"]),
+            padding_mode_t=source_config["padding_mode_t"],
+            use_t_isolated_gn=bool(source_config["use_t_isolated_gn"]),
+            causal_encoder=bool(source_config["causal_encoder"]),
+            causal_decoder=bool(source_config["causal_decoder"]),
+            use_vit_decoder=bool(source_config["use_vit_decoder"]),
+            vit_decoder_kwargs=dict(source_config["vit_decoder_kwargs"]),
+            shift_factor=float(source_config["shift_factor"]),
+            scaling_factor=float(source_config["scaling_factor"]),
+            pixel_norm_type=str(source_config["pixel_norm_type"]),
+            clip_length=clip_length,
+            token_drop=token_drop,
+            encoder_tiling=encoder_tiling,
+            decoder_tiling=bool(use_tiling),
+            parallel_tiling=False,
+            tile_size=tile_size,
+            tile_overlap_min=tile_overlap,
+            encoder_parallel=False,
+            decoder_parallel=False,
+            chunk_dim=chunk_dim,
+        )
+
+    return factory
+
+
+def _audio_vae_factory():
+    def factory():
+        return DacAudioVAE(
+            encoder_dim=64,
+            encoder_rates=[2, 4, 4, 5, 5],
+            latent_dim=2048,
+            decoder_dim=1024,
+            decoder_rates=[5, 5, 2, 2, 2, 2, 2],
+            sample_rate=AUDIO_SAMPLE_RATE,
+            vae_latent_channels=AUDIO_LATENT_CHANNELS,
+            attn_proj=True,
+            decoder_type="bigvgan",
+        )
+
+    return factory
+
+
+def load_video_vae(
+    model_or_component_path: str | Path,
+    *,
+    device: str | torch.device = "cpu",
+    weight_dtype: torch.dtype | str = torch.float32,
+    compute_dtype: torch.dtype | str | None = None,
+    use_tiling: bool = True,
+    strict: bool = True,
+    low_memory: bool = True,
+) -> MiniMaxH3VideoVAEAdapter:
+    """Load the released visual VAE directly into this ComfyUI process."""
+
+    component_dir = resolve_h3_component_dir(
+        model_or_component_path, "video_vae"
+    )
+    config = _read_json(component_dir / "config.json")
+    class_name = config.get("_class_name")
+    if class_name not in (None, "MiniMaxH3VideoVAE"):
+        raise H3VAEError(
+            f"video_vae._class_name must be MiniMaxH3VideoVAE, got {class_name!r}"
+        )
+    channels = int(_config_value(config, "latent_channels", VIDEO_LATENT_CHANNELS))
+    if channels != VIDEO_LATENT_CHANNELS:
+        raise H3VAEError(f"video_vae latent_channels must be 24, got {channels}")
+    source_config = _video_source_config(component_dir, config)
+    stats = H3LatentStats.from_config(
+        config,
+        expected_channels=VIDEO_LATENT_CHANNELS,
+        component_name="video_vae",
+    )
+    weight_dtype = _resolve_dtype(weight_dtype, default=torch.float32)
+    compute_dtype = _resolve_dtype(
+        compute_dtype,
+        default=torch.float16 if torch.device(device).type == "cuda" else torch.float32,
+    )
+    model = _construct_and_load(
+        _video_vae_factory(
+            config,
+            source_config,
+            use_tiling=use_tiling,
+        ),
+        _component_weight_files(component_dir, "video_vae", config),
+        component_name="video_vae",
+        device=torch.device(device),
+        weight_dtype=weight_dtype,
+        strict=strict,
+        low_memory=low_memory,
+    )
+    return MiniMaxH3VideoVAEAdapter(
+        model,
+        stats,
+        component_dir=component_dir,
+        compute_dtype=compute_dtype,
+    )
+
+
+def load_audio_vae(
+    model_or_component_path: str | Path,
+    *,
+    device: str | torch.device = "cpu",
+    weight_dtype: torch.dtype | str = torch.float32,
+    compute_dtype: torch.dtype | str = torch.float32,
+    strict: bool = True,
+    low_memory: bool = True,
+) -> MiniMaxH3AudioVAEAdapter:
+    """Load the released DAC/BigVGAN VAE directly into this ComfyUI process."""
+
+    component_dir = resolve_h3_component_dir(
+        model_or_component_path, "audio_vae"
+    )
+    config = _read_json(component_dir / "config.json")
+    class_name = config.get("_class_name")
+    if class_name not in (None, "MiniMaxH3AudioVAE"):
+        raise H3VAEError(
+            f"audio_vae._class_name must be MiniMaxH3AudioVAE, got {class_name!r}"
+        )
+    channels = int(_config_value(config, "latent_channels", AUDIO_LATENT_CHANNELS))
+    if channels != AUDIO_LATENT_CHANNELS:
+        raise H3VAEError(f"audio_vae latent_channels must be 32, got {channels}")
+    sample_rate = int(_config_value(config, "sample_rate", AUDIO_SAMPLE_RATE))
+    if sample_rate != AUDIO_SAMPLE_RATE:
+        raise H3VAEError(f"audio_vae sample_rate must be 32000, got {sample_rate}")
+    output_channels = int(
+        _config_value(config, "output_channel", AUDIO_OUTPUT_CHANNELS)
+    )
+    if output_channels != AUDIO_OUTPUT_CHANNELS:
+        raise H3VAEError(
+            f"audio_vae output_channel must be 2, got {output_channels}"
+        )
+    stats = H3LatentStats.from_config(
+        config,
+        expected_channels=AUDIO_LATENT_CHANNELS,
+        component_name="audio_vae",
+    )
+    weight_dtype = _resolve_dtype(weight_dtype, default=torch.float32)
+    compute_dtype = _resolve_dtype(compute_dtype, default=torch.float32)
+    model = _construct_and_load(
+        _audio_vae_factory(),
+        _component_weight_files(component_dir, "audio_vae", config),
+        component_name="audio_vae",
+        device=torch.device(device),
+        weight_dtype=weight_dtype,
+        strict=strict,
+        low_memory=low_memory,
+    )
+    return MiniMaxH3AudioVAEAdapter(
+        model,
+        stats,
+        component_dir=component_dir,
+        compute_dtype=compute_dtype,
+    )
+
+
+def load_h3_vae_bundle(
+    model_root: str | Path,
+    *,
+    vae_path: str | Path | None = None,
+    device: str | torch.device = "cpu",
+    video_compute_dtype: torch.dtype | str | None = None,
+    audio_compute_dtype: torch.dtype | str = torch.float32,
+    use_video_tiling: bool = True,
+    strict: bool = True,
+    low_memory: bool = True,
+) -> H3VAEBundle:
+    """Load both native H3 VAEs from a release root."""
+
+    component_root = Path(model_root).expanduser()
+    if vae_path is not None:
+        selected = Path(vae_path).expanduser()
+        component_root = (
+            selected
+            if selected.is_absolute()
+            else component_root / selected
+        )
+    component_root = component_root.resolve()
+
+    video = load_video_vae(
+        component_root,
+        device=device,
+        compute_dtype=video_compute_dtype,
+        use_tiling=use_video_tiling,
+        strict=strict,
+        low_memory=low_memory,
+    )
+    try:
+        audio = load_audio_vae(
+            component_root,
+            device=device,
+            compute_dtype=audio_compute_dtype,
+            strict=strict,
+            low_memory=low_memory,
+        )
+    except Exception:
+        # Avoid leaving the much larger visual decoder resident after a failed
+        # second-component load.
+        video.offload()
+        raise
+    return H3VAEBundle(video_vae=video, audio_vae=audio)
+
+
+__all__ = [
+    "AUDIO_LATENT_CHANNELS",
+    "AUDIO_OUTPUT_CHANNELS",
+    "AUDIO_SAMPLE_RATE",
+    "H3LatentStats",
+    "H3VAEBundle",
+    "H3VAEError",
+    "MiniMaxH3AudioVAEAdapter",
+    "MiniMaxH3VideoVAEAdapter",
+    "VIDEO_LATENT_CHANNELS",
+    "load_audio_vae",
+    "load_h3_vae_bundle",
+    "load_video_vae",
+    "resolve_h3_component_dir",
+]

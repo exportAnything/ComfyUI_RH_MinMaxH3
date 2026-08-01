@@ -1,0 +1,36 @@
+"""H3 runtime 统一常量（量化标记 / 加载策略），禁止在别处重复定义。"""
+
+MODEL_NAME = "MiniMax-H3"
+DEFAULT_PARTITION = "FL2VA"
+QUANT_KEY_SUFFIXES = (".comfy_quant", ".weight_scale")  # checkpoint 量化标记
+QKV_WEIGHT_SUFFIX = ".attn.qkv_proj.weight"
+QKV_SCALE_SUFFIX = ".attn.qkv_proj.weight_scale"
+INT8_FORMAT = "int8_tensorwise"  # Comfy QUANT_ALGOS / comfy_quant.format
+QUANT_NAME_TAG = "int8_convrot"  # 产物文件名用的量化格式标签
+TEXT_ENCODER_MODEL_SLUG = "qwen3-vl-32b"  # TE 权重文件名前缀
+# 目录：组件+格式；DiT 文件：MiniMax-H3-{FL2VA|Ref2VA}-int8_convrot；TE：qwen3-vl-32b-int8_convrot
+INT8_DIT_DIRNAME = f"transformer_{QUANT_NAME_TAG}"
+INT8_TE_DIRNAME = f"text_encoder_{QUANT_NAME_TAG}"
+VAE_MERGED_DIRNAME = "vae"  # video_vae+audio_vae 合并包
+VIDEO_VAE_FILENAME = f"{MODEL_NAME}-video_vae.safetensors"
+AUDIO_VAE_FILENAME = f"{MODEL_NAME}-audio_vae.safetensors"
+INT8_TE_FILENAME = f"{TEXT_ENCODER_MODEL_SLUG}-{QUANT_NAME_TAG}.safetensors"
+QUANT_EXCLUDE_HINT = "adaln_proj|token_refiner"  # DiT 量化脚本建议 --exclude
+TEXT_ENCODER_SELECTED_LAYERS = 50  # 与 qwen_encoder.SELECTED_LAYERS 一致
+TEXT_ENCODER_QUANT_LINEAR = (  # 仅量化 language_model.layers.<N>.{self_attn.*_proj,mlp.*_proj}，N<50
+    r"^model\.language_model\.layers\.(\d+)\."
+    r"(?:self_attn\.(?:q|k|v|o)_proj|mlp\.(?:gate|up|down)_proj)$"
+)
+TEXT_ENCODER_DROP_KEY = r"(?:^lm_head\.|language_model\.layers\.(?:[5-9]\d|\d{3,})\.)"  # 丢弃 lm_head 与 layer>=50
+FORCE_FULL_LOAD_BF16 = True  # BF16 普通 Linear 必须整模上卡
+ALLOW_PARTIAL_OFFLOAD_INT8 = True  # MixedPrecisionOps 可部分 offload
+TE_GPU_HEADROOM = 3 << 30  # TE 上卡前额外预留的 encode 工作区显存（字节）
+TE_VISUAL_ON_CPU = True  # 纯文本编码不搬 visual 塔，常驻 CPU 省 ~7GB 显存
+DIT_INFERENCE_RESERVE = 6 << 30  # DiT partial load 时给采样激活预留的显存（字节）
+
+
+def int8_dit_filename(partition: str | None = None) -> str:  # MiniMax-H3+模型类型+量化格式
+    return f"{MODEL_NAME}-{partition or DEFAULT_PARTITION}-{QUANT_NAME_TAG}.safetensors"
+
+
+INT8_DIT_FILENAME = int8_dit_filename(DEFAULT_PARTITION)  # 默认 FL2VA，脚本可按分区覆盖

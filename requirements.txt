@@ -1,0 +1,12 @@
+# MiniMax-H3's reference implementation is pinned to this Transformers build.
+transformers==5.8.1
+accelerate>=1.11.0
+safetensors>=0.4.5
+numpy>=1.26
+sentencepiece>=0.2.0
+einops>=0.7.0
+Pillow>=10.0.0
+
+# PyTorch and its matching torchvision build are supplied by ComfyUI.
+# torchaudio is optional and is only needed by future reference-audio encode
+# workflows when the input is not already 32 kHz.
