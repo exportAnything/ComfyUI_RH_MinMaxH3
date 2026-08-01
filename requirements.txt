@@ -10,3 +10,7 @@ Pillow>=10.0.0
 # PyTorch, torchvision, torchaudio, and PyAV are supplied by ComfyUI; keep
 # those builds aligned with the host. Ref2VA media preparation also requires
 # the system ffmpeg and ffprobe executables.
+
+# Optional Cache-DiT (Dual Sigma Sampler cache_dit != off):
+#   pip install "cache-dit>=1.3.0"
+#   or: pip install -e ".[cache-dit]"

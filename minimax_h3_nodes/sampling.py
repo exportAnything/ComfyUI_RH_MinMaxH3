@@ -1109,6 +1109,43 @@ def _require_accelerated_sampler_device(device: Any) -> None:
         )
 
 
+def _prepare_cache_dit_for_sample(
+    transformer: Any,
+    *,
+    cache_dit: str | None,
+    task: str,
+    target: Mapping[str, Any],
+    sigma_points: int,
+    video_shift: float,
+    audio_shift: float,
+    num_denoise_steps: int,
+    cache_dit_rdt: float | None = None,
+    cache_dit_mc: int | None = None,
+    cache_dit_warmup: int | None = None,
+) -> None:
+    """官方 denoise 前挂 Cache-DiT；off/auto 未命中时无空操作。"""
+    from .runtime.h3_settings import CACHE_DIT_MODE_OFF
+    from .runtime.quality_profiles import resolve_cache_dit_request
+    from .runtime.cache_dit_integration import prepare_transformer_cache_dit
+
+    mode = CACHE_DIT_MODE_OFF if cache_dit is None else str(cache_dit)
+    cfg = resolve_cache_dit_request(
+        mode,
+        task=task,
+        target=target,
+        sigma_points=sigma_points,
+        video_shift=video_shift,
+        audio_shift=audio_shift,
+        rdt=cache_dit_rdt,
+        mc=cache_dit_mc,
+        warmup=cache_dit_warmup,
+    )
+    if cfg is not None:
+        prepare_transformer_cache_dit(
+            transformer, cfg, num_denoise_steps=int(num_denoise_steps)
+        )
+
+
 def sample_h3(
     *,
     transformer: Any,
@@ -1127,6 +1164,10 @@ def sample_h3(
     audio_reference_noise: float = H3_AUDIO_REF_COND_TIMESTEP,
     progress: Callable[[int, int], None] | None = None,
     check_cancelled: Callable[[], None] | None = None,
+    cache_dit: str | None = None,
+    cache_dit_rdt: float | None = None,
+    cache_dit_mc: int | None = None,
+    cache_dit_warmup: int | None = None,
 ) -> dict[str, Any]:
     """Run task-neutral H3 denoising with frozen visual/audio anchors.
 
@@ -1333,6 +1374,20 @@ def sample_h3(
         for sigma in audio_sigmas[:-1]
     ]
 
+    _prepare_cache_dit_for_sample(
+        transformer,
+        cache_dit=cache_dit,
+        task=task,
+        target=clean_latent["target"],
+        sigma_points=sigma_points,
+        video_shift=video_shift,
+        audio_shift=audio_shift,
+        num_denoise_steps=total,
+        cache_dit_rdt=cache_dit_rdt,
+        cache_dit_mc=cache_dit_mc,
+        cache_dit_warmup=cache_dit_warmup,
+    )
+
     video_update = branch.update_mask_dev
     audio_update = branch.audio_update_mask_dev
     for step in range(total):
@@ -1468,6 +1523,10 @@ def sample_t2va(
     audio_shift: float,
     progress: Callable[[int, int], None] | None = None,
     check_cancelled: Callable[[], None] | None = None,
+    cache_dit: str | None = None,
+    cache_dit_rdt: float | None = None,
+    cache_dit_mc: int | None = None,
+    cache_dit_warmup: int | None = None,
 ) -> dict[str, Any]:
     """Run a complete in-process T2VA denoise and return native VAE latents."""
 
@@ -1571,6 +1630,20 @@ def sample_t2va(
         t.tensor(1.0 - sigma, dtype=t.float32, device=device)
         for sigma in audio_sigmas[:-1]
     ]
+
+    _prepare_cache_dit_for_sample(
+        transformer,
+        cache_dit=cache_dit,
+        task=H3_TASK_T2VA,
+        target=target,
+        sigma_points=sigma_points,
+        video_shift=video_shift,
+        audio_shift=audio_shift,
+        num_denoise_steps=total,
+        cache_dit_rdt=cache_dit_rdt,
+        cache_dit_mc=cache_dit_mc,
+        cache_dit_warmup=cache_dit_warmup,
+    )
 
     for step in range(total):
         if check_cancelled is not None:

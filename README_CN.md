@@ -116,6 +116,29 @@ Ref2VA 视频参考按官方路径规范为 24 fps，Qwen 展示序列再从该�
 - 编码、采样、解码之间会校验 target、条件顺序、任务分区、release 和组件指纹。
   FL2VA/Ref2VA 组件交叉连接会直接报错，不会继续生成未定义结果。
 
+## Cache-DiT 加速（可选）
+
+`Dual Sigma Sampler` 已接入官方 MiniMax-H3 `BlockAdapter`（`blocks` +
+`Pattern_3`）与 quality profile 旋钮。默认 `cache_dit=off`，行为与原先一致。
+
+```bash
+pip install "cache-dit>=1.3.0"
+# 或：pip install -e ".[cache-dit]"
+```
+
+采样器选项：
+
+| 值 | 行为 |
+| --- | --- |
+| `off` | 关闭（默认，可作 GT） |
+| `auto` | 仅当 workload 命中已验证合同（T2VA 1344×768、124 帧、24fps、50 steps、shift 12/3）时启用 profile |
+| `minimax-h3-cache-v1` | 强制该 profile；参数不匹配直接报错 |
+| `manual` | 使用 cookbook 旋钮；可用可选 `cache_dit_rdt` / `mc` / `warmup` 覆盖 |
+
+官方 4×H200 证据约 **1.99×** 端到端（VBench 不降）。这是近似加速，**不要**用
+Cache-DiT 结果做 consistency ground truth。profile JSON 在
+`minimax_h3_nodes/runtime/profiles/minimax-h3-cache-v1.json`。
+
 ## INT8 转换与 VAE 合并
 
 必须按任务分区分别转换：

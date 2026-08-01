@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "profile_id": "minimax-h3-cache-v1",
+  "status": "validated",
+  "source_profile_id": "minimax-h3-h200x4-cache-v1",
+  "source_repo": "MiniMax-AI-Dev/Internal-0727-private-3",
+  "source_pr": 17,
+  "notes": "Comfy 单机移植：旋钮与官方 Cache-DiT quality profile 一致；证据来自 4×H200 Ulysses=4，不强制本机 GPU/拓扑匹配。",
+  "workloads": [
+    {
+      "task": "t2va",
+      "width": 1344,
+      "height": 768,
+      "fps": 24,
+      "frame_count": 124,
+      "num_inference_steps": 50,
+      "flow_shift": 12.0,
+      "audio_flow_shift": 3.0
+    }
+  ],
+  "required_packages": {
+    "cache-dit": "1.3.0"
+  },
+  "cache_dit": {
+    "enabled": true,
+    "Fn_compute_blocks": 1,
+    "Bn_compute_blocks": 0,
+    "max_warmup_steps": 4,
+    "residual_diff_threshold": 0.08,
+    "max_continuous_cached_steps": 2,
+    "enable_taylorseer": false,
+    "taylorseer_order": 1,
+    "scm_preset": "none",
+    "scm_policy": "dynamic"
+  },
+  "evidence": {
+    "baseline_e2e_seconds": 78.10112863139948,
+    "candidate_e2e_seconds": 39.33855107220006,
+    "speedup": 1.99,
+    "vbench_baseline_mean": 0.86015450725,
+    "vbench_candidate_mean": 0.8624395658300054,
+    "lpips_mean": 0.23280538360197697,
+    "lpips_max": 0.4691985845565796
+  }
+}

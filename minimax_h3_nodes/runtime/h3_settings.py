@@ -29,6 +29,20 @@ ALLOW_PARTIAL_OFFLOAD_INT8 = True  # MixedPrecisionOps 可部分 offload
 TE_GPU_HEADROOM = 3 << 30  # TE 上卡前额外预留的 encode 工作区显存（字节）
 TE_VISUAL_ON_CPU = True  # 纯文本编码不搬 visual 塔，常驻 CPU 省 ~7GB 显存
 DIT_INFERENCE_RESERVE = 6 << 30  # DiT partial load 时给采样激活预留的显存（字节）
+# Cache-DiT（官方 MiniMax-H3 BlockAdapter / quality profile；近似加速，默认关闭）
+CACHE_DIT_PKG = "cache-dit"
+CACHE_DIT_MIN_VERSION = "1.3.0"
+CACHE_DIT_MODE_OFF, CACHE_DIT_MODE_AUTO, CACHE_DIT_MODE_MANUAL = "off", "auto", "manual"
+CACHE_DIT_PROFILE_ID = "minimax-h3-cache-v1"  # 本地 profile；源自官方 h200x4-cache-v1 旋钮
+CACHE_DIT_MODE_CHOICES = (CACHE_DIT_MODE_OFF, CACHE_DIT_MODE_AUTO, CACHE_DIT_PROFILE_ID, CACHE_DIT_MODE_MANUAL)
+CACHE_DIT_BLOCKS_ATTR = "blocks"  # MiniMaxH3DiTModel 主栈
+CACHE_DIT_FORWARD_PATTERN = "Pattern_3"  # hidden-state in/out，与官方测试一致
+CACHE_DIT_FN, CACHE_DIT_BN, CACHE_DIT_WARMUP = 1, 0, 4  # cookbook / profile 共用
+CACHE_DIT_RDT_COOKBOOK, CACHE_DIT_RDT_PROFILE = 0.12, 0.08  # cookbook 保守 / 官方已验证
+CACHE_DIT_MC = 2
+CACHE_DIT_TAYLORSEER, CACHE_DIT_TS_ORDER = False, 1
+CACHE_DIT_SCM_PRESET, CACHE_DIT_SCM_POLICY = "none", "dynamic"
+CACHE_DIT_MARK = "_h3_cache_dit_enabled"  # 挂在 transformer 上，避免重复 enable
 
 
 def int8_dit_filename(partition: str | None = None) -> str:  # MiniMax-H3+模型类型+量化格式

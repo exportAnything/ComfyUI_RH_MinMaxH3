@@ -133,6 +133,29 @@ for the model's stereo/32 kHz VAE path.
   fingerprints are checked across encoder, sampler, and decoder. Cross-wiring
   FL2VA/Ref2VA components fails closed instead of producing undefined output.
 
+## Optional Cache-DiT acceleration
+
+`Dual Sigma Sampler` ports the upstream MiniMax-H3 Cache-DiT `BlockAdapter`
+(`blocks` + `Pattern_3`) and the validated quality-profile knobs. The default
+`cache_dit=off` path is unchanged.
+
+```bash
+pip install "cache-dit>=1.3.0"
+# or: pip install -e ".[cache-dit]"
+```
+
+| Value | Behavior |
+| --- | --- |
+| `off` | Disabled (default; safe for GT) |
+| `auto` | Enable only when the request matches the validated T2VA workload (1344×768, 124 frames, 24 fps, 50 steps, shifts 12/3) |
+| `minimax-h3-cache-v1` | Force that profile; mismatch raises |
+| `manual` | Cookbook knobs; optional `cache_dit_rdt` / `mc` / `warmup` override |
+
+Upstream 4×H200 evidence is about **1.99×** end-to-end with non-inferior
+VBench. This is approximate acceleration—do **not** use Cache-DiT outputs as
+consistency ground truth. Profile JSON lives at
+`minimax_h3_nodes/runtime/profiles/minimax-h3-cache-v1.json`.
+
 ## INT8 conversion and VAE merge
 
 Run conversion from this repository and keep each partition separate:
