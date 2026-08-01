@@ -17,7 +17,11 @@ class TorchRuntimeTests(unittest.TestCase):
         from comfy.quant_ops import QuantizedTensor
         from minimax_h3_nodes.runtime.components import H3ComponentError
         from minimax_h3_nodes.runtime.model_loader import _flush_linear
-        from minimax_h3_nodes.runtime.qwen_encoder import _flush_linear_bag
+        from minimax_h3_nodes.runtime.qwen_encoder import (
+            _flush_linear_bag,
+            _make_quantized_linear_patcher,
+            _physical_module_bytes,
+        )
 
         marker = torch.tensor(
             list(
@@ -60,6 +64,22 @@ class TorchRuntimeTests(unittest.TestCase):
                 {"x.weight", "x.weight_scale", "x.comfy_quant", "x.bias"},
             )
 
+        physical_bytes = _physical_module_bytes(linear)
+        logical_bf16_bytes = linear.weight.numel() * linear.weight.element_size()
+        self.assertEqual(
+            physical_bytes,
+            sum(value.nbytes for value in linear.state_dict().values()),
+        )
+        self.assertLess(physical_bytes, logical_bf16_bytes)
+        bank, patcher, bank_bytes = _make_quantized_linear_patcher(
+            [linear],
+            load_device=torch.device("cpu"),
+            offload_device=torch.device("cpu"),
+        )
+        self.assertIs(bank.linears[0], linear)
+        self.assertEqual(bank_bytes, physical_bytes)
+        self.assertEqual(patcher.model_size(), physical_bytes)
+
         plain = torch.nn.Linear(
             4, 3, bias=True, device="meta", dtype=torch.float32
         )
@@ -72,6 +92,164 @@ class TorchRuntimeTests(unittest.TestCase):
         self.assertTrue(torch.equal(plain.bias, plain_bag["bias"]))
         with self.assertRaisesRegex(H3ComponentError, "plain nn.Linear"):
             _flush_linear(plain, "x.", dict(bag), torch.device("cpu"))
+
+    @unittest.skipUnless(HAS_COMFY, "requires ComfyUI quantized ops")
+    def test_te_int8_low_vram_linear_streams_to_cuda(self):
+        import json
+        import torch
+
+        if not torch.cuda.is_available():
+            self.skipTest("requires CUDA for CPU-to-GPU Linear streaming")
+
+        import comfy.ops as cops
+        from minimax_h3_nodes.runtime.qwen_encoder import (
+            _flush_linear_bag,
+            _make_quantized_linear_patcher,
+        )
+
+        marker = torch.tensor(
+            list(
+                json.dumps(
+                    {
+                        "format": "int8_tensorwise",
+                        "convrot": True,
+                        "convrot_groupsize": 256,
+                    },
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ),
+            dtype=torch.uint8,
+        )
+        ops = cops.mixed_precision_ops({}, compute_dtype=torch.bfloat16)
+        linear = ops.Linear(
+            256, 256, bias=True, device="meta", dtype=torch.bfloat16
+        )
+        bag = {
+            "weight": torch.randint(-127, 128, (256, 256), dtype=torch.int8),
+            "weight_scale": torch.ones(256, 1, dtype=torch.float32),
+            "comfy_quant": marker,
+            "bias": torch.zeros(256, dtype=torch.bfloat16),
+        }
+        self.assertTrue(
+            _flush_linear_bag(linear, "x.", bag, torch.device("cpu"))
+        )
+        _bank, patcher, _size = _make_quantized_linear_patcher(
+            [linear],
+            load_device=torch.device("cuda:0"),
+            offload_device=torch.device("cpu"),
+        )
+        try:
+            # A near-zero budget deliberately leaves the weight on CPU.  The
+            # real Qwen path relies on this same Comfy cast/stream operation.
+            patcher.patch_model(
+                device_to=torch.device("cuda:0"),
+                lowvram_model_memory=0.1,
+            )
+            self.assertEqual(linear.weight._qdata.device.type, "cpu")
+            inputs = torch.randn(
+                1, 4, 256, device="cuda:0", dtype=torch.bfloat16
+            )
+            output = linear(inputs)
+            self.assertEqual(output.device.type, "cuda")
+            self.assertTrue(torch.isfinite(output).all())
+        finally:
+            patcher.detach()
+        self.assertEqual(linear.weight._qdata.device.type, "cpu")
+
+    @unittest.skipUnless(HAS_COMFY, "requires ComfyUI quantized ops")
+    def test_te_int8_wrapper_patcher_lifecycle_keeps_visual_on_cpu(self):
+        import json
+        from pathlib import Path
+
+        import torch
+
+        if not torch.cuda.is_available():
+            self.skipTest("requires CUDA for text-encoder load lifecycle")
+
+        import comfy.ops as cops
+        from minimax_h3_nodes.runtime.qwen_encoder import (
+            MiniMaxH3TextEncoder,
+            _flush_linear_bag,
+        )
+
+        marker = torch.tensor(
+            list(
+                json.dumps(
+                    {
+                        "format": "int8_tensorwise",
+                        "convrot": True,
+                        "convrot_groupsize": 256,
+                    },
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ),
+            dtype=torch.uint8,
+        )
+        ops = cops.mixed_precision_ops({}, compute_dtype=torch.bfloat16)
+        linears = []
+        for _index in range(50 * 7):
+            linear = ops.Linear(
+                256, 256, bias=False, device="meta", dtype=torch.bfloat16
+            )
+            self.assertTrue(
+                _flush_linear_bag(
+                    linear,
+                    "x.",
+                    {
+                        "weight": torch.zeros(256, 256, dtype=torch.int8),
+                        "weight_scale": torch.ones(
+                            256, 1, dtype=torch.float32
+                        ),
+                        "comfy_quant": marker,
+                    },
+                    torch.device("cpu"),
+                )
+            )
+            linears.append(linear)
+
+        class FakeLanguage(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.embed_tokens = torch.nn.Embedding(
+                    512, 256, dtype=torch.bfloat16
+                )
+                self.norm = torch.nn.LayerNorm(256, dtype=torch.bfloat16)
+                self.linears = torch.nn.ModuleList(linears)
+
+        class FakeBackbone(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.visual = torch.nn.Linear(8, 8, dtype=torch.bfloat16)
+                self.language_model = FakeLanguage()
+
+        model = FakeBackbone().eval()
+        encoder = MiniMaxH3TextEncoder(
+            model=model,
+            tokenizer=None,
+            component_path=Path("/tmp/fake-h3-text"),
+            load_device=torch.device("cuda:0"),
+            offload_device=torch.device("cpu"),
+            quantized=True,
+        )
+        encoder.load_for_inference()
+        try:
+            self.assertEqual(encoder.device, torch.device("cuda:0"))
+            self.assertEqual(model.visual.weight.device.type, "cpu")
+            self.assertEqual(
+                model.language_model.embed_tokens.weight.device.type, "cuda"
+            )
+            self.assertGreater(encoder._linear_patcher.loaded_size(), 0)
+        finally:
+            encoder.offload_after_inference()
+
+        self.assertIsNone(encoder._compute_device)
+        self.assertEqual(model.visual.weight.device.type, "cpu")
+        self.assertEqual(
+            model.language_model.embed_tokens.weight.device.type, "cpu"
+        )
+        self.assertTrue(
+            all(linear.weight._qdata.device.type == "cpu" for linear in linears)
+        )
 
     def test_partial_offload_uses_explicit_cuda_compute_device(self):
         import torch

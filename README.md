@@ -26,7 +26,7 @@ ComfyUI 进程内直接推理 MiniMax-H3（T2VA）的自定义节点，不依赖
 
 三个 Loader 的 `transformer_path` / `text_encoder_path` / `vae_path` 都是**必填下拉直选**，不存在 `auto` 模型选择。推荐分别选择 `transformer_int8_convrot`、`text_encoder_int8_convrot`、`vae`。加载器识别 `.comfy_quant` / `.weight_scale`，Comfy 内部 format 仍为 `int8_tensorwise`。
 
-Text Encoder 上卡策略（`h3_settings.TE_GPU_HEADROOM` / `TE_VISUAL_ON_CPU`）：encode 前按「模块字节数 + 工作区预留」对比空闲显存，装不下自动留在 CPU encode；visual 塔默认常驻 CPU（纯文本编码用不到，省 ~7GB）；上卡途中 OOM 自动回滚 CPU 继续，任务不再失败。
+Text Encoder 上卡策略（`h3_settings.TE_GPU_HEADROOM` / `TE_VISUAL_ON_CPU`）：INT8 路径按真实 `qdata + scale` 字节数统计权重，embedding / norm / RoPE 常驻 GPU，350 个量化 Linear 由 Comfy ModelPatcher 按剩余显存部分常驻，其余逐层流式上卡；visual 塔默认常驻 CPU（纯文本编码用不到，省 ~7GB）。只有 CUDA OOM 时才清理并回退 CPU encode。BF16 路径仍需整个文本编码器容量。
 
 DiT 上卡策略（`h3_settings.DIT_INFERENCE_RESERVE`，默认 6GB）：int8 partial load 时把该额度留给采样激活，权重按剩余显存部分上卡（其余留 CPU 由 MixedPrecisionOps 兜底）；上卡 OOM 自动清卡并以 2 倍预留重试一次。
 
@@ -61,7 +61,7 @@ python3 tools/merge_vae.py --src $BASE/Ref2VA
 | 阶段 | 需求 |
 |------|------|
 | 量化 | 逐层上 GPU，4090 24GB 足够；系统内存建议 ≥ 48GB |
-| 推理 | int8 DiT ~44GB；4090D partial offload ~20GB VRAM |
+| 推理 | int8 DiT ~44GB；int8 TE ~25.3GiB；4090D 均使用 partial/streaming offload |
 | 磁盘 | BF16 transformer ~59–62GB；int8 DiT ~44GB；int8 TE ~26GB；VAE 合并包 ~10.4GB |
 
 240.2 使用官方校验通过的干净权重实测：

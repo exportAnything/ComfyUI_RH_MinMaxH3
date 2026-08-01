@@ -179,6 +179,140 @@ def _validate_loading_info(loading_info: Any) -> None:
         )
 
 
+def _physical_module_bytes(module: Any) -> int:
+    """Return serialized storage bytes, not a tensor subclass's logical size.
+
+    Comfy ``QuantizedTensor`` reports the original BF16 shape/dtype through the
+    Tensor API.  ``numel() * element_size()`` therefore over-counts each INT8
+    Linear by roughly 2x.  Its module state dict contains the real qdata,
+    scales, marker and bias, which is the storage that ModelPatcher moves.
+    """
+
+    return sum(int(tensor.nbytes) for tensor in module.state_dict().values())
+
+
+def _direct_tensor_slots(roots: list[Any], excluded_module_ids: set[int]):
+    """Yield direct parameter/buffer slots outside streamable Linear modules."""
+
+    visited: set[int] = set()
+    for root in roots:
+        for module in root.modules():
+            module_id = id(module)
+            if module_id in visited or module_id in excluded_module_ids:
+                continue
+            visited.add(module_id)
+            for collection_name in ("_parameters", "_buffers"):
+                collection = getattr(module, collection_name, {})
+                for name, tensor in tuple(collection.items()):
+                    if tensor is not None:
+                        yield module, collection_name, name, tensor
+
+
+def _direct_tensor_bytes(roots: list[Any], excluded_module_ids: set[int]) -> int:
+    """Count unique non-Linear tensors used by the text-only forward path."""
+
+    seen: set[int] = set()
+    total = 0
+    for _module, _collection, _name, tensor in _direct_tensor_slots(
+        roots, excluded_module_ids
+    ):
+        tensor_id = id(tensor)
+        if tensor_id not in seen:
+            total += int(tensor.nbytes)
+            seen.add(tensor_id)
+    return total
+
+
+def _move_direct_tensors(
+    roots: list[Any], excluded_module_ids: set[int], device: Any
+) -> None:
+    """Move only direct static tensors, preserving shared-parameter aliases.
+
+    Calling ``language_model.to(device)`` would recursively move the 350
+    quantized Linear modules and bypass ModelPatcher's low-VRAM bookkeeping.
+    """
+
+    import torch
+
+    target_device = torch.device(device)
+    moved: dict[int, Any] = {}
+    for module, collection_name, name, tensor in _direct_tensor_slots(
+        roots, excluded_module_ids
+    ):
+        tensor_id = id(tensor)
+        replacement = moved.get(tensor_id)
+        if replacement is None:
+            if tensor.device == target_device:
+                replacement = tensor
+            else:
+                value = tensor.to(device=target_device)
+                if collection_name == "_parameters":
+                    replacement = torch.nn.Parameter(
+                        value, requires_grad=bool(tensor.requires_grad)
+                    )
+                else:
+                    replacement = value
+            moved[tensor_id] = replacement
+        getattr(module, collection_name)[name] = replacement
+
+
+def _quantized_language_linears(roots: list[Any]) -> list[Any]:
+    """Collect each complete Comfy quantized Linear exactly once."""
+
+    try:
+        from comfy.quant_ops import QuantizedTensor
+    except ImportError:
+        return []
+
+    linears: list[Any] = []
+    seen: set[int] = set()
+    for root in roots:
+        for module in root.modules():
+            module_id = id(module)
+            if module_id in seen:
+                continue
+            weight = getattr(module, "weight", None)
+            if hasattr(module, "comfy_cast_weights") and isinstance(
+                weight, QuantizedTensor
+            ):
+                seen.add(module_id)
+                linears.append(module)
+    return linears
+
+
+def _make_quantized_linear_patcher(
+    linears: list[Any], *, load_device: Any, offload_device: Any
+):
+    """Create a no-copy ModelPatcher view over the Qwen language Linears."""
+
+    import torch
+    from comfy.model_patcher import ModelPatcher
+
+    class _H3TextLinearBank(torch.nn.Module):
+        def __init__(self, modules: list[Any]) -> None:
+            super().__init__()
+            # PyTorch permits shared module registration.  These are the exact
+            # objects referenced by Qwen's decoder layers; no weights are copied.
+            self.linears = torch.nn.ModuleList(modules)
+
+        def get_dtype(self):
+            for linear in self.linears:
+                weight = getattr(linear, "weight", None)
+                if weight is not None:
+                    return weight.dtype
+            return None
+
+    bank = _H3TextLinearBank(linears)
+    storage_bytes = _physical_module_bytes(bank)
+    patcher = ModelPatcher(
+        bank,
+        load_device=load_device,
+        offload_device=offload_device,
+        size=storage_bytes,
+    )
+    return bank, patcher, storage_bytes
+
+
 class MiniMaxH3TextEncoder:
     """Resident/offload-aware wrapper around the trimmed Qwen3-VL backbone."""
 
@@ -190,58 +324,202 @@ class MiniMaxH3TextEncoder:
         component_path: Path,
         load_device: Any,
         offload_device: Any,
+        quantized: bool = False,
     ) -> None:
         self.model = model
         self.tokenizer = tokenizer
         self.component_path = component_path
         self.load_device = load_device
         self.offload_device = offload_device
+        self.quantized = bool(quantized)
         self._lock = threading.RLock()
+        self._compute_device = None
+        self._inference_active = False
+        self._linear_bank = None
+        self._linear_patcher = None
+        self._streaming_linears: tuple[Any, ...] = ()
+        self._linear_storage_bytes = 0
+        self._static_storage_bytes = 0
 
     def _movable(self):  # 文本编码实际参与的直接子模块（可选跳过 visual 塔）
         return [m for n, m in self.model.named_children() if not (TE_VISUAL_ON_CPU and n == "visual")]
 
-    @property
-    def device(self):  # 以参与 encode 的模块为准，避免 visual 常驻 CPU 干扰判断
+    def _actual_device(self):
         for m in self._movable():
             for p in m.parameters():
                 return p.device
+            for b in m.buffers():
+                return b.device
         return next(self.model.parameters()).device
+
+    @property
+    def device(self):
+        # Partial load intentionally leaves many Linear weights on CPU.  The
+        # execution device must follow activations, never the first parameter.
+        return self._compute_device or self._actual_device()
+
+    def _set_compute_device(self, device: Any | None) -> None:
+        import torch
+
+        self._compute_device = None if device is None else torch.device(device)
+        if self._compute_device is None:
+            if hasattr(self.model, "_h3_compute_device"):
+                delattr(self.model, "_h3_compute_device")
+        else:
+            object.__setattr__(
+                self.model, "_h3_compute_device", self._compute_device
+            )
+
+    def _ensure_linear_patcher(self):
+        if self._linear_patcher is not None:
+            return self._linear_patcher
+        roots = self._movable()
+        linears = _quantized_language_linears(roots)
+        expected = SELECTED_LAYERS * 7
+        if len(linears) != expected:
+            raise H3ComponentError(
+                "H3 INT8 text streaming requires exactly "
+                f"{expected} complete quantized Linear modules, got {len(linears)}"
+            )
+        bank, patcher, linear_bytes = _make_quantized_linear_patcher(
+            linears,
+            load_device=self.load_device,
+            offload_device=self.offload_device,
+        )
+        self._linear_bank = bank
+        self._linear_patcher = patcher
+        self._streaming_linears = tuple(linears)
+        excluded = {id(module) for module in linears}
+        self._linear_storage_bytes = linear_bytes
+        self._static_storage_bytes = _direct_tensor_bytes(roots, excluded)
+        LOGGER.info(
+            "H3 text_encoder physical storage %.2fGB "
+            "(INT8 Linear %.2fGB + static %.2fGB); visual stays on CPU",
+            (linear_bytes + self._static_storage_bytes) / 2**30,
+            linear_bytes / 2**30,
+            self._static_storage_bytes / 2**30,
+        )
+        return patcher
+
+    def _move_static_tensors(self, device: Any) -> None:
+        excluded = {id(module) for module in self._streaming_linears}
+        _move_direct_tensors(self._movable(), excluded, device)
+
+    def _unload_linear_patcher(self) -> None:
+        patcher = self._linear_patcher
+        if patcher is None:
+            return
+        try:
+            import comfy.model_management as mm
+
+            unload = getattr(mm, "unload_model_and_clones", None)
+            if callable(unload):
+                unload(patcher)
+            else:
+                patcher.detach()
+        finally:
+            # If load_models_gpu failed before registering the LoadedModel, the
+            # global unload helper cannot see it.  Detach any remaining load.
+            loaded_size = getattr(patcher, "loaded_size", lambda: 0)()
+            bank = getattr(patcher, "model", None)
+            if (
+                loaded_size
+                or bool(getattr(bank, "model_lowvram", False))
+                or bool(getattr(patcher, "pinned", ()))
+            ):
+                patcher.detach()
 
     def load_for_inference(self) -> "MiniMaxH3TextEncoder":
         import torch
 
-        if self.load_device.type != "cuda" or self.device == self.load_device:
+        if self.load_device.type != "cuda":
+            return self
+        if self._inference_active and self.device == self.load_device:
+            return self
+
+        if self.quantized and ALLOW_PARTIAL_OFFLOAD_INT8:
+            patcher = self._ensure_linear_patcher()
+            reserve = TE_GPU_HEADROOM + self._static_storage_bytes
+            try:
+                import comfy.model_management as mm
+
+                # Reserve static embedding/norm/RoPE bytes plus encode
+                # workspace.  ModelPatcher uses the remainder for resident
+                # INT8 Linears and streams all others on Comfy's CUDA streams.
+                mm.load_models_gpu([patcher], memory_required=reserve)
+                self._move_static_tensors(self.load_device)
+            except torch.OutOfMemoryError:
+                LOGGER.warning(
+                    "text_encoder INT8 partial load OOM; cleaned up and "
+                    "falling back to CPU encode"
+                )
+                self._unload_linear_patcher()
+                self._move_static_tensors(self.offload_device)
+                self._set_compute_device(None)
+                self._inference_active = False
+                try:
+                    mm.soft_empty_cache()
+                except (ImportError, UnboundLocalError):
+                    torch.cuda.empty_cache()
+                return self
+            self._set_compute_device(self.load_device)
+            self._inference_active = True
+            loaded = int(getattr(patcher, "loaded_size", lambda: 0)())
+            LOGGER.info(
+                "H3 text_encoder CUDA streaming ready: static %.2fGB, "
+                "Linear resident %.2f/%.2fGB, workspace reserve %.2fGB",
+                self._static_storage_bytes / 2**30,
+                loaded / 2**30,
+                self._linear_storage_bytes / 2**30,
+                TE_GPU_HEADROOM / 2**30,
+            )
+            return self
+
+        if self._actual_device() == self.load_device:
+            self._set_compute_device(self.load_device)
+            self._inference_active = True
             return self
         mods = self._movable()
-        need = sum(t.numel() * t.element_size() for m in mods for t in [*m.parameters(), *m.buffers()])
+        need = sum(_physical_module_bytes(module) for module in mods)
         free = torch.cuda.mem_get_info(self.load_device)[0] if torch.cuda.is_available() else 0
-        if free < need + TE_GPU_HEADROOM:  # 显存预算不足 → 留在 CPU encode，不再硬搬爆卡
+        if free < need + TE_GPU_HEADROOM:
             LOGGER.warning("text_encoder 需 %.1fGB + %.1fGB 工作区 > 空闲 %.1fGB，回退 CPU encode",
                            need / 2**30, TE_GPU_HEADROOM / 2**30, free / 2**30)
             return self
         try:
             for m in mods:
                 m.to(self.load_device)
-        except torch.OutOfMemoryError:  # 兜底：搬一半 OOM 时回滚 CPU 继续，任务不失败
+        except torch.OutOfMemoryError:
             LOGGER.warning("text_encoder 上卡 OOM，回滚 CPU encode")
             for m in mods:
                 m.to(self.offload_device)
             torch.cuda.empty_cache()
+            self._set_compute_device(None)
+            self._inference_active = False
+            return self
+        self._set_compute_device(self.load_device)
+        self._inference_active = True
         return self
 
     def offload_after_inference(self) -> None:
         import torch
 
-        if self.device != self.offload_device:
-            self.model.to(self.offload_device)
-        try:
-            import comfy.model_management as mm
+        with self._lock:
+            if self._linear_patcher is not None:
+                self._unload_linear_patcher()
+                self._move_static_tensors(self.offload_device)
+            elif self._actual_device() != self.offload_device:
+                for module in self._movable():
+                    module.to(self.offload_device)
+            self._set_compute_device(None)
+            self._inference_active = False
+            try:
+                import comfy.model_management as mm
 
-            mm.soft_empty_cache()
-        except ImportError:
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
+                mm.soft_empty_cache()
+            except ImportError:
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
 
     def encode_prompt(self, prompt: str):
         """Return H3's positive layer-50 features as CPU ``[L, 5120]`` BF16."""
@@ -666,6 +944,7 @@ def load_h3_text_encoder(
         component_path=component,
         load_device=load_device,
         offload_device=target_offload_device,
+        quantized=quantized,
     )
 
 
