@@ -51,14 +51,22 @@ models/diffusers/MiniMax-H3/
 FL2VA nodes only resolve the `FL2VA` partition; Ref2VA nodes only resolve the
 `Ref2VA` partition. Each task has three explicit component loaders:
 
-- `... Model Loader (Direct)` selects the DiT directory.
-- `... Qwen3-VL Loader (Direct)` selects the text-encoder directory.
-- `... Dual VAE Loader (Direct)` selects the merged video/audio VAE directory.
+- `... Model Loader (Direct)` selects the DiT **model name**.
+- `... Qwen3-VL Loader (Direct)` selects the text-encoder **model name**.
+- `... Dual VAE Loader (Direct)` selects the merged dual-VAE **model name**.
 
-The selectors never silently switch between BF16 and INT8. Select
-`transformer`/`text_encoder` for official BF16 weights, or the corresponding
-`*_int8_convrot` directories for converted weights. Select `vae` for the
-merged VAE bundle.
+The selectors never silently switch between BF16 and INT8. Prefer weight
+filenames / logical names, for example:
+
+- DiT INT8: `MiniMax-H3-FL2VA-int8_convrot.safetensors` /
+  `MiniMax-H3-Ref2VA-int8_convrot.safetensors`
+- DiT BF16 (sharded): logical name `MiniMax-H3-FL2VA` / `MiniMax-H3-Ref2VA`
+- TE INT8: `qwen3-vl-32b-int8_convrot.safetensors`
+- TE BF16 (sharded): logical name `qwen3-vl-32b`
+- merged VAE: logical name `MiniMax-H3-vae`
+
+Legacy directory names such as `transformer_int8_convrot` / `vae` still resolve
+for older workflows.
 
 ## FL2VA workflow
 

@@ -15,6 +15,8 @@ VAE_MERGED_DIRNAME = "vae"  # video_vae+audio_vae 合并包
 VIDEO_VAE_FILENAME = f"{MODEL_NAME}-video_vae.safetensors"
 AUDIO_VAE_FILENAME = f"{MODEL_NAME}-audio_vae.safetensors"
 INT8_TE_FILENAME = f"{TEXT_ENCODER_MODEL_SLUG}-{QUANT_NAME_TAG}.safetensors"
+BF16_TE_MODEL_NAME = TEXT_ENCODER_MODEL_SLUG  # 分片 BF16 逻辑名 → text_encoder/
+VAE_MERGED_MODEL_NAME = f"{MODEL_NAME}-vae"  # 合并双 VAE 逻辑名 → vae/
 QUANT_EXCLUDE_HINT = "adaln_proj|token_refiner"  # DiT 量化脚本建议 --exclude
 TEXT_ENCODER_SELECTED_LAYERS = 50  # 与 qwen_encoder.SELECTED_LAYERS 一致
 TEXT_ENCODER_QUANT_LINEAR = (  # 仅量化 language_model.layers.<N>.{self_attn.*_proj,mlp.*_proj}，N<50
@@ -33,4 +35,9 @@ def int8_dit_filename(partition: str | None = None) -> str:  # MiniMax-H3+模型
     return f"{MODEL_NAME}-{partition or DEFAULT_PARTITION}-{QUANT_NAME_TAG}.safetensors"
 
 
+def bf16_dit_model_name(partition: str | None = None) -> str:  # 分片 BF16 DiT 逻辑名 → transformer/
+    return f"{MODEL_NAME}-{partition or DEFAULT_PARTITION}"
+
+
 INT8_DIT_FILENAME = int8_dit_filename(DEFAULT_PARTITION)  # 默认 FL2VA，脚本可按分区覆盖
+BF16_DIT_MODEL_NAME = bf16_dit_model_name(DEFAULT_PARTITION)

@@ -3,7 +3,7 @@
     "inputs": {
       "model_root": "MiniMax-H3",
       "dtype": "auto",
-      "text_encoder_path": "text_encoder"
+      "text_encoder_path": "qwen3-vl-32b"
     },
     "class_type": "MiniMaxH3DirectTextEncoderLoader",
     "_meta": {
@@ -51,7 +51,7 @@
     "inputs": {
       "model_root": "MiniMax-H3",
       "dtype": "auto",
-      "transformer_path": "transformer"
+      "transformer_path": "MiniMax-H3-FL2VA"
     },
     "class_type": "MiniMaxH3DirectModelLoader",
     "_meta": {
@@ -85,7 +85,7 @@
   "7": {
     "inputs": {
       "model_root": "MiniMax-H3",
-      "vae_path": "vae"
+      "vae_path": "MiniMax-H3-vae"
     },
     "class_type": "MiniMaxH3DirectVAELoader",
     "_meta": {

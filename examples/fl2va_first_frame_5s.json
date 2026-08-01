@@ -115,7 +115,7 @@
       "widgets_values": [
         "MiniMax-H3",
         "auto",
-        "text_encoder_int8_convrot"
+        "qwen3-vl-32b-int8_convrot.safetensors"
       ]
     },
     {
@@ -149,7 +149,7 @@
       "widgets_values": [
         "MiniMax-H3",
         "auto",
-        "transformer_int8_convrot"
+        "MiniMax-H3-FL2VA-int8_convrot.safetensors"
       ]
     },
     {
@@ -183,7 +183,7 @@
       },
       "widgets_values": [
         "MiniMax-H3",
-        "vae"
+        "MiniMax-H3-vae"
       ]
     },
     {

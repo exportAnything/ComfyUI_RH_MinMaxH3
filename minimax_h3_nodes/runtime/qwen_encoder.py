@@ -544,6 +544,67 @@ class MiniMaxH3TextEncoder:
         return hidden
 
     @staticmethod
+    def _call_vision_feature_getter(getter, pixel_values, grid_thw):
+        """Call get_*_features across Transformers APIs with/without return_dict."""
+
+        import inspect
+
+        kwargs = {}
+        try:
+            if "return_dict" in inspect.signature(getter).parameters:
+                kwargs["return_dict"] = True
+        except (TypeError, ValueError):
+            pass
+        return getter(pixel_values, grid_thw, **kwargs)
+
+    @staticmethod
+    def _call_rope_index(
+        rope,
+        input_ids,
+        *,
+        mm_token_type_ids,
+        image_grid_thw,
+        video_grid_thw,
+        attention_mask,
+    ):
+        """Call Qwen3-VL M-RoPE across legacy and current Transformers APIs."""
+
+        import inspect
+
+        kwargs = {
+            "image_grid_thw": image_grid_thw,
+            "video_grid_thw": video_grid_thw,
+            "attention_mask": attention_mask,
+        }
+        try:
+            parameters = inspect.signature(rope).parameters
+        except (TypeError, ValueError):
+            parameters = None
+
+        accepts_mm_types = parameters is None or "mm_token_type_ids" in parameters
+        if parameters is not None and not accepts_mm_types:
+            accepts_mm_types = any(
+                parameter.kind is inspect.Parameter.VAR_KEYWORD
+                for parameter in parameters.values()
+            )
+        if accepts_mm_types:
+            kwargs["mm_token_type_ids"] = mm_token_type_ids
+
+        try:
+            return rope(input_ids, **kwargs)
+        except TypeError as exc:
+            # Some extension callables do not expose a usable signature.  In
+            # that case, retry only the argument-binding failure from the
+            # pre-mm_token_type_ids API; do not mask TypeErrors from the body.
+            if parameters is not None or not re.search(
+                r"unexpected keyword argument ['\"]mm_token_type_ids['\"]",
+                str(exc),
+            ):
+                raise
+            kwargs.pop("mm_token_type_ids", None)
+            return rope(input_ids, **kwargs)
+
+    @staticmethod
     def _vision_output_to_cpu(output: Any, *, context: str) -> dict[str, Any]:
         """Retain every DeepStack tensor needed by the later LM phase."""
 
@@ -551,10 +612,15 @@ class MiniMaxH3TextEncoder:
 
         pooled = getattr(output, "pooler_output", None)
         deepstack = getattr(output, "deepstack_features", None)
+        # transformers>=4.57 get_image_features returns (embeds, deepstack_list)
+        if (pooled is None or deepstack is None) and isinstance(
+            output, (tuple, list)
+        ) and len(output) == 2:
+            pooled, deepstack = output
         if pooled is None or deepstack is None:
             raise H3ComponentError(
-                f"Qwen3-VL {context} visual output lacks pooler_output or "
-                "deepstack_features; refusing an incorrect pooled-only encode"
+                f"Qwen3-VL {context} visual output lacks pooled embeds or "
+                "DeepStack features; refusing an incorrect pooled-only encode"
             )
         if isinstance(pooled, torch.Tensor):
             pooled_items = [pooled]
@@ -963,10 +1029,10 @@ class MiniMaxH3TextEncoder:
                         "Installed Transformers Qwen3-VL lacks "
                         "get_image_features; refusing an unverified staged path"
                     )
-                output = getter(
+                output = self._call_vision_feature_getter(
+                    getter,
                     pixel_values.to(device=visual_device, dtype=visual_dtype),
                     image_grid_thw.to(device=visual_device, dtype=torch.long),
-                    return_dict=True,
                 )
                 image_features = self._vision_output_to_cpu(
                     output, context="image"
@@ -979,12 +1045,12 @@ class MiniMaxH3TextEncoder:
                         "Installed Transformers Qwen3-VL lacks "
                         "get_video_features; refusing an unverified staged path"
                     )
-                output = getter(
+                output = self._call_vision_feature_getter(
+                    getter,
                     pixel_values_videos.to(
                         device=visual_device, dtype=visual_dtype
                     ),
                     video_grid_thw.to(device=visual_device, dtype=torch.long),
-                    return_dict=True,
                 )
                 video_features = self._vision_output_to_cpu(
                     output, context="video"
@@ -1164,7 +1230,8 @@ class MiniMaxH3TextEncoder:
                 "Installed Transformers Qwen3-VL lacks get_rope_index(); "
                 "multimodal M-RoPE cannot be reproduced safely"
             )
-        position_ids, _rope_delta = rope(
+        position_ids, _rope_delta = self._call_rope_index(
+            rope,
             ids,
             mm_token_type_ids=mm_types,
             image_grid_thw=(

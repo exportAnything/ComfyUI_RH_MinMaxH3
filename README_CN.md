@@ -46,13 +46,20 @@ models/diffusers/MiniMax-H3/
 FL2VA 节点只解析 `FL2VA` 分区，Ref2VA 节点只解析 `Ref2VA` 分区。每个任务都有
 三个显式组件加载节点：
 
-- `... Model Loader (Direct)`：选择 DiT 目录；
-- `... Qwen3-VL Loader (Direct)`：选择文本/多模态编码器目录；
-- `... Dual VAE Loader (Direct)`：选择同时包含视频与音频 VAE 的合并目录。
+- `... Model Loader (Direct)`：选择 DiT **模型名**；
+- `... Qwen3-VL Loader (Direct)`：选择文本/多模态编码器 **模型名**；
+- `... Dual VAE Loader (Direct)`：选择合并双 VAE **模型名**。
 
-节点不会在 BF16 和 INT8 之间静默切换。官方 BF16 权重请选择
-`transformer`/`text_encoder`；量化权重请选择对应的 `*_int8_convrot`；VAE 选择
-`vae`。
+节点不会在 BF16 和 INT8 之间静默切换。请按模型名选择，例如：
+
+- DiT INT8：`MiniMax-H3-FL2VA-int8_convrot.safetensors` /
+  `MiniMax-H3-Ref2VA-int8_convrot.safetensors`
+- DiT BF16（分片）：逻辑名 `MiniMax-H3-FL2VA` / `MiniMax-H3-Ref2VA`
+- TE INT8：`qwen3-vl-32b-int8_convrot.safetensors`
+- TE BF16（分片）：逻辑名 `qwen3-vl-32b`
+- 合并 VAE：逻辑名 `MiniMax-H3-vae`
+
+旧工作流里的目录名（如 `transformer_int8_convrot` / `vae`）仍可解析。
 
 ## FL2VA 工作流
 

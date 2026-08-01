@@ -86,9 +86,14 @@ from .contracts import (
     validate_target,
 )
 from .runtime.h3_settings import (
+    BF16_TE_MODEL_NAME,
     INT8_DIT_DIRNAME,
     INT8_TE_DIRNAME,
+    INT8_TE_FILENAME,
     VAE_MERGED_DIRNAME,
+    VAE_MERGED_MODEL_NAME,
+    bf16_dit_model_name,
+    int8_dit_filename,
 )
 from .sampling import sample_h3, sample_t2va
 
@@ -222,50 +227,191 @@ def _partition_roots(partition: str = H3_T2VA_PARTITION) -> list[Path]:
     return out
 
 
-def _component_dir_choices(
+def _partition_label(partition: str = H3_T2VA_PARTITION) -> str:
+    return "FL2VA" if str(partition).strip().lower() == H3_T2VA_PARTITION else "Ref2VA"
+
+
+def _default_dit_model_name(partition: str = H3_T2VA_PARTITION) -> str:
+    return int8_dit_filename(_partition_label(partition))
+
+
+def _default_te_model_name() -> str:
+    return INT8_TE_FILENAME
+
+
+def _default_vae_model_name() -> str:
+    return VAE_MERGED_MODEL_NAME
+
+
+def _is_sharded_weight(name: str) -> bool:
+    return "-of-" in name or name.endswith(".index.json")
+
+
+def _single_weight_names(component_dir: Path) -> list[str]:
+    try:
+        return sorted(
+            p.name
+            for p in component_dir.glob("*.safetensors")
+            if p.is_file() and not _is_sharded_weight(p.name)
+        )
+    except OSError:
+        return []
+
+
+def _model_name_for_component_dir(
+    component_dir: Path, prefix: str, partition: str
+) -> str:
+    """Map a component directory to the COMBO model name."""
+
+    part = _partition_label(partition)
+    dirname = component_dir.name
+    if prefix == "transformer":
+        preferred = int8_dit_filename(part)
+        if (component_dir / preferred).is_file():
+            return preferred
+        singles = _single_weight_names(component_dir)
+        if singles:
+            return singles[0]
+        if dirname == "transformer":
+            return bf16_dit_model_name(part)
+        if dirname == INT8_DIT_DIRNAME:
+            return preferred
+        return dirname
+    if prefix == "text_encoder":
+        if (component_dir / INT8_TE_FILENAME).is_file():
+            return INT8_TE_FILENAME
+        singles = _single_weight_names(component_dir)
+        if singles:
+            return singles[0]
+        if dirname == "text_encoder":
+            return BF16_TE_MODEL_NAME
+        if dirname == INT8_TE_DIRNAME:
+            return INT8_TE_FILENAME
+        return dirname
+    return dirname
+
+
+def _model_name_for_vae_dir(component_dir: Path) -> str:
+    if component_dir.name == VAE_MERGED_DIRNAME:
+        return VAE_MERGED_MODEL_NAME
+    return component_dir.name
+
+
+def _selector_alias_map(prefix: str, partition: str) -> dict[str, str]:
+    """model name / legacy dir name → relative component directory."""
+
+    part = _partition_label(partition)
+    if prefix == "transformer":
+        return {
+            bf16_dit_model_name(part): "transformer",
+            int8_dit_filename(part): INT8_DIT_DIRNAME,
+            "transformer": "transformer",
+            INT8_DIT_DIRNAME: INT8_DIT_DIRNAME,
+        }
+    if prefix == "text_encoder":
+        return {
+            BF16_TE_MODEL_NAME: "text_encoder",
+            INT8_TE_FILENAME: INT8_TE_DIRNAME,
+            "text_encoder": "text_encoder",
+            INT8_TE_DIRNAME: INT8_TE_DIRNAME,
+        }
+    if prefix == "vae":
+        return {
+            VAE_MERGED_MODEL_NAME: VAE_MERGED_DIRNAME,
+            VAE_MERGED_DIRNAME: VAE_MERGED_DIRNAME,
+        }
+    return {}
+
+
+def _is_valid_component_dir(path: Path, prefix: str) -> bool:
+    if not path.is_dir():
+        return False
+    if prefix == "vae":
+        return (
+            (path / "video_vae" / "config.json").is_file()
+            and (path / "audio_vae" / "config.json").is_file()
+        )
+    return path.name.startswith(prefix) and (path / "config.json").is_file()
+
+
+def _selector_to_component_dirname(
+    value: str,
+    prefix: str,
+    partition: str = H3_T2VA_PARTITION,
+) -> str:
+    """Resolve COMBO model name or legacy directory name to a relative dir."""
+
+    text = str(value or "").strip()
+    if not text:
+        raise ValueError(f"{prefix} 模型名不能为空")
+    aliases = _selector_alias_map(prefix, partition)
+    if text in aliases:
+        return aliases[text]
+    for root in _partition_roots(partition):
+        direct = root / text
+        if _is_valid_component_dir(direct, prefix):
+            return text
+        try:
+            children = list(root.iterdir())
+        except OSError:
+            continue
+        for child in children:
+            if not _is_valid_component_dir(child, prefix):
+                continue
+            if (child / text).is_file():
+                return child.name
+            if prefix == "vae":
+                for nested in (
+                    child / "video_vae" / text,
+                    child / "audio_vae" / text,
+                ):
+                    if nested.is_file():
+                        return child.name
+    if prefix != "vae" and text.startswith(prefix):
+        return text
+    if prefix == "vae" and text == VAE_MERGED_DIRNAME:
+        return text
+    raise ValueError(f"无法解析{prefix}模型名：{text}")
+
+
+def _component_model_choices(
     prefix: str,
     partition: str = H3_T2VA_PARTITION,
 ) -> list[str]:
-    """List explicit component directories; never expose an auto mode."""
+    """List selectable model names; never expose an auto mode."""
 
-    preferred = {
-        "transformer": INT8_DIT_DIRNAME,
-        "text_encoder": INT8_TE_DIRNAME,
-    }.get(prefix, prefix)
-    names: set[str] = set()
-    try:
-        for root in _partition_roots(partition):
-            names.update(
-                d.name
-                for d in root.iterdir()
-                if d.is_dir()
-                and d.name.startswith(prefix)
-                and (d / "config.json").is_file()
-            )
-    except Exception:
-        pass
-    if not names:
-        return [preferred]
-    return sorted(names, key=lambda name: (name != preferred, name == prefix, name))
-
-
-def _vae_dir_choices(partition: str = H3_T2VA_PARTITION) -> list[str]:
+    preferred = (
+        _default_dit_model_name(partition)
+        if prefix == "transformer"
+        else _default_te_model_name()
+    )
     names: set[str] = set()
     try:
         for root in _partition_roots(partition):
             for child in root.iterdir():
-                if not child.is_dir():
-                    continue
-                if (
-                    (child / "video_vae" / "config.json").is_file()
-                    and (child / "audio_vae" / "config.json").is_file()
-                ):
-                    names.add(child.name)
+                if _is_valid_component_dir(child, prefix):
+                    names.add(_model_name_for_component_dir(child, prefix, partition))
     except Exception:
         pass
-    return sorted(names, key=lambda name: (name != VAE_MERGED_DIRNAME, name)) or [
-        VAE_MERGED_DIRNAME
-    ]
+    if not names:
+        return [preferred]
+    return sorted(
+        names,
+        key=lambda name: (name != preferred, name == bf16_dit_model_name(_partition_label(partition)) or name == BF16_TE_MODEL_NAME, name),
+    )
+
+
+def _vae_model_choices(partition: str = H3_T2VA_PARTITION) -> list[str]:
+    names: set[str] = set()
+    try:
+        for root in _partition_roots(partition):
+            for child in root.iterdir():
+                if _is_valid_component_dir(child, "vae"):
+                    names.add(_model_name_for_vae_dir(child))
+    except Exception:
+        pass
+    preferred = _default_vae_model_name()
+    return sorted(names, key=lambda name: (name != preferred, name)) or [preferred]
 
 
 def _component_dir_input(
@@ -273,27 +419,28 @@ def _component_dir_input(
     label: str,
     partition: str = H3_T2VA_PARTITION,
 ):
-    choices = _component_dir_choices(prefix, partition)
+    choices = _component_model_choices(prefix, partition)
     return (
         choices,
         {
             "default": choices[0],
             "tooltip": (
-                f"必须明确选择{label}模型目录；不会再自动切换量化/BF16 权重。"
+                f"必须明确选择{label}模型名（权重文件名或逻辑名）；"
+                "不会再自动切换量化/BF16 权重。"
             ),
         },
     )
 
 
 def _vae_dir_input(partition: str = H3_T2VA_PARTITION):
-    choices = _vae_dir_choices(partition)
+    choices = _vae_model_choices(partition)
     return (
         choices,
         {
             "default": choices[0],
             "tooltip": (
-                "必须明确选择同时包含 video_vae 与 audio_vae 的合并 VAE 目录；"
-                "官方合并产物目录名为 vae。"
+                "必须明确选择合并双 VAE 模型名；官方逻辑名为 "
+                f"{VAE_MERGED_MODEL_NAME}。"
             ),
         },
     )
@@ -591,29 +738,35 @@ def _resolve_selected_component(
     *,
     keys: tuple[str, ...],
     label: str,
+    partition: str = H3_T2VA_PARTITION,
     required_files: tuple[str, ...] = (),
 ) -> Path:
     validation = _validate_explicit_component_input(value, label)
     if validation is not True:
         raise ValueError(validation)
+    prefix = "vae" if VAE_MERGED_DIRNAME in keys else str(keys[0])
+    dirname = _selector_to_component_dirname(value, prefix, partition)
     module = _runtime_module("components")
     resolver = _find_callable(module, ("resolve_component",), label)
     return Path(
         resolver(
             root,
             keys,
-            explicit=str(value).strip(),
+            explicit=dirname,
             required_files=required_files,
         )
     ).resolve()
 
 
-def _resolve_selected_vae(root: Path, value: str) -> Path:
+def _resolve_selected_vae(
+    root: Path, value: str, *, partition: str = H3_T2VA_PARTITION
+) -> Path:
     return _resolve_selected_component(
         root,
         value,
         keys=(VAE_MERGED_DIRNAME,),
         label="VAE",
+        partition=partition,
         required_files=(
             "video_vae/config.json",
             "audio_vae/config.json",
@@ -1099,9 +1252,11 @@ class MiniMaxH3DirectModelLoader:
     def VALIDATE_INPUTS(
         cls,
         model_root="MiniMax-H3",
-        transformer_path=INT8_DIT_DIRNAME,
+        transformer_path=None,
         **kwargs,
     ):
+        if transformer_path is None:
+            transformer_path = _default_dit_model_name(H3_T2VA_PARTITION)
         root_check = _validate_model_root_input(model_root=model_root, **kwargs)
         if root_check is not True:
             return root_check
@@ -1111,18 +1266,23 @@ class MiniMaxH3DirectModelLoader:
         self,
         model_root: str,
         dtype: str,
-        transformer_path: str = INT8_DIT_DIRNAME,
+        transformer_path: str = "",
     ):
+        selector = transformer_path or _default_dit_model_name(H3_T2VA_PARTITION)
+        component_dir = _selector_to_component_dirname(
+            selector, "transformer", H3_T2VA_PARTITION
+        )
         root, release_info, sigma_scales = _resolve_t2va_release(
             model_root,
-            required_component=transformer_path,
+            required_component=component_dir,
             required_files=("config.json",),
         )
         selected_transformer = _resolve_selected_component(
             root,
-            transformer_path,
+            selector,
             keys=("transformer", "dit"),
             label="DiT",
+            partition=H3_T2VA_PARTITION,
             required_files=("config.json",),
         )
         module = _runtime_module("model_loader")
@@ -1189,9 +1349,11 @@ class MiniMaxH3DirectTextEncoderLoader:
     def VALIDATE_INPUTS(
         cls,
         model_root="MiniMax-H3",
-        text_encoder_path=INT8_TE_DIRNAME,
+        text_encoder_path=None,
         **kwargs,
     ):
+        if text_encoder_path is None:
+            text_encoder_path = _default_te_model_name()
         root_check = _validate_model_root_input(model_root=model_root, **kwargs)
         if root_check is not True:
             return root_check
@@ -1203,18 +1365,23 @@ class MiniMaxH3DirectTextEncoderLoader:
         self,
         model_root: str,
         dtype: str,
-        text_encoder_path: str = INT8_TE_DIRNAME,
+        text_encoder_path: str = "",
     ):
+        selector = text_encoder_path or _default_te_model_name()
+        component_dir = _selector_to_component_dirname(
+            selector, "text_encoder", H3_T2VA_PARTITION
+        )
         root, release_info, sigma_scales = _resolve_t2va_release(
             model_root,
-            required_component=text_encoder_path,
+            required_component=component_dir,
             required_files=("config.json",),
         )
         selected_text_encoder = _resolve_selected_component(
             root,
-            text_encoder_path,
+            selector,
             keys=("text_encoder", "qwen3vl", "qwen"),
             label="Text Encoder",
+            partition=H3_T2VA_PARTITION,
             required_files=("config.json",),
         )
         module = _runtime_module("qwen_encoder")
@@ -1282,24 +1449,32 @@ class MiniMaxH3DirectVAELoader:
     def VALIDATE_INPUTS(
         cls,
         model_root="MiniMax-H3",
-        vae_path=VAE_MERGED_DIRNAME,
+        vae_path=None,
         **kwargs,
     ):
+        if vae_path is None:
+            vae_path = _default_vae_model_name()
         root_check = _validate_model_root_input(model_root=model_root, **kwargs)
         if root_check is not True:
             return root_check
         return _validate_explicit_component_input(vae_path, "VAE")
 
-    def load(self, model_root: str, vae_path: str = VAE_MERGED_DIRNAME):
+    def load(self, model_root: str, vae_path: str = ""):
+        selector = vae_path or _default_vae_model_name()
+        component_dir = _selector_to_component_dirname(
+            selector, "vae", H3_T2VA_PARTITION
+        )
         root, release_info, sigma_scales = _resolve_t2va_release(
             model_root,
-            required_component=vae_path,
+            required_component=component_dir,
             required_files=(
                 "video_vae/config.json",
                 "audio_vae/config.json",
             ),
         )
-        selected_vae = _resolve_selected_vae(root, vae_path)
+        selected_vae = _resolve_selected_vae(
+            root, selector, partition=H3_T2VA_PARTITION
+        )
         module = _runtime_module("vae_adapter")
         loader = _find_callable(
             module,
@@ -1383,9 +1558,11 @@ class _MiniMaxH3ExplicitModelLoader:
     def VALIDATE_INPUTS(
         cls,
         model_root="MiniMax-H3",
-        transformer_path=INT8_DIT_DIRNAME,
+        transformer_path=None,
         **kwargs,
     ):
+        if transformer_path is None:
+            transformer_path = _default_dit_model_name(partition_for_task(cls.TASK))
         root_check = _validate_model_root_input(model_root=model_root, **kwargs)
         if root_check is not True:
             return root_check
@@ -1395,20 +1572,26 @@ class _MiniMaxH3ExplicitModelLoader:
         self,
         model_root: str,
         dtype: str,
-        transformer_path: str = INT8_DIT_DIRNAME,
+        transformer_path: str = "",
     ):
         task = normalize_task(self.TASK)
+        partition_hint = partition_for_task(task)
+        selector = transformer_path or _default_dit_model_name(partition_hint)
+        component_dir = _selector_to_component_dirname(
+            selector, "transformer", partition_hint
+        )
         root, partition, release_info, sigma_scales = _resolve_release(
             model_root,
             task=task,
-            required_component=transformer_path,
+            required_component=component_dir,
             required_files=("config.json",),
         )
         selected_transformer = _resolve_selected_component(
             root,
-            transformer_path,
+            selector,
             keys=("transformer", "dit"),
             label="DiT",
+            partition=partition,
             required_files=("config.json",),
         )
         loader = _find_callable(
@@ -1490,9 +1673,11 @@ class _MiniMaxH3ExplicitTextEncoderLoader:
     def VALIDATE_INPUTS(
         cls,
         model_root="MiniMax-H3",
-        text_encoder_path=INT8_TE_DIRNAME,
+        text_encoder_path=None,
         **kwargs,
     ):
+        if text_encoder_path is None:
+            text_encoder_path = _default_te_model_name()
         root_check = _validate_model_root_input(model_root=model_root, **kwargs)
         if root_check is not True:
             return root_check
@@ -1504,20 +1689,26 @@ class _MiniMaxH3ExplicitTextEncoderLoader:
         self,
         model_root: str,
         dtype: str,
-        text_encoder_path: str = INT8_TE_DIRNAME,
+        text_encoder_path: str = "",
     ):
         task = normalize_task(self.TASK)
+        partition_hint = partition_for_task(task)
+        selector = text_encoder_path or _default_te_model_name()
+        component_dir = _selector_to_component_dirname(
+            selector, "text_encoder", partition_hint
+        )
         root, partition, release_info, sigma_scales = _resolve_release(
             model_root,
             task=task,
-            required_component=text_encoder_path,
+            required_component=component_dir,
             required_files=("config.json",),
         )
         selected_text_encoder = _resolve_selected_component(
             root,
-            text_encoder_path,
+            selector,
             keys=("text_encoder", "qwen3vl", "qwen"),
             label="Text Encoder",
+            partition=partition,
             required_files=("config.json",),
         )
         loader = _find_callable(
@@ -1612,26 +1803,35 @@ class _MiniMaxH3ExplicitVAELoader:
     def VALIDATE_INPUTS(
         cls,
         model_root="MiniMax-H3",
-        vae_path=VAE_MERGED_DIRNAME,
+        vae_path=None,
         **kwargs,
     ):
+        if vae_path is None:
+            vae_path = _default_vae_model_name()
         root_check = _validate_model_root_input(model_root=model_root, **kwargs)
         if root_check is not True:
             return root_check
         return _validate_explicit_component_input(vae_path, "VAE")
 
-    def load(self, model_root: str, vae_path: str = VAE_MERGED_DIRNAME):
+    def load(self, model_root: str, vae_path: str = ""):
         task = normalize_task(self.TASK)
+        partition_hint = partition_for_task(task)
+        selector = vae_path or _default_vae_model_name()
+        component_dir = _selector_to_component_dirname(
+            selector, "vae", partition_hint
+        )
         root, partition, release_info, sigma_scales = _resolve_release(
             model_root,
             task=task,
-            required_component=vae_path,
+            required_component=component_dir,
             required_files=(
                 "video_vae/config.json",
                 "audio_vae/config.json",
             ),
         )
-        selected_vae = _resolve_selected_vae(root, vae_path)
+        selected_vae = _resolve_selected_vae(
+            root, selector, partition=partition
+        )
         loader = _find_callable(
             _runtime_module("vae_adapter"),
             ("load_h3_vae_bundle",),

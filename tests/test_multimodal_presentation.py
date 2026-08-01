@@ -461,6 +461,123 @@ class QwenLoaderSafetyTests(unittest.TestCase):
             )
         self.assertIs(caught.exception, cleanup_error)
 
+    def test_vision_feature_getter_adapts_tuple_and_return_dict(self):
+        from minimax_h3_nodes.runtime.qwen_encoder import MiniMaxH3TextEncoder
+
+        def no_return_dict(pixel_values, grid_thw):
+            return ("pooled", "deepstack")
+
+        def with_return_dict(pixel_values, grid_thw, return_dict=False):
+            self.assertTrue(return_dict)
+            return types.SimpleNamespace(
+                pooler_output="pooled", deepstack_features="deepstack"
+            )
+
+        self.assertEqual(
+            MiniMaxH3TextEncoder._call_vision_feature_getter(
+                no_return_dict, None, None
+            ),
+            ("pooled", "deepstack"),
+        )
+        out = MiniMaxH3TextEncoder._call_vision_feature_getter(
+            with_return_dict, None, None
+        )
+        self.assertEqual(out.pooler_output, "pooled")
+
+        if HAS_TORCH:
+            import torch
+
+            pooled = (torch.randn(4, 8), torch.randn(3, 8))
+            deep = [torch.randn(7, 8), torch.randn(7, 8)]
+            converted = MiniMaxH3TextEncoder._vision_output_to_cpu(
+                (pooled, deep), context="image"
+            )
+            self.assertEqual(tuple(converted["pooled"].shape), (7, 8))
+            self.assertEqual(len(converted["deepstack"]), 2)
+            obj = types.SimpleNamespace(
+                pooler_output=torch.cat(pooled, dim=0),
+                deepstack_features=deep,
+            )
+            converted2 = MiniMaxH3TextEncoder._vision_output_to_cpu(
+                obj, context="image"
+            )
+            self.assertEqual(tuple(converted2["pooled"].shape), (7, 8))
+
+    def test_rope_index_adapts_mm_token_type_ids_api(self):
+        from minimax_h3_nodes.runtime.qwen_encoder import MiniMaxH3TextEncoder
+
+        values = {
+            "input_ids": object(),
+            "mm_token_type_ids": object(),
+            "image_grid_thw": object(),
+            "video_grid_thw": object(),
+            "attention_mask": object(),
+        }
+        calls = []
+
+        def legacy_rope(
+            input_ids,
+            image_grid_thw=None,
+            video_grid_thw=None,
+            attention_mask=None,
+        ):
+            calls.append(
+                (
+                    "legacy",
+                    input_ids,
+                    image_grid_thw,
+                    video_grid_thw,
+                    attention_mask,
+                )
+            )
+            return "legacy-position-ids", "legacy-delta"
+
+        def current_rope(
+            input_ids,
+            mm_token_type_ids,
+            image_grid_thw=None,
+            video_grid_thw=None,
+            attention_mask=None,
+            **_kwargs,
+        ):
+            calls.append(
+                (
+                    "current",
+                    input_ids,
+                    mm_token_type_ids,
+                    image_grid_thw,
+                    video_grid_thw,
+                    attention_mask,
+                )
+            )
+            return "current-position-ids", "current-delta"
+
+        legacy = MiniMaxH3TextEncoder._call_rope_index(legacy_rope, **values)
+        current = MiniMaxH3TextEncoder._call_rope_index(current_rope, **values)
+
+        self.assertEqual(legacy, ("legacy-position-ids", "legacy-delta"))
+        self.assertEqual(current, ("current-position-ids", "current-delta"))
+        self.assertEqual(
+            calls,
+            [
+                (
+                    "legacy",
+                    values["input_ids"],
+                    values["image_grid_thw"],
+                    values["video_grid_thw"],
+                    values["attention_mask"],
+                ),
+                (
+                    "current",
+                    values["input_ids"],
+                    values["mm_token_type_ids"],
+                    values["image_grid_thw"],
+                    values["video_grid_thw"],
+                    values["attention_mask"],
+                ),
+            ],
+        )
+
     def test_bf16_loader_forces_local_safetensors(self):
         from minimax_h3_nodes.runtime.qwen_encoder import (
             _load_qwen_bf16_checkpoint,

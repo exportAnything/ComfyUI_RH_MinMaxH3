@@ -26,7 +26,7 @@
       "inputs": {
         "model_root": "MiniMax-H3",
         "dtype": "auto",
-        "text_encoder_path": "text_encoder_int8_convrot"
+        "text_encoder_path": "qwen3-vl-32b-int8_convrot.safetensors"
       },
       "_meta": {
         "title": "MiniMax H3 FL2VA Qwen3-VL Loader (Direct)"
@@ -37,7 +37,7 @@
       "inputs": {
         "model_root": "MiniMax-H3",
         "dtype": "auto",
-        "transformer_path": "transformer_int8_convrot"
+        "transformer_path": "MiniMax-H3-FL2VA-int8_convrot.safetensors"
       },
       "_meta": {
         "title": "MiniMax H3 FL2VA Model Loader (Direct)"
@@ -47,7 +47,7 @@
       "class_type": "MiniMaxH3FL2VAVAELoader",
       "inputs": {
         "model_root": "MiniMax-H3",
-        "vae_path": "vae"
+        "vae_path": "MiniMax-H3-vae"
       },
       "_meta": {
         "title": "MiniMax H3 FL2VA Dual VAE Loader (Direct)"

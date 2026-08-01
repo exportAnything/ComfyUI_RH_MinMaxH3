@@ -618,21 +618,61 @@ def _default_rope(config, *, device):
     )
 
 
-def _nonstreamable_tensor_items(model):
-    """Yield direct tensors that Comfy cannot stream through cast-weight ops."""
+def _nonstreamable_tensor_slots(model):
+    """Yield direct tensor slots that Comfy cannot stream through cast ops."""
 
-    seen: set[int] = set()
     for module_name, module in model.named_modules():
         if hasattr(module, "comfy_cast_weights"):
             continue
         for collection_name in ("_parameters", "_buffers"):
             collection = getattr(module, collection_name, {})
-            for tensor_name, tensor in collection.items():
-                if tensor is None or id(tensor) in seen:
+            for tensor_name, tensor in tuple(collection.items()):
+                if tensor is None:
                     continue
-                seen.add(id(tensor))
                 name = f"{module_name}.{tensor_name}" if module_name else tensor_name
-                yield name, tensor
+                yield name, module, collection_name, tensor_name, tensor
+
+
+def _nonstreamable_tensor_items(model):
+    """Yield unique tensors that Comfy cannot stream through cast-weight ops."""
+
+    seen: set[int] = set()
+    for name, _module, _collection, _tensor_name, tensor in (
+        _nonstreamable_tensor_slots(model)
+    ):
+        tensor_id = id(tensor)
+        if tensor_id in seen:
+            continue
+        seen.add(tensor_id)
+        yield name, tensor
+
+
+def _move_nonstreamable_tensors(model, device) -> None:
+    """Move native tensors without recursively touching streamable Linears."""
+
+    import torch
+
+    target = torch.device(device)
+    moved: dict[int, Any] = {}
+    for _name, module, collection_name, tensor_name, tensor in (
+        _nonstreamable_tensor_slots(model)
+    ):
+        tensor_id = id(tensor)
+        replacement = moved.get(tensor_id)
+        if replacement is None:
+            if tensor.device == target:
+                replacement = tensor
+            else:
+                value = tensor.to(device=target)
+                if collection_name == "_parameters":
+                    replacement = torch.nn.Parameter(
+                        value,
+                        requires_grad=bool(tensor.requires_grad),
+                    )
+                else:
+                    replacement = value
+            moved[tensor_id] = replacement
+        getattr(module, collection_name)[tensor_name] = replacement
 
 
 def _nonstreamable_tensor_bytes(model) -> int:
@@ -764,6 +804,11 @@ class H3ModelHandle:
                     mm.load_models_gpu([self.model_patcher])
 
                 if self.quantized and ALLOW_PARTIAL_OFFLOAD_INT8:
+                    # ModelPatcher can stream comfy-cast Linears, but native
+                    # FP32 projections, norms and RoPE buffers must be placed
+                    # explicitly. Their bytes were reserved above so this move
+                    # preserves DIT_INFERENCE_RESERVE for sampler activations.
+                    _move_nonstreamable_tensors(self.model, self.load_device)
                     misplaced_static = _misplaced_nonstreamable_tensors(
                         self.model,
                         self.load_device,
@@ -815,6 +860,18 @@ class H3ModelHandle:
                         "Failed to clean up H3 ModelPatcher after load error: %s",
                         cleanup_exc,
                     )
+                if self.quantized and ALLOW_PARTIAL_OFFLOAD_INT8:
+                    try:
+                        _move_nonstreamable_tensors(
+                            self.model,
+                            self.offload_device,
+                        )
+                    except Exception as cleanup_exc:
+                        LOGGER.error(
+                            "Failed to offload non-streamable H3 DiT tensors "
+                            "after load error: %s",
+                            cleanup_exc,
+                        )
             else:
                 try:
                     self.model.to(self.offload_device)
@@ -826,13 +883,32 @@ class H3ModelHandle:
             raise
 
     def offload_after_inference(self) -> None:
+        cleanup_error: Exception | None = None
         try:
             if self.model_patcher is None:
                 self.model.to(self.offload_device)
             else:
-                _unload_model_patcher(self.model_patcher)
+                try:
+                    _unload_model_patcher(self.model_patcher)
+                except Exception as exc:
+                    cleanup_error = exc
+                if self.quantized and ALLOW_PARTIAL_OFFLOAD_INT8:
+                    try:
+                        _move_nonstreamable_tensors(
+                            self.model,
+                            self.offload_device,
+                        )
+                    except Exception as exc:
+                        if cleanup_error is None:
+                            cleanup_error = exc
+                        else:
+                            LOGGER.exception(
+                                "Additional non-streamable H3 DiT offload failure"
+                            )
         finally:
             _clear_compute_device_marker(self.model)
+        if cleanup_error is not None:
+            raise cleanup_error
 
 
 def _comfy_patcher(model, load_device, offload_device, size: int):

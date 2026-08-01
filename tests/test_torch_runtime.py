@@ -334,6 +334,7 @@ class TorchRuntimeTests(unittest.TestCase):
 
         from minimax_h3_nodes.runtime.model_loader import (
             _misplaced_nonstreamable_tensors,
+            _move_nonstreamable_tensors,
             _nonstreamable_tensor_bytes,
             _nonstreamable_tensor_items,
         )
@@ -371,6 +372,20 @@ class TorchRuntimeTests(unittest.TestCase):
         )
         self.assertTrue(any(item.startswith("native.weight=") for item in misplaced))
         self.assertFalse(any(item.startswith("streamed.weight=") for item in misplaced))
+
+        native_weight = model.native.weight
+        model.native_weight_alias = native_weight
+        _move_nonstreamable_tensors(model, torch.device("meta"))
+        self.assertEqual(model.native.weight.device.type, "meta")
+        self.assertEqual(model.native.bias.device.type, "meta")
+        self.assertEqual(model.native_buffer.device.type, "meta")
+        self.assertEqual(model.streamed.weight.device.type, "cpu")
+        self.assertIs(model.native.weight, model.native_weight_alias)
+        self.assertIsInstance(model.native.weight, torch.nn.Parameter)
+        self.assertEqual(
+            _misplaced_nonstreamable_tensors(model, torch.device("meta")),
+            [],
+        )
 
     def test_full_load_placement_failure_unloads_model_patcher(self):
         import sys

@@ -99,6 +99,16 @@ class StaticTests(unittest.TestCase):
             MiniMaxH3DirectModelLoader,
             MiniMaxH3DirectTextEncoderLoader,
             MiniMaxH3DirectVAELoader,
+            _selector_to_component_dirname,
+        )
+        from minimax_h3_nodes.runtime.h3_settings import (
+            INT8_DIT_DIRNAME,
+            INT8_TE_DIRNAME,
+            INT8_TE_FILENAME,
+            VAE_MERGED_DIRNAME,
+            VAE_MERGED_MODEL_NAME,
+            bf16_dit_model_name,
+            int8_dit_filename,
         )
 
         cases = (
@@ -112,12 +122,38 @@ class StaticTests(unittest.TestCase):
             choices, options = schema["required"][input_name]
             self.assertNotIn("auto", choices)
             self.assertIn(options["default"], choices)
+            # COMBO 默认应是模型名，而不是裸组件目录名
+            self.assertFalse(
+                options["default"]
+                in {INT8_DIT_DIRNAME, INT8_TE_DIRNAME, VAE_MERGED_DIRNAME, "transformer", "text_encoder"}
+            )
 
         self.assertNotEqual(
             MiniMaxH3DirectModelLoader.VALIDATE_INPUTS(
                 model_root="MiniMax-H3", transformer_path="auto"
             ),
             True,
+        )
+        self.assertEqual(
+            _selector_to_component_dirname(int8_dit_filename("FL2VA"), "transformer"),
+            INT8_DIT_DIRNAME,
+        )
+        self.assertEqual(
+            _selector_to_component_dirname(bf16_dit_model_name("FL2VA"), "transformer"),
+            "transformer",
+        )
+        self.assertEqual(
+            _selector_to_component_dirname(INT8_TE_FILENAME, "text_encoder"),
+            INT8_TE_DIRNAME,
+        )
+        self.assertEqual(
+            _selector_to_component_dirname(VAE_MERGED_MODEL_NAME, "vae"),
+            VAE_MERGED_DIRNAME,
+        )
+        # 旧目录名仍可解析
+        self.assertEqual(
+            _selector_to_component_dirname(INT8_DIT_DIRNAME, "transformer"),
+            INT8_DIT_DIRNAME,
         )
 
 

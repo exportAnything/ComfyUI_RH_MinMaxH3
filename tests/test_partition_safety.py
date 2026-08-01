@@ -358,6 +358,158 @@ class PartitionSafetyTests(unittest.TestCase):
             handle.offload_after_inference()
         self.assertEqual(unloaded, [patcher, patcher])
 
+    def test_int8_partial_load_moves_native_tensors_and_offloads_them(self):
+        from minimax_h3_nodes.runtime import model_loader
+
+        class FakeModel:
+            pass
+
+        class FakePatcher:
+            pass
+
+        class FakeOOM(Exception):
+            pass
+
+        torch = types.ModuleType("torch")
+        torch.OutOfMemoryError = FakeOOM
+        torch.device = lambda value: value
+        comfy = types.ModuleType("comfy")
+        comfy.__path__ = []
+        management = types.ModuleType("comfy.model_management")
+        model = FakeModel()
+        patcher = FakePatcher()
+        events = []
+
+        def load_models_gpu(values, **kwargs):
+            events.append(("manager-load", values, kwargs))
+
+        management.load_models_gpu = load_models_gpu
+        comfy.model_management = management
+        handle = H3ModelHandle(
+            model=model,
+            model_patcher=patcher,
+            component_path=Path("/tmp/fake-h3-transformer"),
+            load_device="cuda:0",
+            offload_device="cpu",
+            dtype="bfloat16",
+            metadata={},
+            checkpoint_files=(),
+            quantized=True,
+        )
+
+        def move(_model, device):
+            self.assertIs(_model, model)
+            events.append(("move-native", device))
+
+        with mock.patch.dict(
+            sys.modules,
+            {
+                "torch": torch,
+                "comfy": comfy,
+                "comfy.model_management": management,
+            },
+        ), mock.patch.object(
+            model_loader, "_nonstreamable_tensor_bytes", return_value=123
+        ), mock.patch.object(
+            model_loader, "_move_nonstreamable_tensors", side_effect=move
+        ), mock.patch.object(
+            model_loader, "_misplaced_nonstreamable_tensors", return_value=[]
+        ), mock.patch.object(
+            model_loader,
+            "_unload_model_patcher",
+            side_effect=lambda value: events.append(("manager-unload", value)),
+        ):
+            self.assertIs(handle.load_for_inference(), model)
+            self.assertEqual(model._h3_compute_device, "cuda:0")
+            handle.offload_after_inference()
+
+        self.assertEqual(events[0][0], "manager-load")
+        self.assertEqual(events[0][1], [patcher])
+        self.assertEqual(
+            events[0][2]["memory_required"],
+            model_loader.DIT_INFERENCE_RESERVE + 123,
+        )
+        self.assertEqual(
+            events[1:],
+            [
+                ("move-native", "cuda:0"),
+                ("manager-unload", patcher),
+                ("move-native", "cpu"),
+            ],
+        )
+        self.assertFalse(hasattr(model, "_h3_compute_device"))
+
+    def test_int8_partial_native_move_failure_rolls_back_both_banks(self):
+        from minimax_h3_nodes.runtime import model_loader
+
+        class FakeModel:
+            pass
+
+        class FakePatcher:
+            pass
+
+        class FakeOOM(Exception):
+            pass
+
+        torch = types.ModuleType("torch")
+        torch.OutOfMemoryError = FakeOOM
+        torch.device = lambda value: value
+        comfy = types.ModuleType("comfy")
+        comfy.__path__ = []
+        management = types.ModuleType("comfy.model_management")
+        management.load_models_gpu = lambda *_args, **_kwargs: None
+        comfy.model_management = management
+        model = FakeModel()
+        patcher = FakePatcher()
+        primary = RuntimeError("native CUDA move failed")
+        events = []
+        handle = H3ModelHandle(
+            model=model,
+            model_patcher=patcher,
+            component_path=Path("/tmp/fake-h3-transformer"),
+            load_device="cuda:0",
+            offload_device="cpu",
+            dtype="bfloat16",
+            metadata={},
+            checkpoint_files=(),
+            quantized=True,
+        )
+
+        def move(_model, device):
+            events.append(("move-native", device))
+            if device == "cuda:0":
+                raise primary
+
+        with mock.patch.dict(
+            sys.modules,
+            {
+                "torch": torch,
+                "comfy": comfy,
+                "comfy.model_management": management,
+            },
+        ), mock.patch.object(
+            model_loader, "_nonstreamable_tensor_bytes", return_value=0
+        ), mock.patch.object(
+            model_loader, "_move_nonstreamable_tensors", side_effect=move
+        ), mock.patch.object(
+            model_loader,
+            "_unload_model_patcher",
+            side_effect=lambda value: events.append(("manager-unload", value)),
+        ):
+            with self.assertRaises(RuntimeError) as caught:
+                handle.load_for_inference()
+
+        self.assertIs(caught.exception, primary)
+        self.assertEqual(
+            events,
+            [
+                ("move-native", "cuda:0"),
+                ("manager-unload", patcher),
+                ("move-native", "cpu"),
+            ],
+        )
+        self.assertFalse(hasattr(model, "_h3_compute_device"))
+
     def test_full_load_placement_failure_cleans_patcher_and_marker_without_torch(self):
         class FakeTensor:
             device = "cpu"
