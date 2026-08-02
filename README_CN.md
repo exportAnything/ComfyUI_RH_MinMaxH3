@@ -6,8 +6,10 @@
 
 [English documentation](README.md)
 
-在 ComfyUI 进程内直接运行 **MiniMax-H3** 视频+音频联合扩散的自定义节点——不依赖
-SGLang 服务，也不调用 Diffusers Pipeline。一次采样同时产出视频轨和与之同步的音轨。
+在 ComfyUI 进程内直接运行 **MiniMax-H3** 视频+音频联合扩散的自定义节点。
+
+[RunningHub](https://www.runninghub.cn/?inviteCode=rh-v1367) 是 MiniMax 的合作伙伴，
+本插件由 RunningHub 开发并维护。
 
 ## ✨ 功能特点
 

@@ -7,9 +7,10 @@
 [中文文档](README_CN.md)
 
 ComfyUI custom nodes that run **MiniMax-H3** joint video + audio diffusion
-directly inside the ComfyUI process — no SGLang server, no Diffusers pipeline.
-A single sampling pass produces a video track and its synchronized audio track
-together.
+directly inside the ComfyUI process.
+
+[RunningHub](https://www.runninghub.cn/?inviteCode=rh-v1367) is a MiniMax
+partner; this plugin is developed and maintained by RunningHub.
 
 ## ✨ Features
 
