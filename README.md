@@ -1,8 +1,14 @@
 # ComfyUI-RH-MiniMax-H3
 
-[![License](https://img.shields.io/badge/License-Apache%202.0-green)](LICENSE)
-[![RunningHub China](https://img.shields.io/badge/RunningHub-China%20Online%20Platform-2f80ed?labelColor=333333)](https://www.runninghub.cn/?inviteCode=rh-v1367)
-[![RunningHub International](https://img.shields.io/badge/RunningHub-International%20Online%20Platform-2f80ed?labelColor=333333)](https://www.runninghub.ai/?inviteCode=rh-v1367)
+<p align="center">
+  <img src="assets/runninghub-minimax-banner.png" alt="RunningHub × MiniMax 联合出品" width="760">
+</p>
+
+<p align="center">
+  <a href="https://www.runninghub.cn/?inviteCode=rh-v1367"><img alt="RunningHub China" src="https://img.shields.io/badge/RunningHub-China%20Online%20Platform-2f80ed?labelColor=333333"></a>
+  <a href="https://www.runninghub.ai/?inviteCode=rh-v1367"><img alt="RunningHub International" src="https://img.shields.io/badge/RunningHub-International%20Online%20Platform-2f80ed?labelColor=333333"></a>
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/License-Apache%202.0-green"></a>
+</p>
 
 [中文文档](README_CN.md)
 

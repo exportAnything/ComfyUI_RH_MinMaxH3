@@ -1,8 +1,14 @@
 # ComfyUI-RH-MiniMax-H3
 
-[![License](https://img.shields.io/badge/License-Apache%202.0-green)](LICENSE)
-[![RunningHub 中国站](https://img.shields.io/badge/RunningHub-%E4%B8%AD%E5%9B%BD%E7%AB%99%20Online%20Platform-2f80ed?labelColor=333333)](https://www.runninghub.cn/?inviteCode=rh-v1367)
-[![RunningHub 国际站](https://img.shields.io/badge/RunningHub-%E5%9B%BD%E9%99%85%E7%AB%99%20Online%20Platform-2f80ed?labelColor=333333)](https://www.runninghub.ai/?inviteCode=rh-v1367)
+<p align="center">
+  <img src="assets/runninghub-minimax-banner.png" alt="RunningHub × MiniMax 联合出品" width="760">
+</p>
+
+<p align="center">
+  <a href="https://www.runninghub.cn/?inviteCode=rh-v1367"><img alt="RunningHub 中国站" src="https://img.shields.io/badge/RunningHub-%E4%B8%AD%E5%9B%BD%E7%AB%99%20Online%20Platform-2f80ed?labelColor=333333"></a>
+  <a href="https://www.runninghub.ai/?inviteCode=rh-v1367"><img alt="RunningHub 国际站" src="https://img.shields.io/badge/RunningHub-%E5%9B%BD%E9%99%85%E7%AB%99%20Online%20Platform-2f80ed?labelColor=333333"></a>
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/License-Apache%202.0-green"></a>
+</p>
 
 [English documentation](README.md)
 
