@@ -221,14 +221,21 @@ Apache License 2.0，见 [LICENSE](LICENSE)。
 
 - [RunningHub 中国站](https://www.runninghub.cn/?inviteCode=rh-v1367)
 - [RunningHub 国际站](https://www.runninghub.ai/?inviteCode=rh-v1367)
+- [MiniMax · GitHub](https://github.com/MiniMax-AI)
+- [ComfyUI](https://github.com/comfyanonymous/ComfyUI)
 - [MiniMax-H3-INT8-CONVROT · HuggingFace](https://huggingface.co/Gluttony10/MiniMax-H3-INT8-CONVROT)
 - [MiniMax-H3-INT8-CONVROT · ModelScope](https://modelscope.cn/models/Gluttony10/MiniMax-H3-INT8-CONVROT)
 - [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0)
 
 ## 🙏 致谢
 
-基于 [MiniMax](https://www.minimax.io/) 的 MiniMax-H3 音视频联合扩散模型构建。
+基于 [MiniMax](https://www.minimax.io/)（[GitHub](https://github.com/MiniMax-AI)）的
+MiniMax-H3 音视频联合扩散模型构建。
 本插件的原生运行时改编自官方 H3 源码包，遵循 Apache License 2.0；基线快照与改动
 清单见 [NOTICE.md](NOTICE.md)。
+
+本插件运行于 [ComfyUI](https://github.com/comfyanonymous/ComfyUI) 之上，部分实现
+借鉴了 ComfyUI 官方代码与约定。ComfyUI 以 GPL-3.0 授权，此处作为运行时依赖，
+不包含其源码。
 
 由 [RunningHub](https://www.runninghub.cn/?inviteCode=rh-v1367) 封装为 ComfyUI 插件。

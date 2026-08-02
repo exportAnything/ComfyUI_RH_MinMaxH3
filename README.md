@@ -240,6 +240,8 @@ redistributing the weights or using them commercially.
 
 - [RunningHub China](https://www.runninghub.cn/?inviteCode=rh-v1367)
 - [RunningHub International](https://www.runninghub.ai/?inviteCode=rh-v1367)
+- [MiniMax on GitHub](https://github.com/MiniMax-AI)
+- [ComfyUI](https://github.com/comfyanonymous/ComfyUI)
 - [MiniMax-H3-INT8-CONVROT on HuggingFace](https://huggingface.co/Gluttony10/MiniMax-H3-INT8-CONVROT)
 - [MiniMax-H3-INT8-CONVROT on ModelScope](https://modelscope.cn/models/Gluttony10/MiniMax-H3-INT8-CONVROT)
 - [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0)
@@ -247,8 +249,12 @@ redistributing the weights or using them commercially.
 ## 🙏 Acknowledgements
 
 Built on the MiniMax-H3 joint audio-video diffusion model by
-[MiniMax](https://www.minimax.io/). The native runtime here is adapted from the
+[MiniMax](https://www.minimax.io/) ([GitHub](https://github.com/MiniMax-AI)). The native runtime here is adapted from the
 official H3 source package under Apache License 2.0; see [NOTICE.md](NOTICE.md)
 for the baseline snapshot and the list of changes.
+
+Built to run inside [ComfyUI](https://github.com/comfyanonymous/ComfyUI), whose
+official code and conventions parts of this plugin draw on. ComfyUI is licensed
+GPL-3.0 and is a runtime dependency here; its source is not bundled.
 
 Packaged for ComfyUI by [RunningHub](https://www.runninghub.cn/?inviteCode=rh-v1367).
