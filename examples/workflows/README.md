@@ -35,7 +35,3 @@
 ```bash
 python3 tools/gen_example_workflows.py
 ```
-
-`tests/test_example_workflows.py` 会反向校验这些 JSON 与当前节点签名一致
-（widget 顺序与数量、输入插槽、必填连线、连线两端类型、执行顺序拓扑有序、
-Target/Encode 共用同一份条件素材）。
