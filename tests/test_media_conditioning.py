@@ -75,6 +75,34 @@ class GeometryTests(unittest.TestCase):
         self.assertEqual((shape["width"], shape["height"]), (2720, 2048))
         self.assertTrue(shape["allow_upscale"])
         self.assertEqual(shape["multiple"], 32)
+        self.assertEqual(shape["reference_size_mode"], "max")
+
+    def test_reference_image_match_mode_scales_to_canvas_area(self):
+        # 4096x2048 参考图 + 1344x768 画布：scale=sqrt(面积比)≈0.3508 → 1440x704
+        shape = resolve_reference_image_shape(
+            width=4096, height=2048, size_mode="match",
+            canvas_width=1344, canvas_height=768,
+        )
+        self.assertEqual(shape["shape_policy_version"], "reference_image_match_area_v1")
+        self.assertFalse(shape["allow_upscale"])
+        self.assertEqual((shape["width"], shape["height"]), (1440, 704))
+        # 面积不超过画布；比例只受逐轴 32 对齐取整影响（与 max/视频路径同规则）
+        self.assertLessEqual(shape["width"] * shape["height"], 1344 * 768)
+        self.assertAlmostEqual(shape["width"] / shape["height"], 2.0, delta=0.05)
+
+    def test_reference_image_match_mode_never_upscales(self):
+        shape = resolve_reference_image_shape(
+            width=320, height=240, size_mode="match",
+            canvas_width=1344, canvas_height=768,
+        )
+        # 小图只做 32 对齐取整，不放大
+        self.assertEqual((shape["width"], shape["height"]), (320, 256))
+
+    def test_reference_image_size_mode_is_validated(self):
+        with self.assertRaisesRegex(ValueError, "size_mode"):
+            resolve_reference_image_shape(width=320, height=240, size_mode="auto")
+        with self.assertRaisesRegex(ValueError, "canvas width"):
+            resolve_reference_image_shape(width=320, height=240, size_mode="match")
 
     @unittest.skipUnless(HAS_PIL, "requires Pillow")
     def test_reference_image_resize_consumes_resolved_shape(self):
@@ -83,6 +111,16 @@ class GeometryTests(unittest.TestCase):
         image = Image.new("RGB", (320, 240), "red")
         prepared = prepare_reference_image(image)
         self.assertEqual(prepared.size, (2720, 2048))
+
+    @unittest.skipUnless(HAS_PIL, "requires Pillow")
+    def test_reference_image_match_mode_resize(self):
+        from PIL import Image
+
+        image = Image.new("RGB", (4096, 2048), "red")
+        prepared = prepare_reference_image(
+            image, size_mode="match", canvas_width=1344, canvas_height=768
+        )
+        self.assertEqual(prepared.size, (1440, 704))
 
     def test_reference_video_adapt_shape_goldens(self):
         cases = {
@@ -672,6 +710,33 @@ class ConditionTensorTests(unittest.TestCase):
         )
         self.assertEqual([item["condition_index"] for item in ordered], [1, 3, 5])
 
+    def test_shape_policy_separates_visual_encode_cache_entries(self):
+        import torch
+
+        from minimax_h3_nodes.runtime.media_conditioning import (
+            encode_visual_condition_rows,
+        )
+
+        class Counting:
+            def __init__(self):
+                self.calls = 0
+
+            def encode(self, _pixels, **_kwargs):
+                self.calls += 1
+                return torch.zeros(1, 24, 1, 4, 4)
+
+        vae = Counting()
+        common = dict(
+            condition_index=0, kind="image", process_image=True,
+            material_fingerprint="b" * 64, target_fingerprint="t", vae_fingerprint="v",
+        )
+        encode_visual_condition_rows(vae, torch.zeros(1), shape_policy="refimg=max", **common)
+        encode_visual_condition_rows(vae, torch.zeros(1), shape_policy="refimg=max", **common)
+        self.assertEqual(vae.calls, 1)  # 同策略命中缓存
+        encode_visual_condition_rows(vae, torch.zeros(1), shape_policy="refimg=match", **common)
+        # 换尺寸策略 = 换像素，绝不能复用上一条缓存
+        self.assertEqual(vae.calls, 2)
+
     def test_video_vae_release_encode_rounds_fp16_and_restores_state(self):
         import torch
 
@@ -817,10 +882,11 @@ class ConditionTensorTests(unittest.TestCase):
         multichannel = torch.stack(
             [torch.zeros(4), torch.full((4,), 3.0), torch.full((4,), 9.0)]
         ).unsqueeze(0)
-        preprocessed = model.preprocessed
-        with self.assertRaisesRegex(H3VAEError, "no channel-layout metadata"):
-            adapter.encode(multichannel, sample_rate=32_000)
-        self.assertIs(model.preprocessed, preprocessed)
+        mixed = adapter.encode(multichannel, sample_rate=32_000)
+        self.assertEqual(tuple(mixed.shape), (2, 32, 4))
+        # mean(0,3,9)=4 → stereo 两路相同
+        self.assertTrue(torch.allclose(model.preprocessed[0, 0], torch.full((4,), 4.0)))
+        self.assertTrue(torch.equal(model.preprocessed[0], model.preprocessed[1]))
 
         class TimeMajorModel(Model):
             @staticmethod
@@ -837,17 +903,21 @@ class ConditionTensorTests(unittest.TestCase):
         self.assertEqual(tuple(canonical.shape), (2, 32, 4))
         self.assertTrue(torch.equal(canonical, latent))
 
-    def test_multichannel_comfy_audio_fails_at_reference_node_boundary(self):
+    def test_multichannel_comfy_audio_downmixes_at_reference_node_boundary(self):
         import torch
 
+        from minimax_h3_nodes.contracts import H3_AUDIO_CHANNELS
         from minimax_h3_nodes.nodes import MiniMaxH3Ref2VAAudioReference
 
         audio = {
-            "waveform": torch.zeros(1, 6, 32_000),
+            "waveform": torch.arange(6, dtype=torch.float32).view(1, 6, 1).expand(1, 6, 32),
             "sample_rate": 32_000,
         }
-        with self.assertRaisesRegex(ValueError, "不含 channel layout"):
-            MiniMaxH3Ref2VAAudioReference().append(audio)
+        (refs,) = MiniMaxH3Ref2VAAudioReference().append(audio)
+        wave = refs["materials"][0]["media"]["waveform"]
+        self.assertEqual(tuple(wave.shape), (1, H3_AUDIO_CHANNELS, 32))
+        self.assertTrue(torch.allclose(wave[0, 0], wave[0, 1]))
+        self.assertAlmostEqual(float(wave[0, 0, 0]), 2.5)  # mean(0..5)
 
     def test_video_decode_waits_until_encode_restores_model_state(self):
         import threading

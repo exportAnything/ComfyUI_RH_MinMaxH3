@@ -395,6 +395,7 @@ class TorchRuntimeTests(unittest.TestCase):
 
         import torch
 
+        from minimax_h3_nodes.runtime import model_loader
         from minimax_h3_nodes.runtime.model_loader import H3ModelHandle
 
         class FakePatcher:
@@ -441,6 +442,8 @@ class TorchRuntimeTests(unittest.TestCase):
         with mock.patch.dict(
             sys.modules,
             {"comfy": comfy, "comfy.model_management": management},
+        ), mock.patch.object(
+            model_loader, "ENABLE_DIT_LAYERWISE_OFFLOAD", False
         ), self.assertRaisesRegex(RuntimeError, "did not fully load"):
             handle.load_for_inference()
 

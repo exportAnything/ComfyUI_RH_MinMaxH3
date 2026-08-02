@@ -47,7 +47,7 @@ class StaticTests(unittest.TestCase):
 
     def test_dit_device_property_accepts_model_patcher_updates(self):
         dit = (
-            ROOT / "minimax_h3_nodes" / "runtime" / "dit.py"
+            ROOT / "minimax_h3_nodes" / "runtime" / "dit" / "_impl.py"
         ).read_text(encoding="utf-8")
         self.assertIn("@device.setter", dit)
         self.assertIn("operations", dit)
@@ -102,19 +102,23 @@ class StaticTests(unittest.TestCase):
             _selector_to_component_dirname,
         )
         from minimax_h3_nodes.runtime.h3_settings import (
+            AUDIO_VAE_DIRNAME,
             INT8_DIT_DIRNAME,
             INT8_TE_DIRNAME,
             INT8_TE_FILENAME,
             VAE_MERGED_DIRNAME,
             VAE_MERGED_MODEL_NAME,
+            VIDEO_VAE_DIRNAME,
             bf16_dit_model_name,
             int8_dit_filename,
         )
 
+        # 每个 loader 只暴露自己那一类的 COMBO；双 VAE 拆成 video/audio 两个。
         cases = (
             (MiniMaxH3DirectModelLoader, "transformer_path"),
             (MiniMaxH3DirectTextEncoderLoader, "text_encoder_path"),
-            (MiniMaxH3DirectVAELoader, "vae_path"),
+            (MiniMaxH3DirectVAELoader, "video_vae_path"),
+            (MiniMaxH3DirectVAELoader, "audio_vae_path"),
         )
         for node, input_name in cases:
             schema = node.INPUT_TYPES()
@@ -125,8 +129,18 @@ class StaticTests(unittest.TestCase):
             # COMBO 默认应是模型名，而不是裸组件目录名
             self.assertFalse(
                 options["default"]
-                in {INT8_DIT_DIRNAME, INT8_TE_DIRNAME, VAE_MERGED_DIRNAME, "transformer", "text_encoder"}
+                in {
+                    INT8_DIT_DIRNAME,
+                    INT8_TE_DIRNAME,
+                    VAE_MERGED_DIRNAME,
+                    VIDEO_VAE_DIRNAME,
+                    AUDIO_VAE_DIRNAME,
+                    "transformer",
+                    "text_encoder",
+                }
             )
+        vae_schema = MiniMaxH3DirectVAELoader.INPUT_TYPES()["required"]
+        self.assertNotIn("vae_path", vae_schema)
 
         self.assertNotEqual(
             MiniMaxH3DirectModelLoader.VALIDATE_INPUTS(

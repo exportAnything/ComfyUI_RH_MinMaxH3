@@ -359,7 +359,7 @@ class PartitionSafetyTests(unittest.TestCase):
         self.assertEqual(unloaded, [patcher, patcher])
 
     def test_int8_partial_load_moves_native_tensors_and_offloads_them(self):
-        from minimax_h3_nodes.runtime import model_loader
+        from minimax_h3_nodes.runtime.model_loader import _impl as model_loader
 
         class FakeModel:
             pass
@@ -440,7 +440,7 @@ class PartitionSafetyTests(unittest.TestCase):
         self.assertFalse(hasattr(model, "_h3_compute_device"))
 
     def test_int8_partial_native_move_failure_rolls_back_both_banks(self):
-        from minimax_h3_nodes.runtime import model_loader
+        from minimax_h3_nodes.runtime.model_loader import _impl as model_loader
 
         class FakeModel:
             pass
@@ -511,6 +511,8 @@ class PartitionSafetyTests(unittest.TestCase):
         self.assertFalse(hasattr(model, "_h3_compute_device"))
 
     def test_full_load_placement_failure_cleans_patcher_and_marker_without_torch(self):
+        from minimax_h3_nodes.runtime.model_loader import _impl as model_loader
+
         class FakeTensor:
             device = "cpu"
 
@@ -580,6 +582,8 @@ class PartitionSafetyTests(unittest.TestCase):
                 "comfy": comfy,
                 "comfy.model_management": management,
             },
+        ), mock.patch.object(
+            model_loader, "ENABLE_DIT_LAYERWISE_OFFLOAD", False
         ), self.assertRaisesRegex(RuntimeError, "did not fully load"):
             handle.load_for_inference()
 

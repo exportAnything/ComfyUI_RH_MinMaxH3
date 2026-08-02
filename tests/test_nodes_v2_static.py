@@ -6,11 +6,17 @@ from pathlib import Path
 from unittest import mock
 
 
-NODES_PATH = (
-    Path(__file__).resolve().parents[1] / "minimax_h3_nodes" / "nodes.py"
+_PKG = Path(__file__).resolve().parents[1] / "minimax_h3_nodes"
+_API = _PKG / "api"
+_NODES = _PKG / "nodes.py"
+# 类/helpers 在 api/*；注册表字面量在 nodes.py facade
+SOURCE = "\n".join(
+    (_API / n).read_text(encoding="utf-8")
+    for n in ("_shared.py", "loaders.py", "targets.py", "conditioning.py", "sampling_nodes.py", "decode.py")
 )
-SOURCE = NODES_PATH.read_text(encoding="utf-8")
-TREE = ast.parse(SOURCE, filename=str(NODES_PATH))
+TREE = ast.parse(SOURCE, filename=str(_API / "_shared.py"))
+_NODES_SOURCE = _NODES.read_text(encoding="utf-8")
+_NODES_TREE = ast.parse(_NODES_SOURCE, filename=str(_NODES))
 
 
 def _class(name: str) -> ast.ClassDef:
@@ -28,7 +34,7 @@ def _function(name: str) -> ast.FunctionDef:
 
 
 def _mapping_keys(name: str) -> set[str]:
-    for node in TREE.body:
+    for node in _NODES_TREE.body:
         if not isinstance(node, ast.Assign):
             continue
         if not any(isinstance(target, ast.Name) and target.id == name for target in node.targets):
@@ -106,40 +112,43 @@ class NodeV2StaticTests(unittest.TestCase):
                 self.assertNotEqual(node.module, "numpy")
 
     def test_v2_critical_paths_do_not_silently_drop_arguments(self):
-        classes = {
-            "_MiniMaxH3ExplicitModelLoader",
-            "_MiniMaxH3ExplicitTextEncoderLoader",
-            "_MiniMaxH3ExplicitVAELoader",
-            "MiniMaxH3FL2VAEncode",
-            "MiniMaxH3Ref2VAEncode",
+        scopes = {
+            "_MiniMaxH3ExplicitModelLoader": _class,
+            "_MiniMaxH3ExplicitTextEncoderLoader": _class,
+            "_MiniMaxH3ExplicitVAELoader": _class,
+            "MiniMaxH3FL2VAEncode": _class,
+            "MiniMaxH3Ref2VAEncode": _class,
+            # 双 VAE 选择逻辑被两个 loader 家族共用，保证移出类体后仍受同一约束
+            "_load_dual_vae": _function,
         }
-        for class_name in classes:
+        for name, lookup in scopes.items():
             calls = {
                 node.func.id
-                for node in ast.walk(_class(class_name))
+                for node in ast.walk(lookup(name))
                 if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
             }
-            with self.subTest(class_name=class_name):
+            with self.subTest(name=name):
                 self.assertNotIn("_call_supported", calls)
 
     def test_all_loader_families_forward_partition_component_file_hints(self):
-        expected_helpers = {
-            "MiniMaxH3DirectModelLoader": "_resolve_t2va_release",
-            "MiniMaxH3DirectTextEncoderLoader": "_resolve_t2va_release",
-            "MiniMaxH3DirectVAELoader": "_resolve_t2va_release",
-            "_MiniMaxH3ExplicitModelLoader": "_resolve_release",
-            "_MiniMaxH3ExplicitTextEncoderLoader": "_resolve_release",
-            "_MiniMaxH3ExplicitVAELoader": "_resolve_release",
-        }
-        for class_name, helper_name in expected_helpers.items():
+        # 两个 VAE loader 家族都把选择/解析委托给 _load_dual_vae，v1/v2 各一条分支。
+        expected_helpers = (
+            ("MiniMaxH3DirectModelLoader", _class, "_resolve_t2va_release"),
+            ("MiniMaxH3DirectTextEncoderLoader", _class, "_resolve_t2va_release"),
+            ("_MiniMaxH3ExplicitModelLoader", _class, "_resolve_release"),
+            ("_MiniMaxH3ExplicitTextEncoderLoader", _class, "_resolve_release"),
+            ("_load_dual_vae", _function, "_resolve_t2va_release"),
+            ("_load_dual_vae", _function, "_resolve_release"),
+        )
+        for class_name, lookup, helper_name in expected_helpers:
             calls = [
                 node
-                for node in ast.walk(_class(class_name))
+                for node in ast.walk(lookup(class_name))
                 if isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Name)
                 and node.func.id == helper_name
             ]
-            with self.subTest(class_name=class_name):
+            with self.subTest(class_name=class_name, helper=helper_name):
                 self.assertEqual(len(calls), 1)
                 keyword_names = {item.arg for item in calls[0].keywords}
                 self.assertIn("required_component", keyword_names)
@@ -179,6 +188,17 @@ class NodeV2StaticTests(unittest.TestCase):
         self.assertIn('materialized["prepared_path"]', encode_source)
         self.assertIn('materialized["original_path"]', encode_source)
         self.assertNotIn("_qwen_sample_prepared_video", encode_source)
+
+    def test_ref_image_size_defaults_to_match_and_keys_both_caches(self):
+        encode_source = ast.get_source_segment(
+            SOURCE, _class("MiniMaxH3Ref2VAEncode")
+        )
+        self.assertIn("ref_image_size", encode_source)
+        self.assertIn("H3_REFERENCE_IMAGE_SIZE_MATCH", encode_source)
+        self.assertIn("canvas_width=int(clean_target[\"width\"])", encode_source)
+        # 换尺寸策略会换像素：VAE 行缓存与 Qwen 编码缓存都必须带上它
+        self.assertIn("shape_policy=str(record.get(\"shape_policy\", \"\"))", encode_source)
+        self.assertIn('f"refimg={image_size_mode}"', encode_source)
 
     def test_crossed_material_branches_fail_before_qwen(self):
         for class_name in ("MiniMaxH3FL2VAEncode", "MiniMaxH3Ref2VAEncode"):
@@ -326,6 +346,7 @@ class NodeV2StaticTests(unittest.TestCase):
 
     def test_definition_time_partition_choices_never_call_release_resolver(self):
         from minimax_h3_nodes import nodes
+        from minimax_h3_nodes.api import _shared
 
         partition_function = next(
             node
@@ -348,7 +369,7 @@ class NodeV2StaticTests(unittest.TestCase):
                 list_h3_model_root_paths=lambda: [release]
             )
             with mock.patch.object(
-                nodes, "_runtime_module", return_value=fake_components
+                _shared, "_runtime_module", return_value=fake_components
             ):
                 self.assertEqual(nodes._partition_roots("fl2va"), [fl.resolve()])
                 self.assertEqual(nodes._partition_roots("ref2va"), [ref.resolve()])
@@ -414,6 +435,7 @@ class NodeV2StaticTests(unittest.TestCase):
 
     def test_vae_device_session_cleans_up_when_device_move_fails(self):
         from minimax_h3_nodes import nodes
+        from minimax_h3_nodes.api import _shared
 
         events = []
 
@@ -430,7 +452,10 @@ class NodeV2StaticTests(unittest.TestCase):
         management = types.SimpleNamespace(
             soft_empty_cache=lambda: events.append("soft_empty_cache")
         )
-        with mock.patch.object(nodes, "model_management", management):
+        # 实现在 api._shared；需 patch 该模块的 model_management
+        with mock.patch.object(_shared, "model_management", management), mock.patch(
+            "minimax_h3_nodes.runtime.h3_settings.OPT_VAE_RESIDENCY", False
+        ):
             with self.assertRaisesRegex(RuntimeError, "synthetic VAE move failure"):
                 with nodes._vae_device_session(FailingAdapter(), "cuda:0"):
                     self.fail("a failed move must not enter the session body")
@@ -438,6 +463,7 @@ class NodeV2StaticTests(unittest.TestCase):
 
     def test_vae_device_session_flushes_cache_when_offload_fails(self):
         from minimax_h3_nodes import nodes
+        from minimax_h3_nodes.api import _shared
 
         events = []
 
@@ -454,7 +480,9 @@ class NodeV2StaticTests(unittest.TestCase):
         management = types.SimpleNamespace(
             soft_empty_cache=lambda: events.append("soft_empty_cache")
         )
-        with mock.patch.object(nodes, "model_management", management):
+        with mock.patch.object(_shared, "model_management", management), mock.patch(
+            "minimax_h3_nodes.runtime.h3_settings.OPT_VAE_RESIDENCY", False
+        ):
             with self.assertRaisesRegex(
                 RuntimeError, "synthetic VAE offload failure"
             ):

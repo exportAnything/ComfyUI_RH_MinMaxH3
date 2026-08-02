@@ -37,15 +37,18 @@ class QualityProfileTests(unittest.TestCase):
         self.assertTrue(cfg.velocity.tail_rebalance)
 
     def test_auto_miss_returns_none(self):
-        from minimax_h3_nodes.runtime.quality_profiles import resolve_accel_request
+        from minimax_h3_nodes.runtime import quality_profiles as qp
 
-        self.assertIsNone(
-            resolve_accel_request(
-                "auto", task="t2va",
-                target={"width": 960, "height": 544, "fps": 24, "frame_count": 124},
-                sigma_points=50, video_shift=12.0, audio_shift=3.0,
+        with self.assertLogs(qp.LOGGER, level="WARNING") as captured:
+            self.assertIsNone(
+                qp.resolve_accel_request(
+                    "auto", task="t2va",
+                    target={"width": 960, "height": 544, "fps": 24, "frame_count": 124},
+                    sigma_points=50, video_shift=12.0, audio_shift=3.0,
+                )
             )
-        )
+        self.assertTrue(any("未命中已验证 profile" in line for line in captured.output))
+        self.assertTrue(any("960x544" in line for line in captured.output))
 
     def test_cache_dit_profile_still_resolves(self):
         from minimax_h3_nodes.runtime import quality_profiles as qp

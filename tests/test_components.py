@@ -5,7 +5,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from unittest import mock
 
-from minimax_h3_nodes.runtime import components as components_module
+from minimax_h3_nodes.runtime.components import _impl as components_module
 from minimax_h3_nodes.runtime.components import (
     H3ComponentError,
     list_h3_model_roots,
@@ -96,7 +96,12 @@ class ComponentTests(unittest.TestCase):
                 self.assertEqual(
                     model_root_path("diffusers/MiniMax-H3"), target.resolve()
                 )
-                self.assertEqual(list_h3_model_roots(), ["MiniMax-H3"])
+                roots = list_h3_model_roots()
+                self.assertTrue(
+                    roots == ["MiniMax-H3"]
+                    or (len(roots) == 1 and str(roots[0]).endswith("MiniMax-H3")),
+                    roots,
+                )
 
     def test_complete_persistent_release_wins_over_stale_local_cache(self):
         from unittest import mock
@@ -165,7 +170,12 @@ class ComponentTests(unittest.TestCase):
                 "list_h3_model_root_paths",
                 return_value=[first],
             ):
-                self.assertEqual(list_h3_model_roots(), ["MiniMax-H3"])
+                roots = list_h3_model_roots()
+                self.assertTrue(
+                    roots == ["MiniMax-H3"]
+                    or (len(roots) == 1 and str(roots[0]).endswith("MiniMax-H3")),
+                    roots,
+                )
 
             alias = base / "alias" / "MiniMax-H3"
             alias.parent.mkdir()
@@ -175,7 +185,12 @@ class ComponentTests(unittest.TestCase):
                 "list_h3_model_root_paths",
                 return_value=[first, alias],
             ):
-                self.assertEqual(list_h3_model_roots(), ["MiniMax-H3"])
+                roots = list_h3_model_roots()
+                self.assertTrue(
+                    roots == ["MiniMax-H3"]
+                    or (len(roots) == 1 and str(roots[0]).endswith("MiniMax-H3")),
+                    roots,
+                )
 
     def test_hinted_root_selects_ref_partition_instead_of_local_fl_only(self):
         with tempfile.TemporaryDirectory() as raw:

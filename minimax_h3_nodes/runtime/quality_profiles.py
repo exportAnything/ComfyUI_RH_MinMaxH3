@@ -101,8 +101,12 @@ def resolve_accel_request(
     key = _alias(mode)
     kw = dict(task=task, target=target, sigma_points=sigma_points, video_shift=video_shift, audio_shift=audio_shift)
     if key in ("", ACCEL_OFF): return None
+    wl = (f"task={task} {int(target.get('width', 0))}x{int(target.get('height', 0))} "
+          f"f={int(target.get('frame_count', 0))} steps={sigma_points} "
+          f"shift={video_shift}/{audio_shift}")
     if key == ACCEL_MANUAL_CACHE_DIT:
         _pkg_ok({CACHE_DIT_PKG: CACHE_DIT_MIN_VERSION})
+        LOGGER.warning("accel=manual-cache-dit：近似加速（非 GT）；%s", wl)
         return AccelResolved("cache-dit", cache_dit=_cache_from({
             "enabled": True, "Fn_compute_blocks": CACHE_DIT_FN, "Bn_compute_blocks": CACHE_DIT_BN,
             "max_warmup_steps": warmup if warmup is not None else CACHE_DIT_WARMUP,
@@ -112,9 +116,13 @@ def resolve_accel_request(
             "scm_preset": CACHE_DIT_SCM_PRESET, "scm_policy": CACHE_DIT_SCM_POLICY,
         }, profile_id=None, rdt_default=CACHE_DIT_RDT_COOKBOOK))
     if key == ACCEL_MANUAL_VELOCITY:
+        stride = int(velocity_stride if velocity_stride is not None else VELOCITY_STRIDE)
+        LOGGER.warning(
+            "accel=manual-velocity：近似加速 stride=%s（非 GT）；理论满步≈%s；%s",
+            stride, max(0, int(sigma_points) - 1), wl,
+        )
         return AccelResolved("velocity-cache", velocity=VelocityCacheConfig(
-            stride=int(velocity_stride if velocity_stride is not None else VELOCITY_STRIDE),
-            taylorseer=VELOCITY_TAYLORSEER, taylorseer_order=VELOCITY_TS_ORDER,
+            stride=stride, taylorseer=VELOCITY_TAYLORSEER, taylorseer_order=VELOCITY_TS_ORDER,
             tail_dense_steps=VELOCITY_TAIL_DENSE, tail_rebalance=VELOCITY_TAIL_REBALANCE,
             final_refresh=VELOCITY_FINAL_REFRESH, profile_id=None,
         ))
@@ -124,18 +132,20 @@ def resolve_accel_request(
             if _match_any(data, **kw):
                 return resolve_accel_request(pid, **kw, rdt=rdt, mc=mc, warmup=warmup,
                                              velocity_stride=velocity_stride)
-        LOGGER.warning("accel=auto：未命中已验证 profile，保持关闭"); return None
+        LOGGER.warning("accel=auto：未命中已验证 profile，保持关闭；%s", wl); return None
     data = _load_profile(key)
     if not _match_any(data, **kw):
         raise ValueError(
             f"accel={key!r} 仅验证过特定 workload（如 1344x768/124f/50steps/shift12·3）；"
-            "当前请求不匹配。可改用 manual-*，或把参数调到已验证合同。"
+            f"当前不匹配（{wl}）。可改用 manual-*，或把参数调到已验证合同。"
         )
     technique = str(data.get("technique") or ("velocity-cache" if "velocity_cache" in data else "cache-dit"))
     if technique == "velocity-cache":
+        LOGGER.info("accel=%s velocity-cache 已启用（近似）；%s", key, wl)
         return AccelResolved("velocity-cache", velocity=_velocity_from(data.get("velocity_cache") or {}, profile_id=key))
     _pkg_ok(data.get("required_packages") or {CACHE_DIT_PKG: CACHE_DIT_MIN_VERSION})
     raw = dict(data.get("cache_dit") or {}); raw.setdefault("residual_diff_threshold", CACHE_DIT_RDT_PROFILE)
+    LOGGER.info("accel=%s Cache-DiT 已启用（block 级近似）；%s", key, wl)
     return AccelResolved("cache-dit", cache_dit=_cache_from(raw, profile_id=key, rdt_default=CACHE_DIT_RDT_PROFILE))
 
 # 兼容旧名

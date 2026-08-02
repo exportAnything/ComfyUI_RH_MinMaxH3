@@ -1,0 +1,36 @@
+"""components.resolve facade。"""
+from __future__ import annotations
+from ._impl import (
+    classify_weight_filename,
+    list_h3_weight_files,
+    read_json,
+    resolve_component,
+    resolve_weight_file,
+    release_metadata,
+    resolve_partition_root,
+    release_sigma_shift_scales,
+    partition_for_task,
+    validate_release_metadata,
+    validate_task_partition,
+    validate_t2va_partition,
+    validate_weight_partition,
+    weight_file_partition,
+    weights_root_paths,
+)
+__all__ = [
+    "classify_weight_filename",
+    "list_h3_weight_files",
+    "read_json",
+    "resolve_component",
+    "resolve_weight_file",
+    "release_metadata",
+    "resolve_partition_root",
+    "release_sigma_shift_scales",
+    "partition_for_task",
+    "validate_release_metadata",
+    "validate_task_partition",
+    "validate_t2va_partition",
+    "validate_weight_partition",
+    "weight_file_partition",
+    "weights_root_paths",
+]

@@ -1,5 +1,5 @@
-# MiniMax-H3's reference implementation is pinned to this Transformers build.
-transformers==5.8.1
+# Qwen3-VL 需要较新 Transformers；区间对齐 h3_settings.TRANSFORMERS_*_VERSION。
+transformers>=4.57.0,<=5.8.1
 accelerate>=1.11.0
 safetensors>=0.4.5
 numpy>=1.26

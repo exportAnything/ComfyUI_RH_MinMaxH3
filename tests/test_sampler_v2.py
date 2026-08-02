@@ -197,6 +197,61 @@ class ConditionalSamplerTests(unittest.TestCase):
         self.assertLess(float(output["audio"].abs().max()), 1000.0)
         self.assertTrue(output["sampled"])
 
+    def test_ref2va_is_exempt_from_generic_slow_step_abort(self):
+        import torch
+
+        import minimax_h3_nodes.sampling as sampling
+
+        packed, conditioning, av_latent, _visual, _audio = self._fixture()
+
+        class SpyTelemetry:
+            instances = []
+
+            def __init__(self, **_kwargs):
+                self.aborted_reason = None
+                self.step_abort_exempt = []
+                self.__class__.instances.append(self)
+
+            @contextmanager
+            def stage(self, _name):
+                yield
+
+            @contextmanager
+            def denoise_step(self, step, *, abort_exempt=False):
+                self.step_abort_exempt.append((step, abort_exempt))
+                yield
+
+            def note(self, **_kwargs):
+                pass
+
+            def summary(self):
+                return {}
+
+        class ZeroVelocity:
+            device = torch.device("cpu")
+
+            def __call__(self, **kwargs):
+                video_count = int(kwargs["update_mask"].numel())
+                audio_count = int(kwargs["update_audio_mask"].numel())
+                return torch.zeros(video_count, 96), torch.zeros(audio_count, 32)
+
+        with (
+            self._tiny_runtime(sampling),
+            mock.patch("minimax_h3_nodes.runtime.telemetry.H3Telemetry", SpyTelemetry),
+        ):
+            sampling.sample_h3(
+                transformer=ZeroVelocity(),
+                conditioning=conditioning,
+                av_latent=av_latent,
+                packed=packed,
+                seed=7,
+                sigma_points=3,
+                video_shift=12.0,
+                audio_shift=3.0,
+            )
+
+        self.assertEqual(SpyTelemetry.instances[0].step_abort_exempt, [(0, True), (1, True)])
+
     def test_noncanonical_anchor_order_fails_before_model_forward(self):
         import torch
 
