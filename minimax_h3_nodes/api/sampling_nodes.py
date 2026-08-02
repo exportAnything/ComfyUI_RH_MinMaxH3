@@ -543,7 +543,9 @@ class MiniMaxH3EncodeVideoAVLatent:  # IMAGE→video latent 写入 Empty AV 壳�
             vae_wrapper = compatibility["vae"]
         else:
             if not isinstance(h3_vae_bundle, Mapping) or h3_vae_bundle.get("schema") != H3_VAE_SCHEMA:
-                raise TypeError("h3_vae_bundle 端口不是 MiniMax H3 Direct VAE Loader 的输出")
+                raise TypeError(
+                    "h3_vae_bundle 端口不是 RunningHub MiniMax H3 Dual VAE Loader 的输出"
+                )
             vae_wrapper, clean = h3_vae_bundle, validate_av_latent(av_latent)
         video_vae = _wrapper_value(vae_wrapper.get("bundle"), "video_vae")
         if video_vae is None:

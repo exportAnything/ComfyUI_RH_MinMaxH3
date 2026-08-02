@@ -4,7 +4,7 @@
   "nodes": [
     {
       "id": 1,
-      "type": "MiniMaxH3Ref2VATextEncoderLoader",
+      "type": "RHMiniMaxH3Ref2VATextEncoderLoader",
       "pos": [
         40,
         40
@@ -28,7 +28,7 @@
         }
       ],
       "properties": {
-        "Node name for S&R": "MiniMaxH3Ref2VATextEncoderLoader"
+        "Node name for S&R": "RHMiniMaxH3Ref2VATextEncoderLoader"
       },
       "widgets_values": [
         "MiniMax-H3",
@@ -39,7 +39,7 @@
     },
     {
       "id": 2,
-      "type": "MiniMaxH3Ref2VAModelLoader",
+      "type": "RHMiniMaxH3Ref2VAModelLoader",
       "pos": [
         40,
         240
@@ -63,7 +63,7 @@
         }
       ],
       "properties": {
-        "Node name for S&R": "MiniMaxH3Ref2VAModelLoader"
+        "Node name for S&R": "RHMiniMaxH3Ref2VAModelLoader"
       },
       "widgets_values": [
         "MiniMax-H3",
@@ -74,7 +74,7 @@
     },
     {
       "id": 3,
-      "type": "MiniMaxH3Ref2VAVAELoader",
+      "type": "RHMiniMaxH3Ref2VAVAELoader",
       "pos": [
         40,
         440
@@ -99,7 +99,7 @@
         }
       ],
       "properties": {
-        "Node name for S&R": "MiniMaxH3Ref2VAVAELoader"
+        "Node name for S&R": "RHMiniMaxH3Ref2VAVAELoader"
       },
       "widgets_values": [
         "MiniMax-H3",
@@ -143,7 +143,7 @@
     },
     {
       "id": 5,
-      "type": "MiniMaxH3Ref2VAVideoReference",
+      "type": "RHMiniMaxH3Ref2VAVideoReference",
       "pos": [
         820,
         40
@@ -179,7 +179,7 @@
         }
       ],
       "properties": {
-        "Node name for S&R": "MiniMaxH3Ref2VAVideoReference"
+        "Node name for S&R": "RHMiniMaxH3Ref2VAVideoReference"
       },
       "widgets_values": [
         "video_audio"
@@ -188,7 +188,7 @@
     },
     {
       "id": 6,
-      "type": "MiniMaxH3Ref2VATarget",
+      "type": "RHMiniMaxH3Ref2VATarget",
       "pos": [
         1180,
         40
@@ -225,7 +225,7 @@
         }
       ],
       "properties": {
-        "Node name for S&R": "MiniMaxH3Ref2VATarget"
+        "Node name for S&R": "RHMiniMaxH3Ref2VATarget"
       },
       "widgets_values": [
         "16:9",
@@ -236,7 +236,7 @@
     },
     {
       "id": 7,
-      "type": "MiniMaxH3Ref2VAEncode",
+      "type": "RHMiniMaxH3Ref2VAEncode",
       "pos": [
         1180,
         280
@@ -281,7 +281,7 @@
         }
       ],
       "properties": {
-        "Node name for S&R": "MiniMaxH3Ref2VAEncode"
+        "Node name for S&R": "RHMiniMaxH3Ref2VAEncode"
       },
       "widgets_values": [
         "Follow the supplied references in order: keep the referenced subject's identity and wardrobe, match the referenced audio's rhythm, and keep lip movement synchronized. Natural camera motion, no subtitles, no logos.",
@@ -290,7 +290,7 @@
     },
     {
       "id": 8,
-      "type": "MiniMaxH3EmptyAVLatent",
+      "type": "RHMiniMaxH3EmptyAVLatent",
       "pos": [
         1640,
         40
@@ -320,14 +320,14 @@
         }
       ],
       "properties": {
-        "Node name for S&R": "MiniMaxH3EmptyAVLatent"
+        "Node name for S&R": "RHMiniMaxH3EmptyAVLatent"
       },
       "widgets_values": [],
       "title": "Empty AV Latent"
     },
     {
       "id": 9,
-      "type": "MiniMaxH3DualSigmaSampler",
+      "type": "RHMiniMaxH3DualSigmaSampler",
       "pos": [
         1640,
         180
@@ -367,7 +367,7 @@
         }
       ],
       "properties": {
-        "Node name for S&R": "MiniMaxH3DualSigmaSampler"
+        "Node name for S&R": "RHMiniMaxH3DualSigmaSampler"
       },
       "widgets_values": [
         42,
@@ -386,7 +386,7 @@
     },
     {
       "id": 10,
-      "type": "MiniMaxH3DecodeAV",
+      "type": "RHMiniMaxH3DecodeAV",
       "pos": [
         2060,
         40
@@ -429,7 +429,7 @@
         }
       ],
       "properties": {
-        "Node name for S&R": "MiniMaxH3DecodeAV"
+        "Node name for S&R": "RHMiniMaxH3DecodeAV"
       },
       "widgets_values": [],
       "title": "Decode Video + Audio"

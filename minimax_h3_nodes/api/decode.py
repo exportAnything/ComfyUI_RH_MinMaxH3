@@ -55,7 +55,7 @@ class MiniMaxH3DecodeAV:
                 or h3_vae_bundle.get("schema") != H3_VAE_SCHEMA
             ):
                 raise TypeError(
-                    "h3_vae_bundle 端口不是 MiniMax H3 Direct VAE Loader 的输出"
+                    "h3_vae_bundle 端口不是 RunningHub MiniMax H3 Dual VAE Loader 的输出"
                 )
             vae_wrapper = h3_vae_bundle
             latent = validate_av_latent(sampled_av_latent)
@@ -100,7 +100,7 @@ class MiniMaxH3DecodeAV:
                     "model_root": (
                         vae_wrapper.get("model_root") if isinstance(vae_wrapper, Mapping) else None
                     ),
-                    "decode": "MiniMaxH3DecodeAV",
+                    "decode": "RHMiniMaxH3DecodeAV",
                     "telemetry": {**sample_tel, "decode_stages_s": dict(tel.stages), "decode_peak_vram": dict(tel.peak)},
                 },
             )

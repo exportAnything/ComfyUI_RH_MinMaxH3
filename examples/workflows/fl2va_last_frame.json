@@ -4,7 +4,7 @@
   "nodes": [
     {
       "id": 1,
-      "type": "MiniMaxH3FL2VATextEncoderLoader",
+      "type": "RHMiniMaxH3FL2VATextEncoderLoader",
       "pos": [
         40,
         40
@@ -28,7 +28,7 @@
         }
       ],
       "properties": {
-        "Node name for S&R": "MiniMaxH3FL2VATextEncoderLoader"
+        "Node name for S&R": "RHMiniMaxH3FL2VATextEncoderLoader"
       },
       "widgets_values": [
         "MiniMax-H3",
@@ -39,7 +39,7 @@
     },
     {
       "id": 2,
-      "type": "MiniMaxH3FL2VAModelLoader",
+      "type": "RHMiniMaxH3FL2VAModelLoader",
       "pos": [
         40,
         240
@@ -63,7 +63,7 @@
         }
       ],
       "properties": {
-        "Node name for S&R": "MiniMaxH3FL2VAModelLoader"
+        "Node name for S&R": "RHMiniMaxH3FL2VAModelLoader"
       },
       "widgets_values": [
         "MiniMax-H3",
@@ -74,7 +74,7 @@
     },
     {
       "id": 3,
-      "type": "MiniMaxH3FL2VAVAELoader",
+      "type": "RHMiniMaxH3FL2VAVAELoader",
       "pos": [
         40,
         440
@@ -99,7 +99,7 @@
         }
       ],
       "properties": {
-        "Node name for S&R": "MiniMaxH3FL2VAVAELoader"
+        "Node name for S&R": "RHMiniMaxH3FL2VAVAELoader"
       },
       "widgets_values": [
         "MiniMax-H3",
@@ -150,7 +150,7 @@
     },
     {
       "id": 5,
-      "type": "MiniMaxH3FL2VALastFrameCondition",
+      "type": "RHMiniMaxH3FL2VALastFrameCondition",
       "pos": [
         820,
         40
@@ -181,14 +181,14 @@
         }
       ],
       "properties": {
-        "Node name for S&R": "MiniMaxH3FL2VALastFrameCondition"
+        "Node name for S&R": "RHMiniMaxH3FL2VALastFrameCondition"
       },
       "widgets_values": [],
       "title": "Last Only"
     },
     {
       "id": 6,
-      "type": "MiniMaxH3FL2VATarget",
+      "type": "RHMiniMaxH3FL2VATarget",
       "pos": [
         1180,
         40
@@ -225,7 +225,7 @@
         }
       ],
       "properties": {
-        "Node name for S&R": "MiniMaxH3FL2VATarget"
+        "Node name for S&R": "RHMiniMaxH3FL2VATarget"
       },
       "widgets_values": [
         "16:9",
@@ -236,7 +236,7 @@
     },
     {
       "id": 7,
-      "type": "MiniMaxH3FL2VAEncode",
+      "type": "RHMiniMaxH3FL2VAEncode",
       "pos": [
         1180,
         260
@@ -281,7 +281,7 @@
         }
       ],
       "properties": {
-        "Node name for S&R": "MiniMaxH3FL2VAEncode"
+        "Node name for S&R": "RHMiniMaxH3FL2VAEncode"
       },
       "widgets_values": [
         "Continue naturally from the provided keyframe: a slow handheld push-in with soft ambient room tone and synchronized footsteps. Keep the subject identity, lighting and colour grade stable, no subtitles, no logos."
@@ -289,7 +289,7 @@
     },
     {
       "id": 8,
-      "type": "MiniMaxH3EmptyAVLatent",
+      "type": "RHMiniMaxH3EmptyAVLatent",
       "pos": [
         1640,
         40
@@ -319,14 +319,14 @@
         }
       ],
       "properties": {
-        "Node name for S&R": "MiniMaxH3EmptyAVLatent"
+        "Node name for S&R": "RHMiniMaxH3EmptyAVLatent"
       },
       "widgets_values": [],
       "title": "Empty AV Latent"
     },
     {
       "id": 9,
-      "type": "MiniMaxH3DualSigmaSampler",
+      "type": "RHMiniMaxH3DualSigmaSampler",
       "pos": [
         1640,
         180
@@ -366,7 +366,7 @@
         }
       ],
       "properties": {
-        "Node name for S&R": "MiniMaxH3DualSigmaSampler"
+        "Node name for S&R": "RHMiniMaxH3DualSigmaSampler"
       },
       "widgets_values": [
         42,
@@ -385,7 +385,7 @@
     },
     {
       "id": 10,
-      "type": "MiniMaxH3DecodeAV",
+      "type": "RHMiniMaxH3DecodeAV",
       "pos": [
         2060,
         40
@@ -428,7 +428,7 @@
         }
       ],
       "properties": {
-        "Node name for S&R": "MiniMaxH3DecodeAV"
+        "Node name for S&R": "RHMiniMaxH3DecodeAV"
       },
       "widgets_values": [],
       "title": "Decode Video + Audio"

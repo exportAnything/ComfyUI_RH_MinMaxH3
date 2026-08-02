@@ -1,10 +1,10 @@
-# ComfyUI-MiniMax-H3
+# ComfyUI-RH-MiniMax-H3
 
 [Chinese documentation](README_CN.md)
 
-Local, in-process MiniMax-H3 audio-video diffusion nodes for ComfyUI. The
-plugin runs the model components inside the ComfyUI process; it does not call
-an SGLang server or a Diffusers pipeline.
+RunningHub MiniMax-H3 audio-video diffusion nodes for ComfyUI. The plugin runs
+every model component inside the ComfyUI process; it does not call an SGLang
+server or a Diffusers pipeline.
 
 The task-aware path exposes T2VA, FL2VA (first/last-frame-to-video+audio), and
 Ref2VA (ordered image/audio/video references). All three paths have passed
@@ -12,6 +12,85 @@ local contract, packing, sampler, media-preprocessing, static-node, and unit
 validation. Ref2VA has also completed a real CUDA end-to-end run with released
 weights. FL2VA shares the same FL2VA partition and encoding/sampling contract;
 treat a first local CUDA smoke as recommended before production use.
+
+## Install
+
+```bash
+cd ComfyUI/custom_nodes
+git clone <repo-url> ComfyUI-RH-MiniMax-H3
+pip install -r ComfyUI-RH-MiniMax-H3/requirements.txt
+```
+
+Restart ComfyUI afterwards: node definitions are read once at start-up.
+
+## Nodes
+
+Every node is registered under an `RHMiniMaxH3` prefix and grouped below the
+`RunningHub/MiniMax H3` category. The **node ID** is what a saved workflow
+stores as `class_type` / `type`; the **display name** is what the canvas shows.
+
+**`RunningHub/MiniMax H3/loaders`**
+
+| Node ID | Display name |
+|---|---|
+| `RHMiniMaxH3DirectModelLoader` | RunningHub MiniMax H3 Model Loader (Direct) |
+| `RHMiniMaxH3DirectTextEncoderLoader` | RunningHub MiniMax H3 Qwen3-VL Loader (Direct) |
+| `RHMiniMaxH3DirectVAELoader` | RunningHub MiniMax H3 Dual VAE Loader (Direct) |
+| `RHMiniMaxH3FL2VAModelLoader` | RunningHub MiniMax H3 FL2VA Model Loader (Direct) |
+| `RHMiniMaxH3FL2VATextEncoderLoader` | RunningHub MiniMax H3 FL2VA Qwen3-VL Loader (Direct) |
+| `RHMiniMaxH3FL2VAVAELoader` | RunningHub MiniMax H3 FL2VA Dual VAE Loader (Direct) |
+| `RHMiniMaxH3Ref2VAModelLoader` | RunningHub MiniMax H3 Ref2VA Model Loader (Direct) |
+| `RHMiniMaxH3Ref2VATextEncoderLoader` | RunningHub MiniMax H3 Ref2VA Qwen3-VL Loader (Direct) |
+| `RHMiniMaxH3Ref2VAVAELoader` | RunningHub MiniMax H3 Ref2VA Dual VAE Loader (Direct) |
+
+**`RunningHub/MiniMax H3/conditioning`**
+
+| Node ID | Display name |
+|---|---|
+| `RHMiniMaxH3T2VATarget` | RunningHub MiniMax H3 T2VA Target |
+| `RHMiniMaxH3T2VATextEncode` | RunningHub MiniMax H3 T2VA Text Encode |
+| `RHMiniMaxH3UnsupportedConditioning` | RunningHub MiniMax H3 Legacy Unsupported Conditioning (Migration Error) |
+
+**`RunningHub/MiniMax H3/fl2va`**
+
+| Node ID | Display name |
+|---|---|
+| `RHMiniMaxH3FL2VAFirstFrameCondition` | RunningHub MiniMax H3 FL2VA First / First+Last |
+| `RHMiniMaxH3FL2VALastFrameCondition` | RunningHub MiniMax H3 FL2VA Last Only |
+| `RHMiniMaxH3FL2VATarget` | RunningHub MiniMax H3 FL2VA Target |
+| `RHMiniMaxH3FL2VAEncode` | RunningHub MiniMax H3 FL2VA Encode |
+
+**`RunningHub/MiniMax H3/ref2va`**
+
+| Node ID | Display name |
+|---|---|
+| `RHMiniMaxH3Ref2VAImageReference` | RunningHub MiniMax H3 Ref2VA Image Reference |
+| `RHMiniMaxH3Ref2VAAudioReference` | RunningHub MiniMax H3 Ref2VA Audio Reference |
+| `RHMiniMaxH3Ref2VAVideoReference` | RunningHub MiniMax H3 Ref2VA Video Reference |
+| `RHMiniMaxH3Ref2VATarget` | RunningHub MiniMax H3 Ref2VA Target |
+| `RHMiniMaxH3Ref2VAEncode` | RunningHub MiniMax H3 Ref2VA Encode |
+
+**`RunningHub/MiniMax H3/latent`**
+
+| Node ID | Display name |
+|---|---|
+| `RHMiniMaxH3EmptyAVLatent` | RunningHub MiniMax H3 Empty AV Latent |
+| `RHMiniMaxH3SeparateAVLatent` | RunningHub MiniMax H3 Separate AV Latent |
+| `RHMiniMaxH3CombineAVLatent` | RunningHub MiniMax H3 Combine AV Latent |
+| `RHMiniMaxH3EncodeVideoAVLatent` | RunningHub MiniMax H3 Encode Video → AV Latent |
+
+**`RunningHub/MiniMax H3/sampling`**
+
+| Node ID | Display name |
+|---|---|
+| `RHMiniMaxH3FrameRate` | RunningHub MiniMax H3 Frame Rate (Experimental) |
+| `RHMiniMaxH3DualSigmaSampler` | RunningHub MiniMax H3 Dual Sigma Sampler |
+
+**`RunningHub/MiniMax H3/decode`**
+
+| Node ID | Display name |
+|---|---|
+| `RHMiniMaxH3DecodeAV` | RunningHub MiniMax H3 Decode Video + Audio |
 
 ## Requirements
 
@@ -155,9 +234,9 @@ frame. Conditions and their semantic frame positions are carried together and
 validated again before sampling.
 
 1. Load an image with ComfyUI `LoadImage`.
-2. Build `MiniMax H3 FL2VA First / First+Last` (or `Last Only`).
+2. Build `RunningHub MiniMax H3 FL2VA First / First+Last` (or `Last Only`).
 3. Load FL2VA DiT, Qwen3-VL, and VAE with the three FL2VA loaders.
-4. Build `MiniMax H3 FL2VA Target`, then run `FL2VA Encode`.
+4. Build `RunningHub MiniMax H3 FL2VA Target`, then run `FL2VA Encode`.
 5. Connect the same target to `Empty AV Latent`.
 6. Run `Dual Sigma Sampler`, `Decode Video + Audio`, `CreateVideo`, and
    `SaveVideo`.
@@ -176,7 +255,7 @@ changes the multimodal presentation and conditioning rows.
 
 1. Load source media with the standard ComfyUI `LoadImage`, `LoadAudio`, or
    `LoadVideo` nodes.
-2. Append each item with the matching `MiniMax H3 Ref2VA ... Reference` node.
+2. Append each item with the matching `RunningHub MiniMax H3 Ref2VA ... Reference` node.
 3. Load Ref2VA DiT, Qwen3-VL, and VAE with the three Ref2VA loaders.
 4. Feed the final ordered reference chain to both `Ref2VA Target` and
    `Ref2VA Encode`.
@@ -252,7 +331,7 @@ FL2VA/Ref2VA layouts that already carry visual condition rows.
 
 ## Frame-rate conditioning (experimental, optional)
 
-`MiniMax H3 Frame Rate (Experimental)` mirrors PR#15210. It is **not** part of
+`RunningHub MiniMax H3 Frame Rate (Experimental)` mirrors PR#15210. It is **not** part of
 the official training contract and does **not** change the `target.fps=24` grid:
 
 - `adaln=True`: add an fps sinusoid into `TimeEmbedder` (even `24` is not a
@@ -310,7 +389,7 @@ gradients are live, since it rewrites autograd views in place.
 Run conversion from this repository and keep each partition separate:
 
 ```bash
-cd custom_nodes/ComfyUI-MiniMax-H3
+cd custom_nodes/ComfyUI-RH-MiniMax-H3
 BASE=/path/to/ComfyUI/models/diffusers/MiniMax-H3
 
 python3 tools/quantize_int8_convrot.py \

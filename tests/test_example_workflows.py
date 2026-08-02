@@ -133,16 +133,16 @@ class ExampleWorkflowTests(unittest.TestCase):
             types = {node["type"] for node in workflow["nodes"]}
             with self.subTest(workflow=name):
                 self.assertIn("SaveVideo", types)
-                self.assertIn("MiniMaxH3DecodeAV", types)
-                self.assertIn("MiniMaxH3DualSigmaSampler", types)
+                self.assertIn("RHMiniMaxH3DecodeAV", types)
+                self.assertIn("RHMiniMaxH3DualSigmaSampler", types)
 
     def test_loader_family_matches_the_task(self):
         for name, workflow in _workflows():
             types = {node["type"] for node in workflow["nodes"]}
             family = {
-                "t2va": "MiniMaxH3Direct",
-                "fl2va": "MiniMaxH3FL2VA",
-                "ref2va": "MiniMaxH3Ref2VA",
+                "t2va": "RHMiniMaxH3Direct",
+                "fl2va": "RHMiniMaxH3FL2VA",
+                "ref2va": "RHMiniMaxH3Ref2VA",
             }[name.split("_")[0]]
             with self.subTest(workflow=name):
                 for component in ("ModelLoader", "TextEncoderLoader", "VAELoader"):
@@ -166,12 +166,12 @@ class ExampleWorkflowTests(unittest.TestCase):
         """
 
         shared = {
-            "MiniMaxH3FL2VAEncode": "keyframes",
-            "MiniMaxH3Ref2VAEncode": "references",
+            "RHMiniMaxH3FL2VAEncode": "keyframes",
+            "RHMiniMaxH3Ref2VAEncode": "references",
         }
         for name, workflow in _workflows():
             by_type = {node["type"]: node for node in workflow["nodes"]}
-            latent = by_type["MiniMaxH3EmptyAVLatent"]
+            latent = by_type["RHMiniMaxH3EmptyAVLatent"]
             target_node = next(
                 node for node in workflow["nodes"] if node["type"].endswith("Target")
             )
@@ -195,7 +195,7 @@ class ExampleWorkflowTests(unittest.TestCase):
     def test_vae_bundle_is_shared_between_encode_and_decode(self):
         for name, workflow in _workflows():
             by_type = {node["type"]: node for node in workflow["nodes"]}
-            decode = by_type["MiniMaxH3DecodeAV"]
+            decode = by_type["RHMiniMaxH3DecodeAV"]
             encode = next(
                 (
                     node
@@ -229,7 +229,7 @@ class ExampleWorkflowTests(unittest.TestCase):
             refs = [
                 node
                 for node in workflow["nodes"]
-                if node["type"].startswith("MiniMaxH3Ref2VA")
+                if node["type"].startswith("RHMiniMaxH3Ref2VA")
                 and node["type"].endswith("Reference")
             ]
             with self.subTest(workflow=name):

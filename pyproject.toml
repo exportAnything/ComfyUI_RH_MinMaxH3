@@ -1,7 +1,7 @@
 [project]
-name = "comfyui-minimax-h3-direct"
+name = "comfyui-rh-minimax-h3"
 version = "0.3.0"
-description = "Direct, in-process MiniMax-H3 audio-video custom nodes for ComfyUI"
+description = "RunningHub MiniMax-H3 audio-video custom nodes for ComfyUI (direct, in-process)"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
@@ -27,6 +27,6 @@ testpaths = ["tests"]
 
 [tool.comfy]
 PublisherId = "yanghao"
-DisplayName = "RunningHub MiniMax H3 Direct"
+DisplayName = "RunningHub MiniMax H3"
 Icon = ""
 includes = ["examples"]

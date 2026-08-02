@@ -1,16 +1,94 @@
-# ComfyUI-MiniMax-H3
+# ComfyUI-RH-MiniMax-H3
 
 [English documentation](README.md)
 
-这是 MiniMax-H3 的 ComfyUI 本地音视频扩散节点。DiT、Qwen3-VL 文本/多模态
-编码器以及视频/音频 VAE 都在 ComfyUI 进程内运行，不依赖 SGLang 服务，也不调用
-Diffusers Pipeline。
+RunningHub 的 MiniMax-H3 ComfyUI 音视频扩散节点。DiT、Qwen3-VL 文本/多模态
+编码器以及视频/音频 VAE 全部在 ComfyUI 进程内运行，不依赖 SGLang 服务，也不
+调用 Diffusers Pipeline。
 
 当前任务感知路径已覆盖 T2VA、FL2VA（首/尾帧生成视频与音频）和 Ref2VA（有序
 图片/音频/视频参考）。三条路径均已完成本地合同、打包、采样器、媒体预处理、
 节点静态检查和单元测试。Ref2VA 已用完整发布权重完成真实 CUDA 端到端验证。
 FL2VA 与 T2VA 共用 FL2VA 分区及同一套编码/采样合同；上线前建议再做一次本地
 CUDA smoke。
+
+## 安装
+
+```bash
+cd ComfyUI/custom_nodes
+git clone <repo-url> ComfyUI-RH-MiniMax-H3
+pip install -r ComfyUI-RH-MiniMax-H3/requirements.txt
+```
+
+装好后需重启 ComfyUI：节点定义只在进程启动时读取一次。
+
+## 节点清单
+
+全部节点注册 ID 带 `RHMiniMaxH3` 前缀，归入 `RunningHub/MiniMax H3` 分类。
+**节点 ID** 是工作流里保存的 `class_type` / `type`，**显示名**是画布上看到的标题。
+
+**`RunningHub/MiniMax H3/loaders`**
+
+| Node ID | Display name |
+|---|---|
+| `RHMiniMaxH3DirectModelLoader` | RunningHub MiniMax H3 Model Loader (Direct) |
+| `RHMiniMaxH3DirectTextEncoderLoader` | RunningHub MiniMax H3 Qwen3-VL Loader (Direct) |
+| `RHMiniMaxH3DirectVAELoader` | RunningHub MiniMax H3 Dual VAE Loader (Direct) |
+| `RHMiniMaxH3FL2VAModelLoader` | RunningHub MiniMax H3 FL2VA Model Loader (Direct) |
+| `RHMiniMaxH3FL2VATextEncoderLoader` | RunningHub MiniMax H3 FL2VA Qwen3-VL Loader (Direct) |
+| `RHMiniMaxH3FL2VAVAELoader` | RunningHub MiniMax H3 FL2VA Dual VAE Loader (Direct) |
+| `RHMiniMaxH3Ref2VAModelLoader` | RunningHub MiniMax H3 Ref2VA Model Loader (Direct) |
+| `RHMiniMaxH3Ref2VATextEncoderLoader` | RunningHub MiniMax H3 Ref2VA Qwen3-VL Loader (Direct) |
+| `RHMiniMaxH3Ref2VAVAELoader` | RunningHub MiniMax H3 Ref2VA Dual VAE Loader (Direct) |
+
+**`RunningHub/MiniMax H3/conditioning`**
+
+| Node ID | Display name |
+|---|---|
+| `RHMiniMaxH3T2VATarget` | RunningHub MiniMax H3 T2VA Target |
+| `RHMiniMaxH3T2VATextEncode` | RunningHub MiniMax H3 T2VA Text Encode |
+| `RHMiniMaxH3UnsupportedConditioning` | RunningHub MiniMax H3 Legacy Unsupported Conditioning (Migration Error) |
+
+**`RunningHub/MiniMax H3/fl2va`**
+
+| Node ID | Display name |
+|---|---|
+| `RHMiniMaxH3FL2VAFirstFrameCondition` | RunningHub MiniMax H3 FL2VA First / First+Last |
+| `RHMiniMaxH3FL2VALastFrameCondition` | RunningHub MiniMax H3 FL2VA Last Only |
+| `RHMiniMaxH3FL2VATarget` | RunningHub MiniMax H3 FL2VA Target |
+| `RHMiniMaxH3FL2VAEncode` | RunningHub MiniMax H3 FL2VA Encode |
+
+**`RunningHub/MiniMax H3/ref2va`**
+
+| Node ID | Display name |
+|---|---|
+| `RHMiniMaxH3Ref2VAImageReference` | RunningHub MiniMax H3 Ref2VA Image Reference |
+| `RHMiniMaxH3Ref2VAAudioReference` | RunningHub MiniMax H3 Ref2VA Audio Reference |
+| `RHMiniMaxH3Ref2VAVideoReference` | RunningHub MiniMax H3 Ref2VA Video Reference |
+| `RHMiniMaxH3Ref2VATarget` | RunningHub MiniMax H3 Ref2VA Target |
+| `RHMiniMaxH3Ref2VAEncode` | RunningHub MiniMax H3 Ref2VA Encode |
+
+**`RunningHub/MiniMax H3/latent`**
+
+| Node ID | Display name |
+|---|---|
+| `RHMiniMaxH3EmptyAVLatent` | RunningHub MiniMax H3 Empty AV Latent |
+| `RHMiniMaxH3SeparateAVLatent` | RunningHub MiniMax H3 Separate AV Latent |
+| `RHMiniMaxH3CombineAVLatent` | RunningHub MiniMax H3 Combine AV Latent |
+| `RHMiniMaxH3EncodeVideoAVLatent` | RunningHub MiniMax H3 Encode Video → AV Latent |
+
+**`RunningHub/MiniMax H3/sampling`**
+
+| Node ID | Display name |
+|---|---|
+| `RHMiniMaxH3FrameRate` | RunningHub MiniMax H3 Frame Rate (Experimental) |
+| `RHMiniMaxH3DualSigmaSampler` | RunningHub MiniMax H3 Dual Sigma Sampler |
+
+**`RunningHub/MiniMax H3/decode`**
+
+| Node ID | Display name |
+|---|---|
+| `RHMiniMaxH3DecodeAV` | RunningHub MiniMax H3 Decode Video + Audio |
 
 ## 环境要求
 
@@ -132,7 +210,7 @@ FL2VA 节点会直接报错。选中的单文件路径会折进组件 fingerprin
 传递，并在采样前再次校验。
 
 1. 使用 ComfyUI `LoadImage` 加载图片；
-2. 使用 `MiniMax H3 FL2VA First / First+Last`（或 `Last Only`）构造关键帧；
+2. 使用 `RunningHub MiniMax H3 FL2VA First / First+Last`（或 `Last Only`）构造关键帧；
 3. 分别使用三个 FL2VA Loader 加载 DiT、Qwen3-VL 与 VAE；
 4. 创建 `FL2VA Target`，再执行 `FL2VA Encode`；
 5. 将同一个 target 接到 `Empty AV Latent`；
@@ -152,7 +230,7 @@ Ref2VA 的参考素材有严格顺序。添加每一个图片、音频、视频�
 和条件行的顺序。
 
 1. 使用标准 `LoadImage`、`LoadAudio` 或 `LoadVideo` 加载素材；
-2. 使用对应的 `MiniMax H3 Ref2VA ... Reference` 节点按顺序追加；
+2. 使用对应的 `RunningHub MiniMax H3 Ref2VA ... Reference` 节点按顺序追加；
 3. 分别使用三个 Ref2VA Loader 加载 DiT、Qwen3-VL 与 VAE；
 4. 将最终 reference 链同时接到 `Ref2VA Target` 和 `Ref2VA Encode`；
 5. 依次连接 `Empty AV Latent`、`Dual Sigma Sampler`、
@@ -215,7 +293,7 @@ Ref2VA 视频参考按官方路径规范为 24 fps，Qwen 展示序列再从该�
 
 ## 帧率条件（实验性，可选）
 
-`MiniMax H3 Frame Rate (Experimental)` 对应 PR#15210 的实验能力，**不是**官方
+`RunningHub MiniMax H3 Frame Rate (Experimental)` 对应 PR#15210 的实验能力，**不是**官方
 训练契约，也不改 `target.fps=24` 时序格：
 
 - `adaln=True`：把 fps 的 sinusoidal 加到 `TimeEmbedder`（即使填 24 也非 no-op）；
@@ -269,7 +347,7 @@ autograd 视图。
 必须按任务分区分别转换：
 
 ```bash
-cd custom_nodes/ComfyUI-MiniMax-H3
+cd custom_nodes/ComfyUI-RH-MiniMax-H3
 BASE=/path/to/ComfyUI/models/diffusers/MiniMax-H3
 
 python3 tools/quantize_int8_convrot.py \

@@ -221,14 +221,14 @@ def _tail(graph: Graph, *, prefix: str, column: int) -> None:
     """采样 → 解码 → 出片；三条任务链共用。"""
 
     x = column
-    graph.add("latent", "MiniMaxH3EmptyAVLatent", pos=[x, 40], title="Empty AV Latent")
+    graph.add("latent", "RHMiniMaxH3EmptyAVLatent", pos=[x, 40], title="Empty AV Latent")
     graph.add(
         "sampler",
-        "MiniMaxH3DualSigmaSampler",
+        "RHMiniMaxH3DualSigmaSampler",
         pos=[x, 180],
         title="Dual Sigma Sampler",
     )
-    graph.add("decode", "MiniMaxH3DecodeAV", pos=[x + 420, 40], title="Decode Video + Audio")
+    graph.add("decode", "RHMiniMaxH3DecodeAV", pos=[x + 420, 40], title="Decode Video + Audio")
     graph.add("create", "CreateVideo", pos=[x + 420, 200])
     graph.add(
         "save",
@@ -246,19 +246,19 @@ def _tail(graph: Graph, *, prefix: str, column: int) -> None:
 def _loaders(graph: Graph, family: str, *, column: int = 40) -> None:
     graph.add(
         "te",
-        f"MiniMaxH3{family}TextEncoderLoader",
+        f"RHMiniMaxH3{family}TextEncoderLoader",
         pos=[column, 40],
         title=f"{family} Qwen3-VL Loader",
     )
     graph.add(
         "model",
-        f"MiniMaxH3{family}ModelLoader",
+        f"RHMiniMaxH3{family}ModelLoader",
         pos=[column, 240],
         title=f"{family} DiT Loader",
     )
     graph.add(
         "vae",
-        f"MiniMaxH3{family}VAELoader",
+        f"RHMiniMaxH3{family}VAELoader",
         pos=[column, 440],
         title=f"{family} Dual VAE Loader",
     )
@@ -270,10 +270,10 @@ TARGET = {"aspect_ratio": "16:9", "duration_seconds": 5.0, "width": 832, "height
 def build_t2va() -> dict:
     graph = Graph()
     _loaders(graph, "Direct")
-    graph.add("target", "MiniMaxH3T2VATarget", pos=[460, 40], overrides=dict(TARGET))
+    graph.add("target", "RHMiniMaxH3T2VATarget", pos=[460, 40], overrides=dict(TARGET))
     graph.add(
         "encode",
-        "MiniMaxH3T2VATextEncode",
+        "RHMiniMaxH3T2VATextEncode",
         pos=[460, 240],
         overrides={"prompt": PROMPTS["t2va"]},
         size=[420, 220],
@@ -297,7 +297,7 @@ def build_fl2va(variant: str) -> dict:
         graph.add("last_image", "LoadImage", pos=[460, 40], title="Last frame")
         graph.add(
             "keyframes",
-            "MiniMaxH3FL2VALastFrameCondition",
+            "RHMiniMaxH3FL2VALastFrameCondition",
             pos=[820, 40],
             title="Last Only",
         )
@@ -306,7 +306,7 @@ def build_fl2va(variant: str) -> dict:
         graph.add("first_image", "LoadImage", pos=[460, 40], title="First frame")
         graph.add(
             "keyframes",
-            "MiniMaxH3FL2VAFirstFrameCondition",
+            "RHMiniMaxH3FL2VAFirstFrameCondition",
             pos=[820, 40],
             title="First / First+Last",
         )
@@ -315,10 +315,10 @@ def build_fl2va(variant: str) -> dict:
             graph.add("last_image", "LoadImage", pos=[460, 400], title="Last frame")
             graph.link("last_image", "IMAGE", "keyframes", "last_frame")
 
-    graph.add("target", "MiniMaxH3FL2VATarget", pos=[1180, 40], overrides=dict(TARGET))
+    graph.add("target", "RHMiniMaxH3FL2VATarget", pos=[1180, 40], overrides=dict(TARGET))
     graph.add(
         "encode",
-        "MiniMaxH3FL2VAEncode",
+        "RHMiniMaxH3FL2VAEncode",
         pos=[1180, 260],
         overrides={"prompt": PROMPTS["fl2va"]},
         size=[420, 260],
@@ -352,7 +352,7 @@ def build_ref2va(variant: str) -> dict:
         graph.add("video", "LoadVideo", pos=[460, 40], title="Reference video")
         graph.add(
             "ref_video",
-            "MiniMaxH3Ref2VAVideoReference",
+            "RHMiniMaxH3Ref2VAVideoReference",
             pos=[820, 40],
             overrides={"reference_type": "video_audio"},
             title="Video Reference (with audio)",
@@ -362,7 +362,7 @@ def build_ref2va(variant: str) -> dict:
     else:
         graph.add("image", "LoadImage", pos=[460, 40], title="Reference image")
         graph.add(
-            "ref_image", "MiniMaxH3Ref2VAImageReference", pos=[820, 40],
+            "ref_image", "RHMiniMaxH3Ref2VAImageReference", pos=[820, 40],
             title="Image Reference",
         )
         graph.link("image", "IMAGE", "ref_image", "image")
@@ -370,7 +370,7 @@ def build_ref2va(variant: str) -> dict:
         if variant == "image_audio":
             graph.add("audio", "LoadAudio", pos=[460, 400], title="Reference audio")
             graph.add(
-                "ref_audio", "MiniMaxH3Ref2VAAudioReference", pos=[820, 400],
+                "ref_audio", "RHMiniMaxH3Ref2VAAudioReference", pos=[820, 400],
                 title="Audio Reference",
             )
             graph.link("audio", "AUDIO", "ref_audio", "audio")
@@ -381,10 +381,10 @@ def build_ref2va(variant: str) -> dict:
         graph.link(previous, "references", current, "references")
     last = chain[-1]
 
-    graph.add("target", "MiniMaxH3Ref2VATarget", pos=[1180, 40], overrides=dict(TARGET))
+    graph.add("target", "RHMiniMaxH3Ref2VATarget", pos=[1180, 40], overrides=dict(TARGET))
     graph.add(
         "encode",
-        "MiniMaxH3Ref2VAEncode",
+        "RHMiniMaxH3Ref2VAEncode",
         pos=[1180, 280],
         overrides={"prompt": PROMPTS["ref2va"]},
         size=[420, 280],

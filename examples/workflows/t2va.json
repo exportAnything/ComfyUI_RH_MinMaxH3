@@ -4,7 +4,7 @@
   "nodes": [
     {
       "id": 1,
-      "type": "MiniMaxH3DirectTextEncoderLoader",
+      "type": "RHMiniMaxH3DirectTextEncoderLoader",
       "pos": [
         40,
         40
@@ -28,7 +28,7 @@
         }
       ],
       "properties": {
-        "Node name for S&R": "MiniMaxH3DirectTextEncoderLoader"
+        "Node name for S&R": "RHMiniMaxH3DirectTextEncoderLoader"
       },
       "widgets_values": [
         "MiniMax-H3",
@@ -39,7 +39,7 @@
     },
     {
       "id": 2,
-      "type": "MiniMaxH3DirectModelLoader",
+      "type": "RHMiniMaxH3DirectModelLoader",
       "pos": [
         40,
         240
@@ -63,7 +63,7 @@
         }
       ],
       "properties": {
-        "Node name for S&R": "MiniMaxH3DirectModelLoader"
+        "Node name for S&R": "RHMiniMaxH3DirectModelLoader"
       },
       "widgets_values": [
         "MiniMax-H3",
@@ -74,7 +74,7 @@
     },
     {
       "id": 3,
-      "type": "MiniMaxH3DirectVAELoader",
+      "type": "RHMiniMaxH3DirectVAELoader",
       "pos": [
         40,
         440
@@ -98,7 +98,7 @@
         }
       ],
       "properties": {
-        "Node name for S&R": "MiniMaxH3DirectVAELoader"
+        "Node name for S&R": "RHMiniMaxH3DirectVAELoader"
       },
       "widgets_values": [
         "MiniMax-H3",
@@ -109,7 +109,7 @@
     },
     {
       "id": 4,
-      "type": "MiniMaxH3T2VATarget",
+      "type": "RHMiniMaxH3T2VATarget",
       "pos": [
         460,
         40
@@ -139,7 +139,7 @@
         }
       ],
       "properties": {
-        "Node name for S&R": "MiniMaxH3T2VATarget"
+        "Node name for S&R": "RHMiniMaxH3T2VATarget"
       },
       "widgets_values": [
         "16:9",
@@ -150,7 +150,7 @@
     },
     {
       "id": 5,
-      "type": "MiniMaxH3T2VATextEncode",
+      "type": "RHMiniMaxH3T2VATextEncode",
       "pos": [
         460,
         240
@@ -180,7 +180,7 @@
         }
       ],
       "properties": {
-        "Node name for S&R": "MiniMaxH3T2VATextEncode"
+        "Node name for S&R": "RHMiniMaxH3T2VATextEncode"
       },
       "widgets_values": [
         "A five-second cinematic 16:9 shot of a small paper boat gliding through a rain-lit city gutter at night. Reflections ripple across the water, a distant train passes, and the ambient rain and wheel noise stay synchronized with the movement. Natural camera motion, no subtitles, no logos."
@@ -188,7 +188,7 @@
     },
     {
       "id": 6,
-      "type": "MiniMaxH3EmptyAVLatent",
+      "type": "RHMiniMaxH3EmptyAVLatent",
       "pos": [
         920,
         40
@@ -218,14 +218,14 @@
         }
       ],
       "properties": {
-        "Node name for S&R": "MiniMaxH3EmptyAVLatent"
+        "Node name for S&R": "RHMiniMaxH3EmptyAVLatent"
       },
       "widgets_values": [],
       "title": "Empty AV Latent"
     },
     {
       "id": 7,
-      "type": "MiniMaxH3DualSigmaSampler",
+      "type": "RHMiniMaxH3DualSigmaSampler",
       "pos": [
         920,
         180
@@ -265,7 +265,7 @@
         }
       ],
       "properties": {
-        "Node name for S&R": "MiniMaxH3DualSigmaSampler"
+        "Node name for S&R": "RHMiniMaxH3DualSigmaSampler"
       },
       "widgets_values": [
         42,
@@ -284,7 +284,7 @@
     },
     {
       "id": 8,
-      "type": "MiniMaxH3DecodeAV",
+      "type": "RHMiniMaxH3DecodeAV",
       "pos": [
         1340,
         40
@@ -327,7 +327,7 @@
         }
       ],
       "properties": {
-        "Node name for S&R": "MiniMaxH3DecodeAV"
+        "Node name for S&R": "RHMiniMaxH3DecodeAV"
       },
       "widgets_values": [],
       "title": "Decode Video + Audio"

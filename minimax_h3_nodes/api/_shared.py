@@ -103,7 +103,7 @@ from ..runtime.h3_settings import (
 )
 from ..sampling import sample_h3
 
-CATEGORY = "MiniMax H3 Direct"
+CATEGORY = "RunningHub/MiniMax H3"
 MODEL_TYPE = "MINIMAX_H3_DIRECT_MODEL"
 TEXT_ENCODER_TYPE = "MINIMAX_H3_TEXT_ENCODER"
 VAE_BUNDLE_TYPE = "MINIMAX_H3_VAE_BUNDLE"
