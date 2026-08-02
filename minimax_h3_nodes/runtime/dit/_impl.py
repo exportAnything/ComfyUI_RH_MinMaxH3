@@ -130,6 +130,53 @@ def _reset_fused_qk_rope_probe() -> None:
     _FUSED_QK_ROPE_PROBE.clear()
 
 
+def _disable_fused_qk_rope(reason: BaseException) -> None:
+    """调用期发现融合 kernel 不兼容，永久停用并回退 torch 实现。"""
+
+    if _FUSED_QK_ROPE_PROBE:
+        _FUSED_QK_ROPE_PROBE[0] = None
+    else:
+        _FUSED_QK_ROPE_PROBE.append(None)
+    LOGGER.warning(
+        "融合 RMSNorm+RoPE kernel 调用失败（%s），本进程后续一律走 torch 实现",
+        reason,
+    )
+
+
+def _fused_kernel_accepts_rot_dim(candidate: Any, name: str) -> bool:
+    """融合 kernel 必须支持 ``rot_dim``，否则它只会做整头旋转。
+
+    H3 是部分旋转（``rotary_dim = 6 * rope_inv_freq_len`` = 96，head_dim = 128，
+    余下 32 维直通）。早期 comfy-kitchen 的 ``rms_rope_split_half`` 没有
+    ``rot_dim``，会把整个 head_dim 拆成对去套旋转表——形状对不上时直接抛错，
+    对得上时结果是错的。光判断"函数存在"会放行这种版本，所以这里必须验签名。
+
+    无法内省的实现（C 扩展等）按可用处理，调用点还有 TypeError 兜底。
+    """
+
+    import inspect
+
+    try:
+        signature = inspect.signature(candidate)
+    except (TypeError, ValueError):
+        return True
+    parameters = signature.parameters
+    if any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters.values()
+    ):
+        return True
+    if "rot_dim" in parameters:
+        return True
+    LOGGER.info(
+        "comfy-kitchen 的 %s 没有 rot_dim 参数（签名：%s），无法表达 H3 的部分旋转，"
+        "改用 torch 实现",
+        name,
+        signature,
+    )
+    return False
+
+
 def _fused_qk_rope_fn() -> tuple[Any, bool] | None:
     """探测 comfy-kitchen 的融合 per-head RMSNorm + split-half RoPE kernel。
 
@@ -149,7 +196,9 @@ def _fused_qk_rope_fn() -> tuple[Any, bool] | None:
                     ("rms_rope_split_half", False),
                 ):
                     candidate = getattr(kitchen, name, None)
-                    if callable(candidate):
+                    if callable(candidate) and _fused_kernel_accepts_rot_dim(
+                        candidate, name
+                    ):
                         resolved = (candidate, in_place)
                         break
             except Exception:  # 没装 Comfy/comfy-kitchen，或导入期异常
@@ -637,12 +686,19 @@ class MiniMaxH3Attention(nn.Module):
             rotary_dim = int(rotation_table.shape[-3]) * 2
             args = (query, key, rotation_table, self.q_norm.weight, self.k_norm.weight)
             kwargs = {"epsilon": self.q_norm.eps, "rot_dim": rotary_dim}
-            if in_place:
-                fused_fn(*args, **kwargs)
+            try:
+                if in_place:
+                    fused_fn(*args, **kwargs)
+                else:
+                    query, key = fused_fn(*args, **kwargs)
+            except TypeError as exc:
+                # 无法内省签名的实现（C 扩展等）在这里才暴露不兼容；永久停用融合
+                # 路径并回退，而不是让整次采样失败。
+                _disable_fused_qk_rope(exc)
+                fused = None
             else:
-                query, key = fused_fn(*args, **kwargs)
-            query, key = query[0], key[0]
-        else:
+                query, key = query[0], key[0]
+        if fused is None:
             query = query.view(rows, self.num_heads, self.head_dim)
             key = key.view(rows, self.num_heads, self.head_dim)
             query, key = _apply_qk_norm(

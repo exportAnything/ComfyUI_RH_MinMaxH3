@@ -269,3 +269,73 @@ class TestFusedQKRope(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(HAS_TORCH, "torch 未安装")
+class TestKernelSignatureGate(unittest.TestCase):
+    """只判断"函数存在"会放行不支持部分旋转的老 kernel。
+
+    H3 的 ``rotary_dim = 6 * rope_inv_freq_len``（96）小于 head_dim（128）。早期
+    comfy-kitchen 的 ``rms_rope_split_half`` 没有 ``rot_dim``，会把整个 head_dim
+    拆成对去套旋转表——形状不匹配时抛 RuntimeError，匹配时结果是错的。
+    """
+
+    def _probe_with(self, kitchen_module):
+        """必须连父包 comfy 一起打桩，否则会解析到真实环境里的 comfy.quant_ops。"""
+
+        from minimax_h3_nodes.runtime.dit import _impl
+
+        _impl._FUSED_QK_ROPE_PROBE.clear()
+        quant_ops = types.ModuleType("comfy.quant_ops")
+        quant_ops.ck = kitchen_module
+        parent = types.ModuleType("comfy")
+        parent.quant_ops = quant_ops
+        modules = {"comfy": parent, "comfy.quant_ops": quant_ops}
+        with mock.patch.dict(sys.modules, modules), \
+                mock.patch.object(_impl, "OPT_FUSED_QK_ROPE", True):
+            try:
+                return _impl._fused_qk_rope_fn()
+            finally:
+                _impl._FUSED_QK_ROPE_PROBE.clear()
+
+    def test_kernel_without_rot_dim_is_rejected(self):
+        kitchen = types.ModuleType("ck")
+
+        def rms_rope_split_half(q, k, freqs_cis, q_scale, k_scale=None, epsilon=1e-6):
+            raise AssertionError("不该被调用")
+
+        kitchen.rms_rope_split_half = rms_rope_split_half
+        self.assertIsNone(self._probe_with(kitchen))
+
+    def test_kernel_with_rot_dim_is_accepted(self):
+        kitchen = types.ModuleType("ck")
+
+        def rms_rope_split_half(
+            q, k, freqs_cis, q_scale, k_scale=None, epsilon=1e-6, rot_dim=None
+        ):
+            raise AssertionError("不该被调用")
+
+        kitchen.rms_rope_split_half = rms_rope_split_half
+        resolved = self._probe_with(kitchen)
+        self.assertIsNotNone(resolved)
+        self.assertFalse(resolved[1])  # out-of-place
+
+    def test_var_keyword_kernel_is_accepted(self):
+        kitchen = types.ModuleType("ck")
+
+        def rms_rope_split_half_(q, k, freqs_cis, q_scale, k_scale=None, **kwargs):
+            raise AssertionError("不该被调用")
+
+        kitchen.rms_rope_split_half_ = rms_rope_split_half_
+        resolved = self._probe_with(kitchen)
+        self.assertIsNotNone(resolved)
+        self.assertTrue(resolved[1])  # in-place
+
+    def test_call_time_type_error_disables_the_fused_path(self):
+        from minimax_h3_nodes.runtime.dit import _impl
+
+        _impl._FUSED_QK_ROPE_PROBE.clear()
+        _impl._FUSED_QK_ROPE_PROBE.append(("sentinel", False))
+        _impl._disable_fused_qk_rope(TypeError("unexpected keyword argument 'rot_dim'"))
+        self.assertIsNone(_impl._fused_qk_rope_fn())
+        _impl._FUSED_QK_ROPE_PROBE.clear()
