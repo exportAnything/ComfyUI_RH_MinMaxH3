@@ -10,3 +10,6 @@ test_outputs/
 *.pyc
 *.pyo
 .env
+
+# RunningHub 内部配置，不进公开仓库
+rh_config.json

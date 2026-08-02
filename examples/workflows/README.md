@@ -27,11 +27,3 @@
    下一个参考节点。改变链路顺序会改变多模态提示与条件行的顺序。
 4. **Target 尺寸**：`width`/`height` 已显式填写。留空时按 `aspect_ratio` 解析，
    Ref2VA 会落到 1344×768，序列长度与耗时大幅上升。
-
-## 重新生成
-
-工作流由节点定义推导，不手写。改过 `INPUT_TYPES` 后重跑：
-
-```bash
-python3 tools/gen_example_workflows.py
-```

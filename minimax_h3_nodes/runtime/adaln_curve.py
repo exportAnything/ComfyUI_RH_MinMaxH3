@@ -14,7 +14,7 @@ embedder 完全消失，改为在 ``adaln_t_table [grid, k]`` 上按 ``t`` 线�
 本模块是该格式的唯一契约来源：
 * :func:`interpolate_curve_table` —— 推理侧取值（``dit`` 用）
 * :func:`curve_grid` / :func:`fit_curve_basis` / :func:`project_adaln_weight`
-  —— 离线转换（``tools/convert_adaln_curve.py`` 用）
+  —— 离线转换用
 
 与 PR#15224 的 checkpoint 格式一致：buffer 名 ``adaln_t_table``，形状
 ``[grid, k]`` fp32，``adaln_proj`` 不再自带 silu（已烤进表里）。
