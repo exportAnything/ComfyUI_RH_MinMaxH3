@@ -6,8 +6,16 @@
 
 [中文文档](README_CN.md)
 
-ComfyUI custom nodes that run **MiniMax-H3** joint video + audio diffusion
-directly inside the ComfyUI process.
+**MiniMax-H3** generates video and audio in the same diffusion process — not a
+render followed by a dubbing pass, but two streams denoised across one shared
+set of sampling steps. Synchronization comes out of generation itself rather
+than from aligning tracks afterwards.
+
+This plugin brings the full H3 runtime inside the ComfyUI process and covers all
+three official task paths: text to video+audio (T2VA), keyframe driven
+generation (FL2VA — supply only a first frame and it is image-to-video), and
+ordered multimodal references (Ref2VA). With INT8 weights and layerwise offload
+it runs on a single 24GB GPU.
 
 [RunningHub](https://www.runninghub.cn/?inviteCode=rh-v1367) is a MiniMax
 partner; this plugin is developed and maintained by RunningHub.

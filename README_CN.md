@@ -6,7 +6,12 @@
 
 [English documentation](README.md)
 
-在 ComfyUI 进程内直接运行 **MiniMax-H3** 视频+音频联合扩散的自定义节点。
+**MiniMax-H3** 在同一次扩散过程中生成视频和音频——不是先出画面再配音，而是两条流
+在同一组采样步里共同去噪。音画同步来自生成过程本身，不依赖后期对齐。
+
+本插件把完整的 H3 运行时搬进 ComfyUI 进程内，覆盖官方的三条任务链路：文本生成
+视频+音频（T2VA）、关键帧驱动（FL2VA，只给首帧即图生视频）、有序多模态参考
+（Ref2VA）。配合 INT8 权重与按层 offload，24GB 单卡即可运行。
 
 [RunningHub](https://www.runninghub.cn/?inviteCode=rh-v1367) 是 MiniMax 的合作伙伴，
 本插件由 RunningHub 开发并维护。
