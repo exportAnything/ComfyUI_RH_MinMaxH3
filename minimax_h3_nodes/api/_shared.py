@@ -940,9 +940,11 @@ def _wrapper_release_fingerprint(wrapper: Mapping[str, Any]) -> str:
 
 # 必须与 contracts._impl 的 _H3_COMPONENT_RELATED_PATH_FIELDS +
 # _H3_COMPONENT_EXTERNAL_PATH_FIELDS 合起来一致：两侧算出的 component
-# fingerprint 会被逐字比对。
+# fingerprint 会被逐字比对。键是 fingerprint kind（contracts 的
+# _H3_COMPONENT_FINGERPRINT_KINDS 值），不是 contract 的 component_kind：
+# DiT 在这里叫 "transformer" 而不是 "model"。
 _WRAPPER_RELATED_PATH_FIELDS = {
-    "model": ("transformer_weights_path",),
+    "transformer": ("transformer_weights_path",),
     "text_encoder": (
         "tokenizer_path",
         "processor_path",

@@ -375,6 +375,53 @@ class LoaderTests(unittest.TestCase):
                 wrapper, component_kind="model", task="fl2va"
             )
 
+    def test_sampler_side_helper_agrees_with_the_dit_loader_fingerprint(self):
+        """采样节点重算 transformer fingerprint 时必须折进扁平权重文件。
+
+        漏掉 ``transformer_weights_path`` 会让每个用单文件 DiT 权重的工作流在
+        sampler 里报 "component fingerprint 被篡改或已过期"。
+        """
+
+        from minimax_h3_nodes.api._shared import _wrapper_component_fingerprint
+
+        calls: dict = {}
+        with _installation() as (_models, _weights_root, release), \
+                self._stub_runtime(
+                    model_loader=self._stub("model_loader", "load_h3_model", calls)
+                ) as loaders:
+            (wrapper,) = loaders.MiniMaxH3FL2VAModelLoader().load(
+                str(release), "auto", "MiniMax-H3-FL2VA-int8_convrot.safetensors"
+            )
+            self.assertEqual(
+                _wrapper_component_fingerprint(
+                    wrapper,
+                    component_kind="transformer",
+                    path_key="transformer_path",
+                    fingerprint_key="transformer_fingerprint",
+                ),
+                wrapper["transformer_fingerprint"],
+            )
+
+    def test_wrapper_related_path_fields_match_the_contract_maps(self):
+        from minimax_h3_nodes.api._shared import _WRAPPER_RELATED_PATH_FIELDS
+        from minimax_h3_nodes.contracts._impl import (
+            _H3_COMPONENT_EXTERNAL_PATH_FIELDS,
+            _H3_COMPONENT_FINGERPRINT_KINDS,
+            _H3_COMPONENT_RELATED_PATH_FIELDS,
+        )
+
+        expected = {
+            _H3_COMPONENT_FINGERPRINT_KINDS[kind]: set(
+                _H3_COMPONENT_RELATED_PATH_FIELDS[kind]
+            )
+            | set(_H3_COMPONENT_EXTERNAL_PATH_FIELDS[kind])
+            for kind in _H3_COMPONENT_FINGERPRINT_KINDS
+        }
+        self.assertEqual(
+            {kind: set(fields) for kind, fields in _WRAPPER_RELATED_PATH_FIELDS.items()},
+            expected,
+        )
+
     def test_ref2va_loader_rejects_the_fl2va_weight_file(self):
         calls: dict = {}
         with _installation() as (_models, _weights_root, release), \
