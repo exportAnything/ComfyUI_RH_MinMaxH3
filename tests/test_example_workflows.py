@@ -248,3 +248,99 @@ class ExampleWorkflowTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WorkflowMigrationTests(unittest.TestCase):
+    """tools/migrate_workflow.py 必须把旧工作流修到能通过上面同一套校验。"""
+
+    LEGACY_UI = {
+        "nodes": [
+            {
+                "id": 1,
+                "type": "MiniMaxH3DirectVAELoader",
+                "properties": {"Node name for S&R": "MiniMaxH3DirectVAELoader"},
+                "widgets_values": ["MiniMax-H3", "vae"],
+                "inputs": [],
+                "outputs": [],
+            },
+            {
+                "id": 2,
+                "type": "MiniMaxH3DualSigmaSampler",
+                "properties": {"Node name for S&R": "MiniMaxH3DualSigmaSampler"},
+                # 老签名：只到 audio_shift，accel 之后的 widget 都还没有
+                "widgets_values": [42, "fixed", 2, 12.0, 3.0],
+                "inputs": [],
+                "outputs": [],
+            },
+        ],
+        "links": [],
+    }
+    LEGACY_API = {
+        "prompt": {
+            "7": {
+                "class_type": "MiniMaxH3DirectVAELoader",
+                "inputs": {"model_root": "MiniMax-H3", "vae_path": "MiniMax-H3-vae"},
+            }
+        }
+    }
+
+    def _migrate(self, document):
+        import importlib.util
+
+        path = Path(__file__).resolve().parents[1] / "tools" / "migrate_workflow.py"
+        spec = importlib.util.spec_from_file_location("migrate_workflow", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        report: list[str] = []
+        return module.migrate(json.loads(json.dumps(document)), report)[0], report
+
+    def test_ui_graph_gains_new_ids_and_split_vae_widgets(self):
+        from minimax_h3_nodes.nodes import NODE_CLASS_MAPPINGS
+
+        migrated, _report = self._migrate(self.LEGACY_UI)
+        for node in migrated["nodes"]:
+            with self.subTest(node=node["type"]):
+                self.assertIn(node["type"], NODE_CLASS_MAPPINGS)
+                self.assertTrue(node["type"].startswith("RHMiniMaxH3"))
+                self.assertEqual(
+                    node["properties"]["Node name for S&R"], node["type"]
+                )
+                _slots, _required, widgets = _derive(node["type"])
+                self.assertEqual(len(node["widgets_values"]), widgets)
+        vae = migrated["nodes"][0]
+        # 单个 vae_path 变成 video + audio 两个值
+        self.assertEqual(len(vae["widgets_values"]), 3)
+        self.assertNotIn("vae", vae["widgets_values"])
+
+    def test_migrated_combo_values_are_selectable(self):
+        from minimax_h3_nodes.nodes import NODE_CLASS_MAPPINGS
+
+        migrated, _report = self._migrate(self.LEGACY_UI)
+        for node in migrated["nodes"]:
+            schema = NODE_CLASS_MAPPINGS[node["type"]].INPUT_TYPES()
+            entries = list(schema.get("required", {}).items())
+            entries += list(schema.get("optional", {}).items())
+            index = 0
+            for field, spec in entries:
+                kind = spec[0]
+                if not (isinstance(kind, list) or kind in WIDGET_TYPES):
+                    continue
+                value = node["widgets_values"][index]
+                index += 1 + (1 if field == "seed" else 0)
+                if isinstance(kind, list):
+                    with self.subTest(node=node["type"], field=field):
+                        self.assertIn(value, kind)
+
+    def test_api_prompt_splits_vae_path(self):
+        migrated, _report = self._migrate(self.LEGACY_API)
+        node = migrated["prompt"]["7"]
+        self.assertEqual(node["class_type"], "RHMiniMaxH3DirectVAELoader")
+        self.assertNotIn("vae_path", node["inputs"])
+        self.assertIn("video_vae_path", node["inputs"])
+        self.assertIn("audio_vae_path", node["inputs"])
+
+    def test_every_substitution_is_reported(self):
+        _migrated, report = self._migrate(self.LEGACY_UI)
+        joined = "\n".join(report)
+        self.assertIn("vae_path", joined)
+        self.assertIn("accel", joined)

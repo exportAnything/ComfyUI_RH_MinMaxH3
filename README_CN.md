@@ -90,6 +90,19 @@ pip install -r ComfyUI-RH-MiniMax-H3/requirements.txt
 |---|---|
 | `RHMiniMaxH3DecodeAV` | RunningHub MiniMax H3 Decode Video + Audio |
 
+### 迁移旧工作流
+
+节点 ID 加了 `RH` 前缀，双 VAE loader 的 `vae_path` 也拆成了两个输入，因此更早
+保存的工作流会报 `Node type not found`。用迁移工具转换，不必手工重建：
+
+```bash
+python3 tools/migrate_workflow.py 旧工作流.json --in-place
+```
+
+前端格式与 API 格式都支持。工具会改节点 ID、拆分 VAE 输入、按当前签名补齐缺失的
+widget；下拉里已不存在的旧模型名会替换成当前默认值，并逐条打印替换记录供你复核。
+`--in-place` 会留一份 `.bak` 备份。
+
 ## 环境要求
 
 - ComfyUI 0.27 或更高版本（建议 0.28+）

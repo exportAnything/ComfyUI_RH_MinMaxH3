@@ -92,6 +92,21 @@ stores as `class_type` / `type`; the **display name** is what the canvas shows.
 |---|---|
 | `RHMiniMaxH3DecodeAV` | RunningHub MiniMax H3 Decode Video + Audio |
 
+### Migrating older workflows
+
+Node IDs gained an `RH` prefix and the dual VAE loader's `vae_path` became two
+inputs, so workflows saved earlier fail with `Node type not found`. Convert them
+instead of rebuilding by hand:
+
+```bash
+python3 tools/migrate_workflow.py old_workflow.json --in-place
+```
+
+Both the frontend graph and the API prompt format are supported. The tool
+rewrites node IDs, splits the VAE input, pads widgets to the current signature,
+and replaces model names that are no longer selectable with the current default
+— every substitution is printed for review. `--in-place` keeps a `.bak`.
+
 ## Requirements
 
 - ComfyUI 0.27 or newer (0.28+ recommended)
