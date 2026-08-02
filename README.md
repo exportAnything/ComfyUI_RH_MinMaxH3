@@ -149,7 +149,10 @@ Lifecycle/cache flags (all in `h3_settings.py`):
   keep DiT warm after inference (`gpu-resident` / `layerwise-warm`) with TTL;
 - `OPT_ENCODE_CACHE`: LRU for text prompt, multimodal Qwen, and VAE condition rows (CPU, byte-capped);
 - `OPT_VAE_RESIDENCY`: skip `soft_empty_cache` after VAE offload for faster reload;
-- `FORCE_ABSOLUTE_MODEL_ROOTS`: loaders/COMBO emit absolute roots (no name clash);
+- `FORCE_ABSOLUTE_MODEL_ROOTS`: `True` forces absolute roots in the COMBO;
+  the default `False` follows ComfyUI's directory-model convention and lists names
+  relative to each search path (`MiniMax-H3`), resolving through the
+  `folder_paths` search order;
 - `OPT_WRITE_SIDECAR`: Decode writes JSON under Comfy `output/` (task/geometry/residency/telemetry + `env`: plugin commit / GPU / torch / Comfy);
 - Downscale chain for 16:9: `1344x768→1024x576→832x480→640x352`
   (`runtime/downscale.py`).

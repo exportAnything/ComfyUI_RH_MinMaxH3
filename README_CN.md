@@ -138,7 +138,9 @@ timestep 的 adaLN 并释放约 40% DiT 权重；缓存设备由 `OPT_ADALN_CACH
   推理后 DiT 租约驻留（`gpu-resident` / `layerwise-warm`），TTL 后冷卸载；
 - `OPT_ENCODE_CACHE`：文本 / 多模态 Qwen / VAE 条件 rows 共用 LRU（CPU，按字节上限）；
 - `OPT_VAE_RESIDENCY`：VAE offload 后跳过 `soft_empty_cache`，便于连续任务回载；
-- `FORCE_ABSOLUTE_MODEL_ROOTS`：loader COMBO/元数据写绝对路径，消除同名歧义；
+- `FORCE_ABSOLUTE_MODEL_ROOTS`：`True` 时 loader COMBO 一律写绝对路径；默认 `False`，
+  按 ComfyUI 目录型模型的约定显示相对搜索路径的短名（如 `MiniMax-H3`），解析时按
+  `folder_paths` 搜索路径顺序取首个命中；
 - `OPT_WRITE_SIDECAR`：Decode 在 Comfy `output/` 写 JSON（任务/几何/驻留/telemetry + `env`：plugin commit / GPU / torch / Comfy）；
 - 降档链：16:9 为 `1344x768→1024x576→832x480→640x352`（`runtime/downscale.py`）。
 

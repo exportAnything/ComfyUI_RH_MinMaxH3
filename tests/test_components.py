@@ -278,7 +278,15 @@ class ComponentTests(unittest.TestCase):
                 )
             self.assertEqual(selected, complete.resolve())
 
-    def test_hinted_equal_score_is_explicitly_ambiguous(self):
+    def test_hinted_equal_score_follows_search_path_order(self):
+        """同名同分时按 ComfyUI 搜索路径顺序取首个，不再判歧义。
+
+        同一份 release 常被挂多次（本机 models 目录 + 全局 NFS），两条路径都命中
+        时报错会让用户无从下手。语义对齐 ``folder_paths.get_full_path``：靠前的
+        搜索路径优先。完整度仍然先于顺序——见
+        ``test_complete_persistent_release_wins_over_stale_local_cache``。
+        """
+
         with tempfile.TemporaryDirectory() as raw:
             base = Path(raw)
             first = base / "one" / "MiniMax-H3"
@@ -290,16 +298,22 @@ class ComponentTests(unittest.TestCase):
                     {"transformer": ("config.json",)},
                 )
             with _resolver_candidates(base / "models", [first, second]):
-                with self.assertRaisesRegex(H3ComponentError, "Ambiguous") as raised:
-                    model_root_path(
-                        "MiniMax-H3",
-                        partition="ref2va",
-                        required_component="transformer",
-                        required_files=("config.json",),
-                    )
-            message = str(raised.exception)
-            self.assertIn(str(first.resolve()), message)
-            self.assertIn(str(second.resolve()), message)
+                selected = model_root_path(
+                    "MiniMax-H3",
+                    partition="ref2va",
+                    required_component="transformer",
+                    required_files=("config.json",),
+                )
+            self.assertEqual(selected, first.resolve())
+            # 顺序反过来，选中的也跟着换——证明是顺序决定而不是路径字典序
+            with _resolver_candidates(base / "models", [second, first]):
+                selected = model_root_path(
+                    "MiniMax-H3",
+                    partition="ref2va",
+                    required_component="transformer",
+                    required_files=("config.json",),
+                )
+            self.assertEqual(selected, second.resolve())
 
     def test_absolute_root_is_authoritative_and_never_falls_back(self):
         with tempfile.TemporaryDirectory() as raw:

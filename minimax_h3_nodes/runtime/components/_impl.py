@@ -9,6 +9,7 @@ case the component's key is also its directory name.
 from __future__ import annotations
 
 import json
+import logging
 import math
 import os
 from pathlib import Path
@@ -24,6 +25,9 @@ from ..h3_settings import (
     WEIGHTS_ROOT_DIRNAME,
     classify_weight_filename,
 )
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 class H3ComponentError(ValueError):
@@ -361,41 +365,45 @@ def list_h3_model_root_paths() -> list[Path]:
 
 
 def list_h3_model_roots() -> list[str]:
-    """枚举可用的 MiniMax-H3 根目录名，供 loader COMBO 使用。
+    """枚举 loader COMBO 用的根目录名，沿用 ComfyUI 目录型模型的约定。
 
-    只扫描 ``models/diffusers`` 与 ``models/minimax_h3`` 下一层目录名，
-    不打开 safetensors / 不解析 JSON，避免 Manifest 占位阶段读模型内容。
-    目录为空时回退占位项，保证节点仍可注册。
-    ``FORCE_ABSOLUTE_MODEL_ROOTS`` 时一律返回绝对路径，消除同名歧义。
+    与 ``DiffusersLoader`` 一致：列出相对各搜索路径的**相对名**，而不是绝对路径。
+    同一份 release 被多处挂载（本机 models 目录 + 全局 NFS）时，相对名相同因而
+    天然合并成一项；解析回绝对路径由 :func:`model_root_path` 按搜索路径顺序取
+    首个命中，语义与 ``folder_paths.get_full_path`` 相同。
+
+    只看目录名，不解析 JSON、不打开 safetensors，避免 manifest 阶段读模型内容。
     """
-    from ..h3_settings import FORCE_ABSOLUTE_MODEL_ROOTS
 
     fallback = ["MiniMax-H3"]
-    roots = _unique_paths(
-        path.resolve() for path in list_h3_model_root_paths()
-    )
-    counts: dict[str, int] = {}
-    for root in roots:
-        if root.name and not root.name.startswith("."):
-            counts[root.name] = counts.get(root.name, 0) + 1
+    bases = [base.resolve() for base in _model_bucket_paths()]
     choices: list[str] = []
     seen: set[str] = set()
-    for root in roots:
+    for root in _unique_paths(path.resolve() for path in list_h3_model_root_paths()):
         name = root.name
         if not name or name.startswith("."):
             continue
-        abs_path = str(root.resolve())
-        choice = (
-            abs_path
-            if FORCE_ABSOLUTE_MODEL_ROOTS or counts.get(name, 0) > 1
-            else name
+        # 相对最靠前的、包含它的搜索路径
+        relative = next(
+            (
+                root.relative_to(base).as_posix()
+                for base in bases
+                if _is_within(root, base)
+            ),
+            str(root),
         )
-        if choice in seen:
-            continue
-        seen.add(choice)
-        choices.append(choice)
-
+        if relative not in seen:
+            seen.add(relative)
+            choices.append(relative)
     return choices or list(fallback)
+
+
+def _is_within(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+    except ValueError:
+        return False
+    return True
 
 
 def model_root_path(
@@ -672,16 +680,14 @@ def _select_hinted_model_root(
             f"{detail}"
         )
     best_score = max(score for score, _candidate in viable)
-    winners = sorted(
-        candidate for score, candidate in viable if score == best_score
-    )
+    winners = [candidate for score, candidate in viable if score == best_score]
     if len(winners) > 1:
-        raise H3ComponentError(
-            f"Ambiguous MiniMax-H3 root {value!r} for partition="
-            f"{normalized_partition!r}, component={str(required_component)!r}; "
-            f"score={best_score}, candidates="
-            + ", ".join(str(candidate) for candidate in winners)
-            + ". Select one of these absolute paths explicitly."
+        # 候选顺序即 ComfyUI 的搜索路径顺序（folder_paths.get_folder_paths ->
+        # models_dir -> 全局挂载），与 folder_paths.get_full_path 的取首个命中
+        # 语义一致：同一个相对名在多处存在时，靠前的搜索路径优先。
+        LOGGER.info(
+            "MiniMax-H3 根 %r 在多个搜索路径下同分，按 ComfyUI 顺序选用 %s（其余：%s）",
+            value, winners[0], ", ".join(str(c) for c in winners[1:]),
         )
     return winners[0]
 

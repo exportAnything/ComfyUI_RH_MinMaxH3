@@ -79,7 +79,7 @@ OPT_ENCODE_CACHE = True  # Qwen/条件编码 LRU
 ENCODE_CACHE_MAX_BYTES = 2 << 30  # 文本+视觉特征缓存上限
 OPT_VAE_RESIDENCY = True  # VAE session 短 TTL 复用
 OPT_WRITE_SIDECAR = True  # Decode 旁写 JSON 元数据
-FORCE_ABSOLUTE_MODEL_ROOTS = True  # loader/COMBO 写绝对路径
+FORCE_ABSOLUTE_MODEL_ROOTS = False  # True=COMBO 一律写绝对路径；False 时同名冲突才回退绝对路径
 # ---- 可观测性 / 基准 ----
 OPT_TELEMETRY = True  # 阶段计时 + 峰值显存 + 每步统计
 TELEMETRY_CUDA_EVENTS = True  # CUDA Event 双计时（无 CUDA 时自动降级）
