@@ -159,19 +159,6 @@ its own resolution, and steers identity rather than becoming a frame.
 `references` output into the next one; reordering the chain changes the
 multimodal prompt and the condition rows.
 
-### Migrating older workflows
-
-Node IDs are prefixed `RHMiniMaxH3`. Workflows saved against an unprefixed
-build fail with `Node type not found`; convert them instead of rebuilding:
-
-```bash
-python3 tools/migrate_workflow.py old_workflow.json --in-place
-```
-
-The tool rewrites node IDs, splits the former single `vae_path` into
-`video_vae_path` + `audio_vae_path`, pads widgets the nodes have gained, and
-reports every substitution it makes.
-
 ## 📝 Node Reference
 
 All nodes register under the `RunningHub/MiniMax H3/*` category.
@@ -223,9 +210,6 @@ turned off independently for rollback.
   ground-truth paths; the sidecar records which one ran.
 - **Observability** — `OPT_TELEMETRY` records stage timings, per-step P50/P95
   and peak VRAM; `OPT_WRITE_SIDECAR` writes a JSON sidecar beside each render.
-
-Conversion helpers under `tools/` produce the INT8 and merged-VAE artifacts
-from an official release; see [README_CN.md](README_CN.md) for the walkthrough.
 
 ## 📄 License
 

@@ -145,18 +145,6 @@ modelscope download --model Gluttony10/MiniMax-H3-INT8-CONVROT --local_dir Comfy
 **Ref2VA 的参考顺序有意义。** 每个参考节点的 `references` 输出要接到下一个参考
 节点；改变链路顺序会改变多模态提示与条件行的顺序。
 
-### 迁移旧工作流
-
-节点 ID 现在带 `RHMiniMaxH3` 前缀。用旧版本保存的工作流打开会报
-`Node type not found`，用迁移工具转换即可，不必手工重建：
-
-```bash
-python3 tools/migrate_workflow.py 旧工作流.json --in-place
-```
-
-工具会改写节点 ID、把原来的单个 `vae_path` 拆成 `video_vae_path` +
-`audio_vae_path`、按当前签名补齐新增的 widget，并逐条打印所做的替换。
-
 ## 📝 节点参考
 
 全部节点归入 `RunningHub/MiniMax H3/*` 分类。
@@ -207,26 +195,6 @@ python3 tools/migrate_workflow.py 旧工作流.json --in-place
   sidecar 会记录本次实际走了哪条。
 - **可观测性** —— `OPT_TELEMETRY` 记录阶段耗时、每步 P50/P95 与峰值显存；
   `OPT_WRITE_SIDECAR` 在每次产出旁写一份 JSON。
-
-### 从官方 release 生成转换产物
-
-`tools/` 下的脚本可以自行产出 INT8 与合并 VAE 权重。必须按任务分区分别转换：
-
-```bash
-BASE=/path/to/ComfyUI/models/diffusers/MiniMax-H3
-
-python3 tools/quantize_int8_convrot.py --src "$BASE/FL2VA/transformer" --device cuda --verify
-python3 tools/quantize_int8_convrot.py --src "$BASE/Ref2VA/transformer" --device cuda --verify
-python3 tools/quantize_text_encoder_int8_convrot.py --src "$BASE/FL2VA/text_encoder" --device cuda --verify
-python3 tools/merge_vae.py --src "$BASE/FL2VA"
-```
-
-脚本输出的是**组件目录**（`config.json` + 单文件权重 + `quant_meta.json`）。把其中
-的 `.safetensors` 挪进 `models/MiniMax-H3/` 即为扁平布局——文件名已带模型、类型与
-量化格式，节点靠它判定类型与分区。
-
-VAE 只做合并打包，不做 INT8 量化。即使文件名相同，也不要用一个分区的文件修补另一个
-分区。
 
 ## 📄 许可证
 
