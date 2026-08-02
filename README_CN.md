@@ -40,8 +40,8 @@
 
 ```bash
 cd ComfyUI/custom_nodes
-git clone https://github.com/RH-RunningHub/ComfyUI-RH-MiniMax-H3.git
-pip install -r ComfyUI-RH-MiniMax-H3/requirements.txt
+git clone https://github.com/HM-RunningHub/ComfyUI_RH_MinMaxH3.git
+pip install -r ComfyUI_RH_MinMaxH3/requirements.txt
 ```
 
 装好后需重启 ComfyUI——节点定义只在进程启动时读取一次。

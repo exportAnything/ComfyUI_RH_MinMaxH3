@@ -50,8 +50,8 @@ partner; this plugin is developed and maintained by RunningHub.
 
 ```bash
 cd ComfyUI/custom_nodes
-git clone https://github.com/RH-RunningHub/ComfyUI-RH-MiniMax-H3.git
-pip install -r ComfyUI-RH-MiniMax-H3/requirements.txt
+git clone https://github.com/HM-RunningHub/ComfyUI_RH_MinMaxH3.git
+pip install -r ComfyUI_RH_MinMaxH3/requirements.txt
 ```
 
 Restart ComfyUI afterwards — node definitions are read once at start-up.
