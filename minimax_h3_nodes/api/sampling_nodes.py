@@ -280,6 +280,17 @@ class MiniMaxH3DualSigmaSampler:
                         ),
                     },
                 ),
+                "allow_accel_with_res_multistep": (
+                    "BOOLEAN",
+                    {
+                        "default": False,
+                        "tooltip": (
+                            "允许 res_multistep 叠加 accel（默认关闭）。该组合未标定："
+                            "sigma_points=21 时叠加会明显劣化；需同时调高步数才可用，"
+                            "且同等画质下并不比 euler+velocity 省。"
+                        ),
+                    },
+                ),
             },
         }
 
@@ -304,6 +315,7 @@ class MiniMaxH3DualSigmaSampler:
         cache_dit_warmup: int = CACHE_DIT_WARMUP,
         velocity_stride: int = VELOCITY_STRIDE,
         sampler_mode: str = SAMPLER_MODE_EULER,
+        allow_accel_with_res_multistep: bool = False,
     ):
         is_v2 = (
             isinstance(conditioning, Mapping)
@@ -396,6 +408,7 @@ class MiniMaxH3DualSigmaSampler:
                 progress=update_progress,
                 check_cancelled=check_cancelled,
                 sampler_mode=str(sampler_mode),
+                allow_accel_with_res_multistep=bool(allow_accel_with_res_multistep),
                 accel=str(accel),
                 cache_dit_rdt=float(cache_dit_rdt),
                 cache_dit_mc=int(cache_dit_mc),

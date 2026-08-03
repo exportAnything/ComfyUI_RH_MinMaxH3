@@ -386,7 +386,8 @@
         2,
         4,
         4,
-        "euler"
+        "euler",
+        false
       ],
       "title": "Dual Sigma Sampler"
     },

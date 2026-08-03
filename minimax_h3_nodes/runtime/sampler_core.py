@@ -1376,6 +1376,7 @@ def sample_h3(
     progress: Callable[[int, int], None] | None = None,
     check_cancelled: Callable[[], None] | None = None,
     sampler_mode: str | None = None,
+    allow_accel_with_res_multistep: bool = False,
     accel: str | None = None,
     cache_dit: str | None = None,
     cache_dit_rdt: float | None = None,
@@ -1682,13 +1683,27 @@ def sample_h3(
     if res_multistep:
         from .h3_settings import ACCEL_OFF
         if requested_accel is not None and str(requested_accel) != ACCEL_OFF:
-            # accel profile（velocity/cache-dit）按 50 步 euler 标定；二阶 20 步
-            # 上叠加会过度跳步，未标定前强制关闭而不是静默出错图
-            LOGGER.info(
-                "res_multistep 模式强制 accel=off（请求为 %s；profile 按 euler-50 标定）",
-                requested_accel,
-            )
-        requested_accel = ACCEL_OFF
+            # accel 档位按 euler-50 标定。二阶采样步数少，跳步的余量也小：实测
+            # 21 点叠加 stride 4 只剩 7 次 DiT，画面出现振铃与色带；31 点叠加
+            # stride 2 才回到可用（16 次 DiT / PSNR 24.2dB），但那已不比
+            # euler-50 + stride 4（14 次 / 24.1dB）划算——两种加速在争同一份
+            # 预算，跳掉的步越多，二阶的每步精度优势越没机会兑现。
+            # 因此默认关闭，但允许调用方显式承担风险打开。
+            if allow_accel_with_res_multistep:
+                LOGGER.warning(
+                    "res_multistep 叠加 accel=%s：未标定组合，建议同时调高 "
+                    "sigma_points（21 点下会明显劣化）",
+                    requested_accel,
+                )
+            else:
+                LOGGER.info(
+                    "res_multistep 模式强制 accel=off（请求为 %s；profile 按 "
+                    "euler-50 标定，如需叠加请打开 allow_accel_with_res_multistep）",
+                    requested_accel,
+                )
+                requested_accel = ACCEL_OFF
+        else:
+            requested_accel = ACCEL_OFF
         video_res_coeffs = res_multistep_coeffs(video_sigmas)
         audio_res_coeffs = res_multistep_coeffs(audio_sigmas)
     else:
