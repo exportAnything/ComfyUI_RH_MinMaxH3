@@ -195,7 +195,7 @@ modelscope download --model Gluttony10/MiniMax-H3-INT8-CONVROT --local_dir Comfy
 | `RHMiniMaxH3SeparateAVLatent` / `RHMiniMaxH3CombineAVLatent` | 拆分或重新合并视频与音频流 |
 | `RHMiniMaxH3EncodeVideoAVLatent` | 把已有帧编码进 AV latent（视频转音频） |
 | `RHMiniMaxH3FrameRate` | 实验性帧率条件 |
-| `RHMiniMaxH3DualSigmaSampler` | 视频 + 音频联合采样。`sampler_mode` 选 `euler`（默认，50 个 sigma 点）或 `res_multistep`（二阶，约 21 点） |
+| `RHMiniMaxH3DualSigmaSampler` | 视频 + 音频联合采样。`sampler_mode` 选 `euler`（默认，50 个 sigma 点）或 `res_multistep`（二阶，约 21 点）。完整参数说明见 [docs/sampling_CN.md](docs/sampling_CN.md) |
 | `RHMiniMaxH3DecodeAV` | 解码为 `IMAGE` 帧与 `AUDIO` |
 
 ## ⚙️ 进阶

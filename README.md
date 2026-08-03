@@ -212,7 +212,7 @@ All nodes register under the `RunningHub/MiniMax H3/*` category.
 | `RHMiniMaxH3SeparateAVLatent` / `RHMiniMaxH3CombineAVLatent` | Split or rejoin the video and audio streams |
 | `RHMiniMaxH3EncodeVideoAVLatent` | Encode existing frames into an AV latent (video-to-audio) |
 | `RHMiniMaxH3FrameRate` | Experimental frame-rate conditioning |
-| `RHMiniMaxH3DualSigmaSampler` | Joint video + audio sampling. `sampler_mode` selects `euler` (default, 50 sigma points) or `res_multistep` (second order, ~21 points) |
+| `RHMiniMaxH3DualSigmaSampler` | Joint video + audio sampling. `sampler_mode` selects `euler` (default, 50 sigma points) or `res_multistep` (second order, ~21 points). Full parameter guide: [docs/sampling.md](docs/sampling.md) |
 | `RHMiniMaxH3DecodeAV` | Decode to `IMAGE` frames and `AUDIO` |
 
 ## ⚙️ Advanced
