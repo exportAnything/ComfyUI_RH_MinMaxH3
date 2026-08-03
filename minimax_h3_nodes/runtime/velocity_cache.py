@@ -1,4 +1,4 @@
-"""官方 H3 whole-step velocity cache（PR#20）：周期刷新 + Taylor 外推 + dense tail。"""
+"""上游 H3 whole-step velocity cache：周期刷新 + Taylor 外推 + dense tail。"""
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
@@ -14,7 +14,7 @@ class VelocityCacheConfig:
         if self.taylorseer_order not in (1, 2): raise ValueError("taylorseer_order 必须是 1 或 2")
 
 def should_refresh_velocity(step: int, num_steps: int, cfg: VelocityCacheConfig) -> bool:
-    """与官方 denoise_loop 刷新判定 bit-exact 对齐（0-based step）。"""
+    """与上游 denoise_loop 刷新判定 bit-exact 对齐（0-based step）。"""
     if cfg.stride == 1 or step < 2: return True
     final_step = step == num_steps - 1
     tail_start = num_steps - cfg.tail_dense_steps

@@ -735,7 +735,7 @@ def load_h3_text_encoder(
                 raise H3ComponentError(
                     f"AutoProcessor at {processor_component} has no image_processor"
                 )
-            # 官方 size/mean 契约：挡掉通用 Qwen3-VL 或 PR#15210 硬编码错误值
+            # 上游 size/mean 契约：挡掉通用 Qwen3-VL 或实验分支硬编码的错误值
             validate_h3_processor_contract(
                 processor_component,
                 require_video=bool(require_multimodal_processor),
@@ -791,7 +791,7 @@ def load_h3_text_encoder(
         weight_map=checkpoint_weight_map,
     )
     if quantized:
-        # 扁平单文件权重没有 quant_meta.json，用官方转换契约作为逐 Linear
+        # 扁平单文件权重没有 quant_meta.json，用转换契约作为逐 Linear
         # marker 的比对基准；分区无关（Qwen 组件两个分区共用）。
         quant_metadata = (
             {"format": INT8_FORMAT, "convrot": True}

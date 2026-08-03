@@ -97,7 +97,7 @@ def _reset_fused_swiglu_probe() -> None:
 
 
 def _fused_swiglu_fn() -> Any | None:
-    """探测 ``comfy.ops.linear_input_act``（PR#15224）。
+    """探测 ``comfy.ops.linear_input_act``。
 
     INT8 Linear 本来就要量化输入，把 swiglu 折进那个 kernel 就省掉一次
     ``[seq, ffn]`` 中间张量的写回+读取（37k 行时约 1 GB/层/步）。旧版 Comfy 没有
@@ -292,7 +292,7 @@ class MiniMaxH3DiTConfig:
     norm_eps: float = 1e-5
     qk_norm_eps: float = 1e-5
     final_norm_eps: float = 1e-5
-    # 曲线表 checkpoint（PR#15224）：非 None 时 time embedder 被 [grid, k] 采样表
+    # 曲线表 checkpoint：非 None 时 time embedder 被 [grid, k] 采样表
     # 取代，``time_embed_dim`` 变成曲线基的秩 k。见 runtime/adaln_curve.py。
     adaln_curve_grid: int | None = None
 
@@ -593,7 +593,7 @@ class MiniMaxH3TimeEmbedder(nn.Module):
         embedding = torch.cat(
             (torch.cos(arguments), torch.sin(arguments)), dim=-1
         )
-        if frame_rate is not None:  # PR#15210 实验：fps sinusoidal 加到 t 嵌入
+        if frame_rate is not None:  # 实验：fps sinusoidal 加到 t 嵌入
             fr = torch.as_tensor(frame_rate, dtype=torch.float32, device=t.device).flatten()
             if int(fr.numel()) == 1:
                 fr = fr.expand(t.shape[0])

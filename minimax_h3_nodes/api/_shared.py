@@ -384,7 +384,7 @@ def _component_kind_of(path: Path) -> str | None:
         str(name) == "Qwen3VLForConditionalGeneration" for name in architectures
     ):
         return "text_encoder"
-    # 官方 DiT config 没有 _class_name 时按结构字段判定（与 model_loader 的
+    # 上游 DiT config 没有 _class_name 时按结构字段判定（与 model_loader 的
     # _TRANSFORMER_CONFIG_FIELDS 同源，仅取判别力最强的三个）。
     if all(
         field in architecture
@@ -482,7 +482,7 @@ def _selector_alias_map(kind: str, partition: str) -> dict[str, str]:
     return {}
 
 
-# 官方 release 里携带 config/tokenizer/processor 的组件目录，按优先级排列。
+# 上游 release 里携带 config/tokenizer/processor 的组件目录，按优先级排列。
 # 扁平单文件权重没有 sidecar，其配置就从这里取。
 _KIND_CONFIG_DIRNAMES = {
     "transformer": ("transformer",),
@@ -708,7 +708,7 @@ def _video_vae_input(partition: str = H3_T2VA_PARTITION):
         {
             "default": choices[0],
             "tooltip": (
-                "24 通道视频 VAE 权重；官方合并产物文件名为 "
+                "24 通道视频 VAE 权重；上游合并产物文件名为 "
                 f"{VIDEO_VAE_FILENAME}，分片原始包逻辑名为 {VIDEO_VAE_MODEL_NAME}。"
             ),
         },
@@ -722,7 +722,7 @@ def _audio_vae_input(partition: str = H3_T2VA_PARTITION):
         {
             "default": choices[0],
             "tooltip": (
-                "32 通道音频 VAE 权重；官方合并产物文件名为 "
+                "32 通道音频 VAE 权重；上游合并产物文件名为 "
                 f"{AUDIO_VAE_FILENAME}，分片原始包逻辑名为 {AUDIO_VAE_MODEL_NAME}。"
             ),
         },
@@ -741,7 +741,7 @@ def _model_root_input(partition: str | None = None):
             "tooltip": (
                 "选择 MiniMax-H3 权重根目录：专属根 models/MiniMax-H3"
                 "（<类型>/<分区>/<模型>，放量化与合并产物），或 models/diffusers "
-                f"下的官方 release 根（含 FL2VA/Ref2VA 分片子目录）{partition_hint}。"
+                f"下的上游 release 根（含 FL2VA/Ref2VA 分片子目录）{partition_hint}。"
                 "三个组件必须来自同一个根。"
             ),
         },

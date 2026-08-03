@@ -65,7 +65,7 @@ _VISION_CONFIG_CONTRACT = {
     "in_channels": 3,
 }
 _VISION_DEEPSTACK_INDEXES = (8, 16, 24)
-# 官方 MiniMax-H3 processor（240.2 Ref2VA 实测）；防指错目录静默降级
+# MiniMax-H3 processor 实测契约；防指错目录静默降级
 _PROCESSOR_IMAGE_CONTRACT = {
     "shortest_edge": 65536, "longest_edge": 16777216,
     "patch_size": 16, "temporal_patch_size": 2, "merge_size": 2,
@@ -129,7 +129,7 @@ def _validate_processor_json(path: Path, contract: dict[str, Any], *, label: str
     return bad
 
 def validate_h3_processor_contract(processor_dir: Path | str, *, require_video: bool = True) -> None:
-    """校验官方 image/video preprocessor；失败 fail-closed。"""
+    """校验 image/video preprocessor；失败 fail-closed。"""
     root = Path(processor_dir)
     bad = _validate_processor_json(
         root / "preprocessor_config.json", _PROCESSOR_IMAGE_CONTRACT, label="image",
@@ -144,7 +144,7 @@ def validate_h3_processor_contract(processor_dir: Path | str, *, require_video: 
             ))
     if bad:
         raise H3ComponentError(
-            "H3 processor 与官方 MiniMax-H3 发布配置不一致（勿混用通用 Qwen3-VL "
+            "H3 processor 与 MiniMax-H3 发布配置不一致（勿混用通用 Qwen3-VL "
             "processor）：" + "; ".join(bad)
         )
 

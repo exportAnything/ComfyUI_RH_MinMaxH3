@@ -1,11 +1,10 @@
 # Notices and provenance
 
 This custom-node package contains adaptations of the MiniMax-H3 model runtime
-from the official `Internal-0727-private-3` source package. The reference
-snapshot used for the native H3 implementation is:
+released by MiniMax-AI. The reference snapshot used for the native H3
+implementation is:
 
-- source package: `MiniMax-AI-Dev/Internal-0727-private-3`
-- baseline commit: `5d8a20b1717f`
+- upstream project: MiniMax-AI (https://github.com/MiniMax-AI)
 - upstream project license: Apache License 2.0
 
 Adapted portions include the H3 DiT architecture and weight-layout handling,

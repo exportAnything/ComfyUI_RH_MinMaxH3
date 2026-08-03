@@ -1,4 +1,4 @@
-"""实验性帧率条件（PR#15210）：adaLN 时间嵌入 + 可选时序 RoPE 缩放。非官方契约。"""
+"""实验性帧率条件：adaLN 时间嵌入 + 可选时序 RoPE 缩放。非上游契约。"""
 from __future__ import annotations
 from typing import Any, Mapping
 from .h3_settings import (

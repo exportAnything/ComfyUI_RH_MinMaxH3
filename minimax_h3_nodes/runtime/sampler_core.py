@@ -1288,7 +1288,7 @@ def _dit_velocity_for_step(
     step: int,
     dit_counter: list[int] | None = None,
 ):
-    """单步 velocity：可选 whole-step cache（只缓存 update rows，对齐官方）。"""
+    """单步 velocity：可选 whole-step cache（只缓存 update rows，对齐上游）。"""
     t = _require_torch()
     if velocity_rt is not None and not velocity_rt.refresh(step):
         mv, ma = velocity_rt.on_hit(step)

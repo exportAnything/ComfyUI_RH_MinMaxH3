@@ -2,7 +2,7 @@
 from __future__ import annotations
 from ._shared import *  # noqa: F403
 
-class MiniMaxH3FrameRate:  # 实验性：帧率进 adaLN / 可选时序 RoPE（PR#15210；非官方）
+class MiniMaxH3FrameRate:  # 实验性：帧率进 adaLN / 可选时序 RoPE（实验性；非上游契约）
     @classmethod
     def INPUT_TYPES(cls):
         from ..runtime.h3_settings import (
@@ -272,8 +272,8 @@ class MiniMaxH3DualSigmaSampler:
                     {
                         "default": SAMPLER_MODE_EULER,
                         "tooltip": (
-                            "euler=官方一阶（sigma_points=50）。"
-                            "res_multistep=二阶多步指数积分器（ComfyUI 官方 H3 "
+                            "euler=上游一阶（sigma_points=50）。"
+                            "res_multistep=二阶多步指数积分器（ComfyUI 上游 H3 "
                             "模板同款），建议 sigma_points=21（20 次 DiT）"
                             "≈ euler-50 质量、快约 2.5×；该模式暂强制 accel=off"
                             "（profile 按 euler-50 标定）。"

@@ -3,10 +3,7 @@
   "profile_id": "minimax-h3-velocity-cache-v1",
   "status": "validated",
   "technique": "velocity-cache",
-  "source_profile_id": "minimax-h3-h200x4-velocity-cache-v1",
-  "source_repo": "MiniMax-AI-Dev/Internal-0727-private-3",
-  "source_pr": 20,
-  "notes": "面向单卡 Comfy：整步 velocity 复用 + 一阶 Taylor。旋钮对齐官方验证合同；官方约 3.2× 测于 4×H200，单卡只复用相同调度（降 DiT 次数），不做多卡/Ulysses 门禁。",
+  "notes": "面向单卡 Comfy：整步 velocity 复用 + 一阶 Taylor。旋钮对齐上游验证合同；上游约 3.2× 测于 4×H200，单卡只复用相同调度（降 DiT 次数），不做多卡/Ulysses 门禁。",
   "workloads": [
     {
       "task": "t2va",
@@ -37,5 +34,6 @@
     "vbench_relative_change": -0.001088585959307904,
     "lpips_mean": 0.4261451651732768,
     "lpips_max": 0.6393095254898071
-  }
+  },
+  "source_project": "MiniMax-AI"
 }

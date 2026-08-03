@@ -1,7 +1,7 @@
-"""AdaLN 曲线表 checkpoint（PR#15224）：时间嵌入曲线的低秩基 + 网格采样。
+"""AdaLN 曲线表 checkpoint：时间嵌入曲线的低秩基 + 网格采样。
 
 原版 checkpoint 每层 ``adaln_proj.linear`` 是 ``[6*3*H, time_embed_dim]``
-（官方 96768×2688 ≈ 260 M 参数 × 50 层 ≈ 26 GB，占 BF16 DiT 的 ~39%、INT8 的
+（上游 96768×2688 ≈ 260 M 参数 × 50 层 ≈ 26 GB，占 BF16 DiT 的 ~39%、INT8 的
 ~55%）。而它的输入 ``silu(time_embedder(t))`` 只是 ``t∈[0,1]`` 上的一条一维曲线，
 把这条曲线投影到秩 ``k`` 的共享基后：
 
@@ -16,7 +16,7 @@ embedder 完全消失，改为在 ``adaln_t_table [grid, k]`` 上按 ``t`` 线�
 * :func:`curve_grid` / :func:`fit_curve_basis` / :func:`project_adaln_weight`
   —— 离线转换用
 
-与 PR#15224 的 checkpoint 格式一致：buffer 名 ``adaln_t_table``，形状
+与 ComfyUI 上游 H3 支持的 checkpoint 格式一致：buffer 名 ``adaln_t_table``，形状
 ``[grid, k]`` fp32，``adaln_proj`` 不再自带 silu（已烤进表里）。
 """
 from __future__ import annotations
@@ -127,7 +127,7 @@ def curve_output_error(
     """在任意 ``t`` 上比较 ``W silu(te(t))`` 与曲线路径（含插值误差）。
 
     ``t`` 取网格点之间才有意义：秩误差与 lerp 误差都要计进去。矩阵乘走 fp32：
-    官方 [96768, 2688] 在 fp64 下一层就要几十秒，而 fp32 的累加噪声（~1e-6）比
+    上游 [96768, 2688] 在 fp64 下一层就要几十秒，而 fp32 的累加噪声（~1e-6）比
     待测的近似误差小两个量级。
     """
     import torch.nn.functional as F

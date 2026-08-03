@@ -3,10 +3,7 @@
   "profile_id": "minimax-h3-cache-v1",
   "status": "validated",
   "technique": "cache-dit",
-  "source_profile_id": "minimax-h3-h200x4-cache-v1",
-  "source_repo": "MiniMax-AI-Dev/Internal-0727-private-3",
-  "source_pr": 17,
-  "notes": "面向单卡 Comfy：旋钮与官方 Cache-DiT quality profile 一致。官方约 2× 测于 4×H200，单卡只启用同一 DBCache 旋钮，不做多卡/Ulysses 门禁；需 pip install cache-dit。",
+  "notes": "面向单卡 Comfy：旋钮与上游 Cache-DiT quality profile 一致。上游约 2× 测于 4×H200，单卡只启用同一 DBCache 旋钮，不做多卡/Ulysses 门禁；需 pip install cache-dit。",
   "workloads": [
     {
       "task": "t2va",
@@ -42,5 +39,6 @@
     "vbench_candidate_mean": 0.8624395658300054,
     "lpips_mean": 0.23280538360197697,
     "lpips_max": 0.4691985845565796
-  }
+  },
+  "source_project": "MiniMax-AI"
 }

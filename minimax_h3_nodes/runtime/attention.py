@@ -232,7 +232,7 @@ def _rope_rotation_table(
 ) -> torch.Tensor:
     """``[S, rot]`` cos|sin → ``[1, S, 1, rot/2, 2, 2]`` 旋转矩阵表。
 
-    这是 comfy-kitchen 融合 RMSNorm+RoPE kernel 的入参形状（与 PR#15224 一致）。
+    这是 comfy-kitchen 融合 RMSNorm+RoPE kernel 的入参形状（与 ComfyUI 上游 H3 支持一致）。
     直接从既有 cos/sin 缓存构造，保证融合路径与 eager 路径同源、不重算角度。
     """
     half = cos_sin_cache.shape[-1] // 2

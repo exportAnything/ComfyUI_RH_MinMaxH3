@@ -21,7 +21,7 @@ VIDEO_VAE_DIRNAME, AUDIO_VAE_DIRNAME = "video_vae", "audio_vae"
 VIDEO_VAE_MODEL_NAME = f"{MODEL_NAME}-video_vae"  # 分片/原始 video VAE 逻辑名
 AUDIO_VAE_MODEL_NAME = f"{MODEL_NAME}-audio_vae"  # 分片/原始 audio VAE 逻辑名
 # ---- 专属权重根 ComfyUI/models/MiniMax-H3：扁平存放单文件转换产物 ----
-# 官方分片 release 留在 models/diffusers/MiniMax-H3/<分区>/ 下，继续提供
+# 上游分片 release 留在 models/diffusers/MiniMax-H3/<分区>/ 下，继续提供
 # config.json / source/config.json / tokenizer / preprocessor；专属根只放权重，
 # 组件类型与分区一律由文件名判定（见 classify_weight_filename）。
 WEIGHTS_ROOT_DIRNAME = MODEL_NAME
@@ -32,7 +32,7 @@ H3_COMPONENT_KINDS = (
     AUDIO_VAE_DIRNAME,
 )
 QUANT_EXCLUDE_HINT = "adaln_proj|token_refiner"  # DiT 量化脚本建议 --exclude
-# ---- adaLN 曲线表 checkpoint（PR#15224；见 runtime/adaln_curve.py）----
+# ---- adaLN 曲线表 checkpoint（见 runtime/adaln_curve.py）----
 ADALN_CURVE_TABLE_KEY = "adaln_t_table"  # checkpoint buffer 名，[grid, rank] fp32
 ADALN_CURVE_DEFAULT_GRID = 1024  # 转换默认采样点数
 ADALN_CURVE_DEFAULT_RANK = 64  # 转换默认基秩 k（adaLN 权重宽度 2688 → k）
@@ -46,7 +46,7 @@ TEXT_ENCODER_DROP_KEY = r"(?:^lm_head\.|language_model\.layers\.(?:[5-9]\d|\d{3,
 FORCE_FULL_LOAD_BF16 = True  # layerwise 关闭时 BF16 仍整模上卡
 ALLOW_PARTIAL_OFFLOAD_INT8 = True  # MixedPrecisionOps 可部分 offload
 ENABLE_DIT_LAYERWISE_OFFLOAD = True  # BF16：True=auto（整模+reserve 放得下则关）；False=强制整模
-DIT_LAYERWISE_PREFETCH = 1  # 预取 block 数（与官方 prefetch_size 默认一致）
+DIT_LAYERWISE_PREFETCH = 1  # 预取 block 数（与上游 prefetch_size 默认一致）
 DIT_LAYERWISE_PIN_MEMORY = True  # block 权重 pin 到主机内存，便于非阻塞 H2D
 TE_GPU_HEADROOM = 3 << 30  # TE 上卡前额外预留的 encode 工作区显存（字节）
 TE_VISUAL_ON_CPU = True  # 纯文本编码不搬 visual 塔，常驻 CPU 省 ~7GB 显存
@@ -88,13 +88,13 @@ TELEMETRY_STALL_SECONDS = 900.0  # 采样无步进判定
 BENCHMARK_DEFAULT_SEED = 42
 BENCHMARK_DEFAULT_REPEATS = 3
 BENCHMARK_ACCEL_GOLDEN = "off"  # golden 必须 accel=off
-# 16:9 官方降档链；其它比例按短边序列保比例 32 对齐
+# 16:9 上游降档链；其它比例按短边序列保比例 32 对齐
 H3_DOWNSCALE_16_9 = ((1344, 768), (1024, 576), (832, 480), (640, 352))
 H3_DOWNSCALE_SHORT_EDGES = (768, 576, 480, 352)
 FFMPEG_BIN, FFPROBE_BIN = "ffmpeg", "ffprobe"  # Ref2VA 媒体工具
 TRANSFORMERS_MIN_VERSION = "4.57.0"  # Qwen3-VL 最低验证
 TRANSFORMERS_MAX_VERSION = "5.8.1"  # 当前钉死上限（含）
-# ---- 采样器（euler=官方 50 步一阶；res_multistep=二阶多步，~21 sigma 点等质）----
+# ---- 采样器（euler=上游 50 步一阶；res_multistep=二阶多步，~21 sigma 点等质）----
 SAMPLER_MODE_EULER = "euler"
 SAMPLER_MODE_RES_MULTISTEP = "res_multistep"
 SAMPLER_MODE_CHOICES = (SAMPLER_MODE_EULER, SAMPLER_MODE_RES_MULTISTEP)
@@ -120,10 +120,10 @@ CACHE_DIT_MC = 2
 CACHE_DIT_TAYLORSEER, CACHE_DIT_TS_ORDER = False, 1
 CACHE_DIT_SCM_PRESET, CACHE_DIT_SCM_POLICY = "none", "dynamic"
 CACHE_DIT_MARK = "_h3_cache_dit_enabled"
-# velocity-cache 官方验证旋钮（PR#20 manifest）
+# velocity-cache 上游验证旋钮（上游验证 manifest）
 VELOCITY_STRIDE, VELOCITY_TAYLORSEER, VELOCITY_TS_ORDER = 4, True, 1
 VELOCITY_TAIL_DENSE, VELOCITY_TAIL_REBALANCE, VELOCITY_FINAL_REFRESH = 2, True, True
-# ---- 参考图尺寸策略（PR#15224）----
+# ---- 参考图尺寸策略----
 # match：按生成画布像素面积等比只缩不放；max：参考管线独立的 2048 短边。
 # 参考 token 每个采样步都参与注意力，分辨率直接换算成每步开销。
 H3_REFERENCE_IMAGE_SIZE_MATCH = "match"
@@ -132,7 +132,7 @@ H3_REFERENCE_IMAGE_SIZE_MODES = (
     H3_REFERENCE_IMAGE_SIZE_MATCH,
     H3_REFERENCE_IMAGE_SIZE_MAX,
 )
-# ---- 实验性帧率条件（PR#15210；非官方，不改 24fps 时序格）----
+# ---- 实验性帧率条件（实验性；非上游契约，不改 24fps 时序格）----
 H3_NATIVE_FPS = 24.0
 FRAME_RATE_ROPE_FREQ_PROFILES = ("hard", "linear", "smoothstep")
 FRAME_RATE_ROPE_SIGMA_PROFILES = ("constant", "linear", "smoothstep")

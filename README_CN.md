@@ -15,7 +15,7 @@
 **MiniMax-H3** 在同一次扩散过程中生成视频和音频——不是先出画面再配音，而是两条流
 在同一组采样步里共同去噪。音画同步来自生成过程本身，不依赖后期对齐。
 
-本插件把完整的 H3 运行时搬进 ComfyUI 进程内，覆盖官方的三条任务链路：文本生成
+本插件把完整的 H3 运行时搬进 ComfyUI 进程内，覆盖上游的三条任务链路：文本生成
 视频+音频（T2VA）、关键帧驱动（FL2VA，只给首帧即图生视频）、有序多模态参考
 （Ref2VA）。配合 INT8 权重与按层 offload，24GB 单卡即可运行。
 
@@ -28,7 +28,7 @@
   尾帧或首尾帧）、有序图片/音频/视频参考（Ref2VA）。
 - **图生视频就是"FL2VA 只给首帧"**——给的图会成为输出视频真正的第 0 帧。
 - **音视频联合采样**——双 sigma 整流流采样器分别调度视频与音频的 shift，使音画同步。
-- **INT8 或 BF16**——单文件 INT8 权重或官方分片 BF16 release，节点不会在两者之间
+- **INT8 或 BF16**——单文件 INT8 权重或上游分片 BF16 release，节点不会在两者之间
   静默切换。
 - **面向 24GB 单卡**——DiT 自动按层 offload、adaLN 预计算后释放约 40% DiT 权重、
   按画布估算激活预留、任务间租约驻留。
@@ -63,7 +63,7 @@ MiniMax-H3 体量很大。INT8 只降低磁盘占用与搬运成本，并不会�
 | 位置 | 存放内容 | 为什么需要 |
 |------|---------|-----------|
 | `ComfyUI/models/MiniMax-H3/` | 扁平单文件转换权重 | 提供张量 |
-| `ComfyUI/models/diffusers/MiniMax-H3/` | 官方分片 release | 提供 `config.json`、`source/config.json`、tokenizer、`preprocessor_config.json` |
+| `ComfyUI/models/diffusers/MiniMax-H3/` | 上游分片 release | 提供 `config.json`、`source/config.json`、tokenizer、`preprocessor_config.json` |
 
 专属根**只放权重、不带任何 sidecar 文件**：组件类型与分区完全由文件名判定，
 模型结构则从 `model_root` 指向的分片 release 读取。
@@ -81,7 +81,7 @@ ComfyUI/
     │   └── MiniMax-H3-audio_vae.safetensors           # 32 通道音频 VAE
     │
     └── diffusers/
-        └── MiniMax-H3/                                # 官方分片 release
+        └── MiniMax-H3/                                # 上游分片 release
             ├── FL2VA/
             │   ├── transformer/                       # BF16 DiT + config.json
             │   ├── text_encoder/                      # Qwen3-VL + tokenizer/processor
@@ -111,9 +111,9 @@ modelscope download --model Gluttony10/MiniMax-H3-INT8-CONVROT --local_dir Comfy
 | 模型 | 链接 | 说明 |
 |------|------|------|
 | INT8-CONVROT 权重 | [HuggingFace](https://huggingface.co/Gluttony10/MiniMax-H3-INT8-CONVROT) · [ModelScope](https://modelscope.cn/models/Gluttony10/MiniMax-H3-INT8-CONVROT) | 转换后的单文件 DiT / 文本编码器 / VAE 权重 → `models/MiniMax-H3/` |
-| 官方 MiniMax-H3 release | 需向 MiniMax 获取 | 分片组件及其配置 → `models/diffusers/MiniMax-H3/` |
+| MiniMax-H3 release | 需向 MiniMax 获取 | 分片组件及其配置 → `models/diffusers/MiniMax-H3/` |
 
-> 官方 release 提供 `config.json`、`source/config.json`、tokenizer 和
+> 上游 release 提供 `config.json`、`source/config.json`、tokenizer 和
 > `preprocessor_config.json`。**只有转换权重是跑不起来的。**
 
 ### 模型选择指南
@@ -231,11 +231,11 @@ Apache License 2.0，见 [LICENSE](LICENSE)。
 
 基于 [MiniMax](https://www.minimax.io/)（[GitHub](https://github.com/MiniMax-AI)）的
 MiniMax-H3 音视频联合扩散模型构建。
-本插件的原生运行时改编自官方 H3 源码包，遵循 Apache License 2.0；基线快照与改动
+本插件的原生运行时改编自 MiniMax 发布的 H3 源码包，遵循 Apache License 2.0；基线快照与改动
 清单见 [NOTICE.md](NOTICE.md)。
 
 本插件运行于 [ComfyUI](https://github.com/comfyanonymous/ComfyUI) 之上，部分实现
-借鉴了 ComfyUI 官方代码与约定。ComfyUI 以 GPL-3.0 授权，此处作为运行时依赖，
+借鉴了 ComfyUI 上游代码与约定。ComfyUI 以 GPL-3.0 授权，此处作为运行时依赖，
 不包含其源码。
 
 由 [RunningHub](https://www.runninghub.cn/?inviteCode=rh-v1367) 封装为 ComfyUI 插件。

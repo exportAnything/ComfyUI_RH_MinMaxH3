@@ -18,7 +18,7 @@ set of sampling steps. Synchronization comes out of generation itself rather
 than from aligning tracks afterwards.
 
 This plugin brings the full H3 runtime inside the ComfyUI process and covers all
-three official task paths: text to video+audio (T2VA), keyframe driven
+three task paths: text to video+audio (T2VA), keyframe driven
 generation (FL2VA — supply only a first frame and it is image-to-video), and
 ordered multimodal references (Ref2VA). With INT8 weights and layerwise offload
 it runs on a single 24GB GPU.
@@ -35,7 +35,7 @@ partner; this plugin is developed and maintained by RunningHub.
   becomes the literal frame 0 of the output.
 - **Joint AV sampling** — a dual-sigma rectified-flow sampler drives video and
   audio with independent shift schedules, keeping audio locked to motion.
-- **INT8 or BF16** — single-file INT8 checkpoints or the official sharded BF16
+- **INT8 or BF16** — single-file INT8 checkpoints or the upstream sharded BF16
   release. The loaders never switch between them silently.
 - **24GB-class single GPU** — automatic layerwise DiT offload, adaLN precompute
   with weight release (~40% of DiT weights dropped afterwards), shape-aware
@@ -73,7 +73,7 @@ Weights live in **two places, and both are required**:
 | Location | Holds | Why it is needed |
 |----------|-------|------------------|
 | `ComfyUI/models/MiniMax-H3/` | Flat single-file converted weights | The tensors |
-| `ComfyUI/models/diffusers/MiniMax-H3/` | Official sharded release | `config.json`, `source/config.json`, tokenizer, `preprocessor_config.json` |
+| `ComfyUI/models/diffusers/MiniMax-H3/` | Upstream sharded release | `config.json`, `source/config.json`, tokenizer, `preprocessor_config.json` |
 
 The flat root carries **weights only, with no sidecar files**. Component type
 and partition are decided entirely by the filename; the architecture is read
@@ -92,7 +92,7 @@ ComfyUI/
     │   └── MiniMax-H3-audio_vae.safetensors           # 32-channel audio VAE
     │
     └── diffusers/
-        └── MiniMax-H3/                                # official sharded release
+        └── MiniMax-H3/                                # upstream sharded release
             ├── FL2VA/
             │   ├── transformer/                       # BF16 DiT + config.json
             │   ├── text_encoder/                      # Qwen3-VL + tokenizer/processor
@@ -122,9 +122,9 @@ modelscope download --model Gluttony10/MiniMax-H3-INT8-CONVROT --local_dir Comfy
 | Model | Link | Description |
 |-------|------|-------------|
 | INT8-CONVROT weights | [HuggingFace](https://huggingface.co/Gluttony10/MiniMax-H3-INT8-CONVROT) · [ModelScope](https://modelscope.cn/models/Gluttony10/MiniMax-H3-INT8-CONVROT) | Converted single-file DiT / text-encoder / VAE weights → `models/MiniMax-H3/` |
-| Official MiniMax-H3 release | obtain from MiniMax | Sharded components and their configs → `models/diffusers/MiniMax-H3/` |
+| MiniMax-H3 release | obtain from MiniMax | Sharded components and their configs → `models/diffusers/MiniMax-H3/` |
 
-> The official release supplies `config.json`, `source/config.json`, the
+> The upstream release supplies `config.json`, `source/config.json`, the
 > tokenizer and `preprocessor_config.json`. The converted weights alone are not
 > enough to load the model.
 
@@ -250,11 +250,11 @@ redistributing the weights or using them commercially.
 
 Built on the MiniMax-H3 joint audio-video diffusion model by
 [MiniMax](https://www.minimax.io/) ([GitHub](https://github.com/MiniMax-AI)). The native runtime here is adapted from the
-official H3 source package under Apache License 2.0; see [NOTICE.md](NOTICE.md)
+H3 source package released by MiniMax under Apache License 2.0; see [NOTICE.md](NOTICE.md)
 for the baseline snapshot and the list of changes.
 
 Built to run inside [ComfyUI](https://github.com/comfyanonymous/ComfyUI), whose
-official code and conventions parts of this plugin draw on. ComfyUI is licensed
+upstream code and conventions parts of this plugin draw on. ComfyUI is licensed
 GPL-3.0 and is a runtime dependency here; its source is not bundled.
 
 Packaged for ComfyUI by [RunningHub](https://www.runninghub.cn/?inviteCode=rh-v1367).

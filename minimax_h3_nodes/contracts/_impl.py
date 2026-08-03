@@ -1013,7 +1013,7 @@ def resolve_ref2va_target_v2(
 
     if aspect_ratio not in H3_ASPECT_RATIOS:
         raise H3ContractError(
-            "Ref2VA aspect_ratio 只允许 'auto' 或官方六个比例桶："
+            "Ref2VA aspect_ratio 只允许 'auto' 或上游六个比例桶："
             f"{', '.join(H3_FINITE_ASPECT_RATIOS)}"
         )
     explicit_width = None if width in (None, 0) else width
@@ -1446,7 +1446,7 @@ def _normalise_text_token_tags(
     if value is None:
         if required:
             raise H3ContractError(
-                "FL2VA/Ref2VA conditioning 必须包含官方 presentation text_token_tags"
+                "FL2VA/Ref2VA conditioning 必须包含上游 presentation text_token_tags"
             )
         return None
     shape = getattr(value, "shape", None)

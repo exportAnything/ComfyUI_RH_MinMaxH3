@@ -119,7 +119,7 @@ def _validate_transformer_config(raw: dict, path: Path) -> None:
     """Validate the concrete Diffusers-style config shipped with H3.
 
     这一阶段在 checkpoint 发现之前跑（廉价、无分配）。``time_embed_dim`` 是唯一
-    延后的字段：曲线表变体的 adaLN 输入宽度是基的秩而非官方 2688，只有读过
+    延后的字段：曲线表变体的 adaLN 输入宽度是基的秩而非上游 2688，只有读过
     checkpoint 才知道该按哪个值判——见 :func:`_validate_adaln_curve_contract`。
     """
 
@@ -139,7 +139,7 @@ def _validate_transformer_config(raw: dict, path: Path) -> None:
     }
     if architecture.get("adaln_curve_grid") is not None:
         # 这两个字段只描述已被采样表取代的 time embedder：曲线表 config 可以省略，
-        # 但写了就仍按官方值校验（防止指错目录）。
+        # 但写了就仍按上游值校验（防止指错目录）。
         for optional in ("timestep_input_dim", "time_embed_hidden_size"):
             required.discard(optional)
             if optional not in architecture:

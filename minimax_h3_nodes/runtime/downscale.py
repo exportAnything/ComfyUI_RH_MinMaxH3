@@ -10,7 +10,7 @@ def _is_approx_16_9(width: int, height: int) -> bool:
     return abs((width / height) - (16 / 9)) < 0.05
 
 def downscale_chain(width: int, height: int) -> list[tuple[int, int]]:
-    """生成保比例降档链。16:9 用官方桶；其它比例按短边序列缩放。"""
+    """生成保比例降档链。16:9 用上游桶；其它比例按短边序列缩放。"""
     w, h = _align(int(width)), _align(int(height))
     if w <= 0 or h <= 0: raise ValueError("width/height 必须为正")
     if _is_approx_16_9(w, h):

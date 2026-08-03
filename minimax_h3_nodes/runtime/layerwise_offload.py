@@ -1,4 +1,4 @@
-"""BF16 DiT 按层 CPU↔GPU offload（对齐官方 LayerwiseOffloadManager 合同，单卡精简版）。"""
+"""BF16 DiT 按层 CPU↔GPU offload（对齐上游 LayerwiseOffloadManager 合同，单卡精简版）。"""
 from __future__ import annotations
 import logging
 from typing import Any

@@ -1,4 +1,4 @@
-"""Comfy 侧 Cache-DiT 集成：官方 MiniMaxH3DiTModel BlockAdapter（Pattern_3）。"""
+"""Comfy 侧 Cache-DiT 集成：MiniMax H3 DiT BlockAdapter（Pattern_3）。"""
 from __future__ import annotations
 import logging
 from typing import Any
@@ -47,7 +47,7 @@ def _scm_mask(cache_dit: Any, cfg: CacheDitResolved, num_denoise_steps: int) -> 
     return list(cache_dit.steps_mask(mask_policy=cfg.scm_preset, total_steps=int(num_denoise_steps)))
 
 def prepare_transformer_cache_dit(transformer: Any, cfg: CacheDitResolved, *, num_denoise_steps: int) -> Any:
-    """在 denoise 前 enable/refresh Cache-DiT；num_denoise_steps = len(sigmas)-1（官方 H3 合同）。"""
+    """在 denoise 前 enable/refresh Cache-DiT；num_denoise_steps = len(sigmas)-1（H3 合同）。"""
     if not cfg.enabled or int(num_denoise_steps) < 1: return transformer
     cache_dit, BlockAdapter, DBCacheConfig, ForwardPattern, TaylorSeerCalibratorConfig = _import_cache_dit()
     mask = _scm_mask(cache_dit, cfg, num_denoise_steps)
