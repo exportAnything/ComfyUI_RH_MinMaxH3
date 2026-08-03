@@ -35,9 +35,11 @@ partner; this plugin is developed and maintained by RunningHub.
   becomes the literal frame 0 of the output.
 - **Joint AV sampling** — a dual-sigma rectified-flow sampler drives video and
   audio with independent shift schedules, keeping audio locked to motion.
-- **~2.2× faster with `res_multistep`** — a second-order exponential integrator
-  reaches the quality of 50-step Euler in about 21 sigma points (20 DiT calls).
-  Same weights, no requantisation; `euler` stays the default.
+- **2.5× less denoising work with `res_multistep`** — a second-order exponential
+  integrator reaches the quality of 50-step Euler in about 21 sigma points
+  (20 DiT calls instead of 49). Same weights, no requantisation; `euler` stays
+  the default. End-to-end gain depends on the workload — text encoding, DiT
+  load and VAE decode are not affected.
 - **INT8 or BF16** — single-file INT8 checkpoints or the upstream sharded BF16
   release. The loaders never switch between them silently.
 - **24GB-class single GPU** — automatic layerwise DiT offload, adaLN precompute
@@ -233,12 +235,22 @@ turned off independently for rollback.
 
 ### 0.4.0
 
-- **`res_multistep` sampler mode (~2.2× faster).** The video and audio streams
-  run on different shift schedules, so each is now integrated with a
-  second-order exponential integrator on its own schedule. About 21 sigma
-  points (20 DiT calls) match the quality of 50-step Euler. Measured on a
-  single GPU at 832×480/125f: **548s → 250s**, with no visible quality loss on
-  the same seed. Select it with `sampler_mode` on the sampler and set
+- **`res_multistep` sampler mode.** The video and audio streams run on
+  different shift schedules, so each is now integrated with a second-order
+  exponential integrator on its own schedule. About 21 sigma points (20 DiT
+  calls) match the quality of 50-step Euler, with no visible difference on the
+  same seed. Measured on a single GPU at 832×480/125f, both runs warm:
+
+  | | denoise loop | end to end |
+  |---|---|---|
+  | `euler`, 50 points (49 DiT calls) | 248.7s | 549s |
+  | `res_multistep`, 21 points (20 DiT calls) | 101.2s | 406s |
+  | | **2.46×** | **1.35×** |
+
+  The denoise loop is about 45% of wall-clock time at this size; the rest is
+  text encoding, DiT load and VAE decode, which this change does not touch.
+  Larger canvases spend proportionally more time denoising, so the end-to-end
+  gain there is higher. Select it with `sampler_mode` on the sampler and set
   `sigma_points` to 21; `euler` remains the default so existing workflows are
   untouched. The mode forces `accel=off` — the velocity-cache and Cache-DiT
   profiles are calibrated for 50 steps and would over-skip at 20.
