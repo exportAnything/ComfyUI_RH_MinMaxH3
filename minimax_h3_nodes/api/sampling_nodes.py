@@ -265,6 +265,21 @@ class MiniMaxH3DualSigmaSampler:
                         "tooltip": "仅 accel=manual-velocity：DiT 刷新步距；1=精确无缓存。",
                     },
                 ),
+                # 追加在 optional 末尾：旧工作流的 widgets_values 是本列表前缀，
+                # 位置序列化不错位
+                "sampler_mode": (
+                    list(SAMPLER_MODE_CHOICES),
+                    {
+                        "default": SAMPLER_MODE_EULER,
+                        "tooltip": (
+                            "euler=官方一阶（sigma_points=50）。"
+                            "res_multistep=二阶多步指数积分器（ComfyUI 官方 H3 "
+                            "模板同款），建议 sigma_points=21（20 次 DiT）"
+                            "≈ euler-50 质量、快约 2.5×；该模式暂强制 accel=off"
+                            "（profile 按 euler-50 标定）。"
+                        ),
+                    },
+                ),
             },
         }
 
@@ -288,6 +303,7 @@ class MiniMaxH3DualSigmaSampler:
         cache_dit_mc: int = CACHE_DIT_MC,
         cache_dit_warmup: int = CACHE_DIT_WARMUP,
         velocity_stride: int = VELOCITY_STRIDE,
+        sampler_mode: str = SAMPLER_MODE_EULER,
     ):
         is_v2 = (
             isinstance(conditioning, Mapping)
@@ -379,6 +395,7 @@ class MiniMaxH3DualSigmaSampler:
                 frame_rate_options=fr_opts,
                 progress=update_progress,
                 check_cancelled=check_cancelled,
+                sampler_mode=str(sampler_mode),
                 accel=str(accel),
                 cache_dit_rdt=float(cache_dit_rdt),
                 cache_dit_mc=int(cache_dit_mc),

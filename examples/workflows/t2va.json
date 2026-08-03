@@ -278,7 +278,8 @@
         0.12,
         2,
         4,
-        4
+        4,
+        "euler"
       ],
       "title": "Dual Sigma Sampler"
     },

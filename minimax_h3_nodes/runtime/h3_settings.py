@@ -94,6 +94,11 @@ H3_DOWNSCALE_SHORT_EDGES = (768, 576, 480, 352)
 FFMPEG_BIN, FFPROBE_BIN = "ffmpeg", "ffprobe"  # Ref2VA 媒体工具
 TRANSFORMERS_MIN_VERSION = "4.57.0"  # Qwen3-VL 最低验证
 TRANSFORMERS_MAX_VERSION = "5.8.1"  # 当前钉死上限（含）
+# ---- 采样器（euler=官方 50 步一阶；res_multistep=二阶多步，~21 sigma 点等质）----
+SAMPLER_MODE_EULER = "euler"
+SAMPLER_MODE_RES_MULTISTEP = "res_multistep"
+SAMPLER_MODE_CHOICES = (SAMPLER_MODE_EULER, SAMPLER_MODE_RES_MULTISTEP)
+
 # ---- 采样加速（近似；默认 off；Cache-DiT / velocity-cache 互斥）----
 ACCEL_OFF, ACCEL_AUTO = "off", "auto"
 ACCEL_CACHE_DIT_PROFILE = "minimax-h3-cache-v1"

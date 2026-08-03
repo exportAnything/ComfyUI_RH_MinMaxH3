@@ -1,6 +1,7 @@
 """采样核心（P2 自 sampling.py 迁入）。"""
 from __future__ import annotations
 import logging
+import math
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
@@ -204,6 +205,84 @@ def euler_eta0_step(
     out = (
         ratio * state.to(dtype=compute_dtype)
         + (1.0 - ratio) * denoised.to(dtype=compute_dtype)
+    )
+    return out.to(dtype=state.dtype)
+
+
+def res_multistep_coeffs(
+    sigmas: Sequence[float],
+) -> list[tuple[float, float] | None]:
+    """Per-step second-order coefficients for the eta=0 ``res_multistep`` sampler.
+
+    对每个去噪步返回 ``(h*b1, h*b2)``；返回 ``None`` 表示该步只能走一阶
+    Euler（首步没有历史，或终步 sigma_next=0）。系数在主机侧按 float64 预
+    计算，循环内不产生任何设备同步。
+
+    数学形式（指数积分器，https://arxiv.org/pdf/2308.02157）：在
+    ``t = -log(sigma)`` 空间里
+    ``x' = ratio*x + h*(b1*denoised + b2*old_denoised)``，其中
+    ``ratio = sigma_next/sigma_curr = exp(-h)``。恒有
+    ``h*b1 + h*b2 == 1 - ratio``，因此当 ``old_denoised == denoised`` 时
+    严格退化为 :func:`euler_eta0_step`。
+    """
+
+    values = [float(s) for s in sigmas]
+    if any(v < 0.0 for v in values):
+        raise ValueError("sigma 不能为负数")
+    coeffs: list[tuple[float, float] | None] = []
+    for i in range(len(values) - 1):
+        s_curr, s_next = values[i], values[i + 1]
+        if i == 0 or s_curr == 0.0 or s_next == 0.0:
+            coeffs.append(None)
+            continue
+        s_prev = values[i - 1]
+        h = math.log(s_curr / s_next)
+        c2 = math.log(s_curr / s_prev) / h  # (t_prev - t_curr)/h，严格递减时 < 0
+        if h <= 0.0 or c2 == 0.0 or not math.isfinite(c2):
+            coeffs.append(None)
+            continue
+        phi1 = math.expm1(-h) / (-h)
+        phi2 = (phi1 - 1.0) / (-h)
+        b1 = phi1 - phi2 / c2
+        b2 = phi2 / c2
+        coeffs.append((h * b1, h * b2))
+    return coeffs
+
+
+def res_multistep_eta0_step(
+    state: Any,
+    denoised: Any,
+    old_denoised: Any,
+    *,
+    sigma_curr: float,
+    sigma_next: float,
+    hb1: float,
+    hb2: float,
+    sigma_ratio: Any | None = None,
+) -> Any:
+    """Second-order multistep update on one stream's own sigma schedule.
+
+    与 :func:`euler_eta0_step` 同构：``ratio*x`` 之外把 ``(1-ratio)`` 的
+    denoised 权重按指数积分器拆成本步与上一步两份。两条流（video/audio）
+    各自在自己的 shift 调度上独立积分，无需 ComfyUI 的 slope 折叠。
+    """
+
+    if state.shape != denoised.shape or state.shape != old_denoised.shape:
+        raise ValueError("res_multistep state/denoised shape 不一致")
+    if sigma_curr <= 0.0 or sigma_next <= 0.0:
+        raise ValueError("res_multistep 步进要求 sigma_curr/sigma_next 均为正")
+    t = _require_torch()
+    compute_dtype = (
+        t.float32 if state.dtype in (t.float16, t.bfloat16) else state.dtype
+    )
+    if sigma_ratio is None:
+        ratio = state.new_tensor(sigma_next / sigma_curr, dtype=compute_dtype)
+    else:
+        ratio = sigma_ratio.to(device=state.device, dtype=compute_dtype)
+    out = (
+        ratio * state.to(dtype=compute_dtype)
+        + hb1 * denoised.to(dtype=compute_dtype)
+        + hb2 * old_denoised.to(dtype=compute_dtype)
     )
     return out.to(dtype=state.dtype)
 
@@ -1296,6 +1375,7 @@ def sample_h3(
     frame_rate_options: Mapping[str, Any] | None = None,
     progress: Callable[[int, int], None] | None = None,
     check_cancelled: Callable[[], None] | None = None,
+    sampler_mode: str | None = None,
     accel: str | None = None,
     cache_dit: str | None = None,
     cache_dit_rdt: float | None = None,
@@ -1329,6 +1409,19 @@ def sample_h3(
         video_shift=video_shift,
         audio_shift=audio_shift,
     )
+    from .h3_settings import (
+        SAMPLER_MODE_CHOICES,
+        SAMPLER_MODE_EULER,
+        SAMPLER_MODE_RES_MULTISTEP,
+    )
+    sampler_mode = (
+        SAMPLER_MODE_EULER if sampler_mode is None else str(sampler_mode)
+    )
+    if sampler_mode not in SAMPLER_MODE_CHOICES:
+        raise ValueError(
+            f"未知 sampler_mode: {sampler_mode!r}；可选 {SAMPLER_MODE_CHOICES}"
+        )
+    res_multistep = sampler_mode == SAMPLER_MODE_RES_MULTISTEP
     visual_condition_noise = _condition_noise_level(
         visual_condition_noise, "visual_condition_noise"
     )
@@ -1585,9 +1678,25 @@ def sample_h3(
                         str(mod_cache.blocks.device), OPT_ADALN_RELEASE_WEIGHTS, adaln_fr,
                     )
 
+    requested_accel = accel if accel is not None else cache_dit
+    if res_multistep:
+        from .h3_settings import ACCEL_OFF
+        if requested_accel is not None and str(requested_accel) != ACCEL_OFF:
+            # accel profile（velocity/cache-dit）按 50 步 euler 标定；二阶 20 步
+            # 上叠加会过度跳步，未标定前强制关闭而不是静默出错图
+            LOGGER.info(
+                "res_multistep 模式强制 accel=off（请求为 %s；profile 按 euler-50 标定）",
+                requested_accel,
+            )
+        requested_accel = ACCEL_OFF
+        video_res_coeffs = res_multistep_coeffs(video_sigmas)
+        audio_res_coeffs = res_multistep_coeffs(audio_sigmas)
+    else:
+        video_res_coeffs = audio_res_coeffs = None
+
     velocity_rt = _prepare_accel_for_sample(
         transformer,
-        accel=accel if accel is not None else cache_dit,
+        accel=requested_accel,
         task=task,
         target=clean_latent["target"],
         sigma_points=sigma_points,
@@ -1603,6 +1712,9 @@ def sample_h3(
     video_update = branch.update_mask_dev
     audio_update = branch.audio_update_mask_dev
     dit_counter = [0]
+    # res_multistep 的上一步 denoised 历史（每流各一份 target-rows 张量）
+    old_denoised_video: Any = None
+    old_denoised_audio: Any = None
     with tel.stage("denoise_loop"):
         for step in range(total):
             if check_cancelled is not None:
@@ -1640,11 +1752,27 @@ def sample_h3(
                     denoised_video = rf_velocity_to_x0(
                         cur_video, mv_video, video_timesteps[step]
                     )
-                    next_video_target = euler_eta0_step(
-                        cur_video, denoised_video,
-                        sigma_curr=sigma_video, sigma_next=video_sigmas[step + 1],
-                        sigma_ratio=video_ratios[step],
+                    video_coeff = (
+                        video_res_coeffs[step]
+                        if video_res_coeffs is not None
+                        else None
                     )
+                    if video_coeff is not None and old_denoised_video is not None:
+                        next_video_target = res_multistep_eta0_step(
+                            cur_video, denoised_video, old_denoised_video,
+                            sigma_curr=sigma_video,
+                            sigma_next=video_sigmas[step + 1],
+                            hb1=video_coeff[0], hb2=video_coeff[1],
+                            sigma_ratio=video_ratios[step],
+                        )
+                    else:
+                        next_video_target = euler_eta0_step(
+                            cur_video, denoised_video,
+                            sigma_curr=sigma_video, sigma_next=video_sigmas[step + 1],
+                            sigma_ratio=video_ratios[step],
+                        )
+                    if res_multistep:
+                        old_denoised_video = denoised_video
                     _require_finite_step_tensor(
                         next_video_target, task=task, step=step + 1,
                         modality="video", phase="target latent",
@@ -1660,11 +1788,26 @@ def sample_h3(
 
                 cur_audio = audio_rows[audio_update]
                 denoised_audio = rf_velocity_to_x0(cur_audio, mv_audio, audio_timesteps[step])
-                next_audio_target = euler_eta0_step(
-                    cur_audio, denoised_audio,
-                    sigma_curr=sigma_audio, sigma_next=audio_sigmas[step + 1],
-                    sigma_ratio=audio_ratios[step],
+                audio_coeff = (
+                    audio_res_coeffs[step]
+                    if audio_res_coeffs is not None
+                    else None
                 )
+                if audio_coeff is not None and old_denoised_audio is not None:
+                    next_audio_target = res_multistep_eta0_step(
+                        cur_audio, denoised_audio, old_denoised_audio,
+                        sigma_curr=sigma_audio, sigma_next=audio_sigmas[step + 1],
+                        hb1=audio_coeff[0], hb2=audio_coeff[1],
+                        sigma_ratio=audio_ratios[step],
+                    )
+                else:
+                    next_audio_target = euler_eta0_step(
+                        cur_audio, denoised_audio,
+                        sigma_curr=sigma_audio, sigma_next=audio_sigmas[step + 1],
+                        sigma_ratio=audio_ratios[step],
+                    )
+                if res_multistep:
+                    old_denoised_audio = denoised_audio
                 _require_finite_step_tensor(
                     next_audio_target, task=task, step=step + 1, modality="audio", phase="target latent",
                 )
@@ -1701,6 +1844,7 @@ def sample_h3(
         width=target_meta.get("width"),
         height=target_meta.get("height"),
         frame_count=target_meta.get("frame_count"),
+        sampler_mode=sampler_mode,
     )
     return {
         **clean_latent,
