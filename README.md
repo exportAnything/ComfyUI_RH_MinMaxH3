@@ -35,6 +35,9 @@ partner; this plugin is developed and maintained by RunningHub.
   becomes the literal frame 0 of the output.
 - **Joint AV sampling** — a dual-sigma rectified-flow sampler drives video and
   audio with independent shift schedules, keeping audio locked to motion.
+- **~2.2× faster with `res_multistep`** — a second-order exponential integrator
+  reaches the quality of 50-step Euler in about 21 sigma points (20 DiT calls).
+  Same weights, no requantisation; `euler` stays the default.
 - **INT8 or BF16** — single-file INT8 checkpoints or the upstream sharded BF16
   release. The loaders never switch between them silently.
 - **24GB-class single GPU** — automatic layerwise DiT offload, adaLN precompute
@@ -207,7 +210,7 @@ All nodes register under the `RunningHub/MiniMax H3/*` category.
 | `RHMiniMaxH3SeparateAVLatent` / `RHMiniMaxH3CombineAVLatent` | Split or rejoin the video and audio streams |
 | `RHMiniMaxH3EncodeVideoAVLatent` | Encode existing frames into an AV latent (video-to-audio) |
 | `RHMiniMaxH3FrameRate` | Experimental frame-rate conditioning |
-| `RHMiniMaxH3DualSigmaSampler` | Joint video + audio sampling |
+| `RHMiniMaxH3DualSigmaSampler` | Joint video + audio sampling. `sampler_mode` selects `euler` (default, 50 sigma points) or `res_multistep` (second order, ~21 points) |
 | `RHMiniMaxH3DecodeAV` | Decode to `IMAGE` frames and `AUDIO` |
 
 ## ⚙️ Advanced
@@ -225,6 +228,36 @@ turned off independently for rollback.
   ground-truth paths; the sidecar records which one ran.
 - **Observability** — `OPT_TELEMETRY` records stage timings, per-step P50/P95
   and peak VRAM; `OPT_WRITE_SIDECAR` writes a JSON sidecar beside each render.
+
+## 📋 Changelog
+
+### 0.4.0
+
+- **`res_multistep` sampler mode (~2.2× faster).** The video and audio streams
+  run on different shift schedules, so each is now integrated with a
+  second-order exponential integrator on its own schedule. About 21 sigma
+  points (20 DiT calls) match the quality of 50-step Euler. Measured on a
+  single GPU at 832×480/125f: **548s → 250s**, with no visible quality loss on
+  the same seed. Select it with `sampler_mode` on the sampler and set
+  `sigma_points` to 21; `euler` remains the default so existing workflows are
+  untouched. The mode forces `accel=off` — the velocity-cache and Cache-DiT
+  profiles are calibrated for 50 steps and would over-skip at 20.
+- **Video VAE allocation elisions.** Q/K norm skips a redundant fp32 round trip
+  when the norm has no affine parameters (CUDA already accumulates in fp32, so
+  the half-precision result is bit-identical); gated FFN, scaled residuals and
+  `norm_silu` became in-place; causal temporal padding is now a single `F.pad`
+  instead of `zeros_like` + `cat`. Output is bit-identical — verified
+  end-to-end at PSNR = inf on the same seed.
+- **Minimum output duration lowered from 5s to 4s.** The widget default stays
+  at 5.0, so existing workflows are unaffected.
+
+### 0.3.0
+
+- Per-type loader COMBOs; the dual VAE loader takes `video_vae_path` and
+  `audio_vae_path` separately.
+- Flat single-file weights root at `ComfyUI/models/MiniMax-H3/`, classified by
+  filename with no sidecar required.
+- Example workflows for all task types under [`examples/workflows/`](examples/workflows/).
 
 ## 📄 License
 
