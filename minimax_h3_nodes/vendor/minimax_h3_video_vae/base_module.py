@@ -46,6 +46,16 @@ def _vit_norm_input(module, hidden_states):
     return hidden_states.to(getattr(module.weight, "dtype", hidden_states.dtype))
 
 
+def _scaled_residual_add(residual, x, scale):
+    """residual + x * scale；x 是 attn/ff 的新输出，可就地算省两次分配。
+
+    浮点上 (x*s)+r 与 r+(x*s) 逐位相同（加法对同一对操作数可交换）。
+    """
+    if torch.is_grad_enabled() or not isinstance(x, torch.Tensor):
+        return residual + x * scale
+    return x.mul(scale).add_(residual)
+
+
 
 
 
@@ -95,7 +105,8 @@ class FeedForward(nn.Module):
 
         if self.use_gated:
             gate, hidden_states = hidden_states.chunk(2, dim=-1)
-            hidden_states = self.act_fn(gate) * hidden_states
+            # act_fn(gate) 是新张量，就地乘可省一个 inner_dim 大小的中间结果
+            hidden_states = self.act_fn(gate).mul_(hidden_states)
         else:
             hidden_states = self.act_fn(hidden_states)
 
@@ -270,14 +281,18 @@ class TransformerBlock(nn.Module):
         norm_hidden_states = self.norm1(_vit_norm_input(self.norm1, hidden_states)).to(hidden_states.dtype)
         attn_output = self.attn(norm_hidden_states, rotary_pos_emb, pack_info)
         if self.use_scale:
-            hidden_states = hidden_states + attn_output * self.scale1
+            hidden_states = _scaled_residual_add(
+                hidden_states, attn_output, self.scale1
+            )
         else:
             hidden_states = hidden_states + attn_output
 
         norm_hidden_states = self.norm2(_vit_norm_input(self.norm2, hidden_states)).to(hidden_states.dtype)
         ff_output = self.ff(norm_hidden_states)
         if self.use_scale:
-            hidden_states = hidden_states + ff_output * self.scale2
+            hidden_states = _scaled_residual_add(
+                hidden_states, ff_output, self.scale2
+            )
         else:
             hidden_states = hidden_states + ff_output
 

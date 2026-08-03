@@ -25,6 +25,29 @@ def _vit_norm_input(module, hidden_states):
     return hidden_states.to(getattr(weight, "dtype", hidden_states.dtype))
 
 
+def _apply_qk_norm(module, hidden_states):
+    """无仿射参数时跳过 fp32 往返；输出与 fp32-norm-then-cast 逐位相同。
+
+    CUDA 的 LayerNorm/RMSNorm 对 half/bf16 输入本就在 fp32 累加。当 norm 没有
+    weight/bias 时（H3 ViT 的 qk_norm_affine=False），关掉 autocast 直接送半精度
+    进去，结果与"转 fp32 → norm → 转回"完全一致，但省掉两次全张量 cast。
+    条件不满足时回落原路径。
+    """
+    if (
+        _env_flag("MINIMAX_H3_VAE_DECODER_VIT_FP32_NORM", "1")
+        and isinstance(module, (nn.LayerNorm, nn.RMSNorm))
+        and getattr(module, "weight", None) is None
+        and getattr(module, "bias", None) is None
+        and hidden_states.is_cuda
+        and hidden_states.dtype in (torch.float16, torch.bfloat16)
+        and not torch.is_grad_enabled()
+        and not torch.compiler.is_compiling()
+    ):
+        with torch.autocast("cuda", enabled=False):
+            return module(hidden_states)
+    return module(_vit_norm_input(module, hidden_states)).to(hidden_states.dtype)
+
+
 def maybe_checkpoint(owner, function, *args):
     if owner.training and getattr(owner, "gradient_checkpointing", False):
         raise NotImplementedError(
@@ -179,9 +202,9 @@ class Attention(nn.Module):
             value = all_to_all_4D(value, 2, 1, group=local_process_group)
 
         if self.norm_q is not None:
-            query = self.norm_q(_vit_norm_input(self.norm_q, query)).to(query.dtype)
+            query = _apply_qk_norm(self.norm_q, query)
         if self.norm_k is not None:
-            key = self.norm_k(_vit_norm_input(self.norm_k, key)).to(key.dtype)
+            key = _apply_qk_norm(self.norm_k, key)
 
         if rotary_pos_emb is not None:
             query, key = apply_rotary_pos_emb_qk(query, key, rotary_pos_emb)

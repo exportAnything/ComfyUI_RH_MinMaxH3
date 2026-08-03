@@ -1,6 +1,5 @@
 # SPDX-License-Identifier: Apache-2.0
 # Spatial-parallel 3D convolution for the MiniMax H3 visual VAE.
-import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
@@ -52,10 +51,12 @@ class BaseConv3d(nn.Conv3d):
         else:
             if self.pad_mode_t == "constant":
                 assert self.causal, "Zeros padding is only supported for causal mode"
-                zeros = torch.zeros_like(x[:, :, :1, :, :]).expand(
-                    -1, -1, self.kernel_size[0] - 1, -1, -1
+                # F.pad 一次 kernel 完成；原 zeros_like+expand+cat 要两次分配拷贝
+                return F.pad(
+                    x,
+                    (0, 0, 0, 0, self.kernel_size[0] - 1, 0),
+                    mode="constant",
                 )
-                return torch.cat([zeros, x], dim=2)
             else:
                 return x.expand(-1, -1, self.kernel_size[0], -1, -1)
 

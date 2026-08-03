@@ -25,10 +25,11 @@ from .norm import get_group_norm_3d
 
 
 def norm_silu(x, norm, cond=None):
+    # norm 输出是新张量，就地激活省一份 [B,C,T,H,W] 大小的中间结果
     if cond is None:
-        return F.silu(norm(x))
+        return F.silu(norm(x), inplace=True)
     else:
-        return F.silu(norm(x, cond))
+        return F.silu(norm(x, cond), inplace=True)
 
 
 class Downsample3D(nn.Module):
