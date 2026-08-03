@@ -11,5 +11,10 @@ test_outputs/
 *.pyo
 .env
 
-# RunningHub 内部配置，不进公开仓库
+# RunningHub internal config, not for the public tree
 rh_config.json
+
+# Windows download-origin markers. The colon makes them illegal NTFS paths,
+# so committing one breaks git clone checkout on Windows.
+*:Zone.Identifier
+*Zone.Identifier
