@@ -15,10 +15,10 @@ class MiniMaxH3T2VATarget:
                     "FLOAT",
                     {
                         "default": 5.0,
-                        "min": 5.0,
+                        "min": 4.0,
                         "max": 15.0,
                         "step": 0.1,
-                        "tooltip": "时长秒数，必须在 5.0–15.0（执行期再次校验）。",
+                        "tooltip": "时长秒数，必须在 4.0–15.0（执行期再次校验）。",
                     },
                 ),
             },
@@ -122,7 +122,7 @@ class MiniMaxH3FL2VATarget:
                 "aspect_ratio": (list(H3_ASPECT_RATIOS), {"default": "auto"}),
                 "duration_seconds": (
                     "FLOAT",
-                    {"default": 5.0, "min": 5.0, "max": 15.0, "step": 0.1},
+                    {"default": 5.0, "min": 4.0, "max": 15.0, "step": 0.1},
                 ),
             },
             "optional": {
