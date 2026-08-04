@@ -1,123 +1,146 @@
 {
-  "last_node_id": 14,
-  "last_link_id": 17,
+  "id": "d4b386ee-4159-4f22-82a0-c6cf1aae89e7",
+  "revision": 0,
+  "last_node_id": 142,
+  "last_link_id": 284,
   "nodes": [
     {
-      "id": 1,
-      "type": "RHMiniMaxH3Ref2VATextEncoderLoader",
+      "id": 92,
+      "type": "SaveVideo",
       "pos": [
-        40,
-        40
+        1150,
+        4880
       ],
       "size": [
-        380,
-        178
+        1210,
+        126
+      ],
+      "flags": {},
+      "order": 22,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "video",
+          "type": "VIDEO",
+          "link": 260
+        }
+      ],
+      "outputs": [
+        {
+          "name": "video",
+          "type": "VIDEO",
+          "links": null
+        }
+      ],
+      "properties": {},
+      "widgets_values": [
+        "minimax_h3/ref2va_image_audio",
+        "mp4",
+        "h264"
+      ]
+    },
+    {
+      "id": 115,
+      "type": "ResolutionSelector",
+      "pos": [
+        -1480,
+        5610
+      ],
+      "size": [
+        270,
+        170
       ],
       "flags": {},
       "order": 0,
       "mode": 0,
+      "showAdvanced": false,
       "inputs": [],
       "outputs": [
         {
-          "name": "h3_text_encoder",
-          "type": "MINIMAX_H3_TEXT_ENCODER",
+          "name": "width",
+          "type": "INT",
           "links": [
-            11
-          ],
-          "slot_index": 0
+            276
+          ]
+        },
+        {
+          "name": "height",
+          "type": "INT",
+          "links": [
+            277
+          ]
         }
       ],
+      "title": "Resolution Selector (Size)",
       "properties": {
-        "Node name for S&R": "RHMiniMaxH3Ref2VATextEncoderLoader"
+        "Node name for S&R": "ResolutionSelector"
       },
       "widgets_values": [
-        "MiniMax-H3",
-        "auto",
-        "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
+        "16:9 (Widescreen)",
+        0.4,
+        32
       ],
-      "title": "Ref2VA Qwen3-VL Loader"
+      "color": "#322",
+      "bgcolor": "#533"
     },
     {
-      "id": 2,
-      "type": "RHMiniMaxH3Ref2VAModelLoader",
+      "id": 116,
+      "type": "MarkdownNote",
       "pos": [
-        40,
-        240
+        -2030,
+        4850
       ],
       "size": [
-        380,
-        178
+        450,
+        889.6875
       ],
       "flags": {},
       "order": 1,
       "mode": 0,
       "inputs": [],
-      "outputs": [
-        {
-          "name": "h3_model",
-          "type": "MINIMAX_H3_DIRECT_MODEL",
-          "links": [
-            15
-          ],
-          "slot_index": 0
-        }
-      ],
-      "properties": {
-        "Node name for S&R": "RHMiniMaxH3Ref2VAModelLoader"
-      },
+      "outputs": [],
+      "title": "Note: Reference Image + Audio to Video",
+      "properties": {},
       "widgets_values": [
-        "MiniMax-H3",
-        "auto",
-        "minimax_h3_ref2va_pruned_fp8_scaled.safetensors"
+        "## MiniMax H3 — Native Reference to Video + Audio\n\nThis workflow uses ComfyUI's native MiniMaxH3ReferenceToVideo conditioning and stock \res_multistep sampling. The older Direct loaders and Dual Sigma sampler are not used.\n\nReference tags are one-based in prompts: <Picture 1>, <Video 1>, and <Audio 1>. The tag must match the connected reference type and order.\n\nThe bundled SageAttention patch is already wired between the model loader and sampler. It falls back safely to ComfyUI's normal attention when a compatible SageAttention library is unavailable.\n\nRequires ComfyUI 0.30.1 or newer.\n## Image and standalone audio references\n\n- Replace \u001bxample.png with the visual reference used by <Picture 1>.\n- Replace \u001bxample.mp3 with the standalone audio reference used by <Audio 1>.\n\nThe native node keeps image and audio references in their own typed groups; prompt tags establish how each one should influence the result."
       ],
-      "title": "Ref2VA DiT Loader"
+      "color": "#222",
+      "bgcolor": "#000"
     },
     {
-      "id": 3,
-      "type": "RHMiniMaxH3Ref2VAVAELoader",
+      "id": 117,
+      "type": "MarkdownNote",
       "pos": [
-        40,
-        440
+        -2500,
+        4850
       ],
       "size": [
-        380,
-        178
+        440,
+        740
       ],
       "flags": {},
       "order": 2,
       "mode": 0,
       "inputs": [],
-      "outputs": [
-        {
-          "name": "h3_vae_bundle",
-          "type": "MINIMAX_H3_VAE_BUNDLE",
-          "links": [
-            12,
-            17
-          ],
-          "slot_index": 0
-        }
-      ],
-      "properties": {
-        "Node name for S&R": "RHMiniMaxH3Ref2VAVAELoader"
-      },
+      "outputs": [],
+      "title": "Note: Model Links",
+      "properties": {},
       "widgets_values": [
-        "MiniMax-H3",
-        "minimax_h3_video_vae_fp16.safetensors",
-        "minimax_h3_audio_vae_fp32.safetensors"
+        "## Model Links\n[🤗 Comfy-Org/MiniMax-H3](https://huggingface.co/Comfy-Org/MiniMax-H3)\n\n**vae**\n\n- [minimax_h3_video_vae_fp16.safetensors](https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/vae/minimax_h3_video_vae_fp16.safetensors)\n- [minimax_h3_audio_vae_fp32.safetensors](https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/vae/minimax_h3_audio_vae_fp32.safetensors)\n\n**diffusion_models**\n\n- [minimax_h3_ref2va_int8_convrot.safetensors](https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/diffusion_models/minimax_h3_ref2va_int8_convrot.safetensors)\n\n**text_encoders**\n\n- [qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors](https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors)\n\n\n## Model Storage Location\n\n```\n📂 ComfyUI/\n├── 📂 models/\n│   ├── 📂 vae/\n│   │   ├── minimax_h3_video_vae_fp16.safetensors\n│   │   └── minimax_h3_audio_vae_fp32.safetensors\n│   ├── 📂 diffusion_models/\n│   │   └── minimax_h3_ref2va_int8_convrot.safetensors\n│   └── 📂 text_encoders/\n│       └── qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors\n```\n\n## Report Issue\n\nNote: Please update ComfyUI first ([guide](https://docs.comfy.org/installation/update_comfyui)) and prepare required models. Desktop/Cloud updates follow stable releases, so some nightly-supported models may not be available yet.\n\n- Cannot run / runtime errors: [ComfyUI/issues](https://github.com/comfyanonymous/ComfyUI/issues)\n- UI / frontend issues: [ComfyUI_frontend/issues](https://github.com/Comfy-Org/ComfyUI_frontend/issues)\n- Workflow issues: [workflow_templates/issues](https://github.com/Comfy-Org/workflow_templates/issues)\n"
       ],
-      "title": "Ref2VA Dual VAE Loader"
+      "color": "#222",
+      "bgcolor": "#000"
     },
     {
-      "id": 4,
-      "type": "LoadImage",
+      "id": 119,
+      "type": "VAELoader",
       "pos": [
-        460,
-        40
+        -1490,
+        5270
       ],
       "size": [
-        320,
-        314
+        640,
+        70
       ],
       "flags": {},
       "order": 3,
@@ -125,81 +148,161 @@
       "inputs": [],
       "outputs": [
         {
-          "name": "IMAGE",
-          "type": "IMAGE",
+          "name": "VAE",
+          "type": "VAE",
           "links": [
-            1
-          ],
-          "slot_index": 0
-        },
-        {
-          "name": "MASK",
-          "type": "MASK",
-          "links": [],
-          "slot_index": 1
+            251,
+            273
+          ]
         }
       ],
       "properties": {
-        "Node name for S&R": "LoadImage"
+        "Node name for S&R": "VAELoader",
+        "models": [
+          {
+            "name": "minimax_h3_video_vae_fp16.safetensors",
+            "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/vae/minimax_h3_video_vae_fp16.safetensors",
+            "directory": "vae"
+          }
+        ]
       },
       "widgets_values": [
-        "example.png",
-        "image"
-      ],
-      "title": "Reference image"
+        "minimax_h3_video_vae_fp16.safetensors"
+      ]
     },
     {
-      "id": 5,
-      "type": "RHMiniMaxH3Ref2VAImageReference",
+      "id": 120,
+      "type": "VAELoader",
       "pos": [
-        820,
-        40
+        -1490,
+        5400
       ],
       "size": [
-        380,
-        100
+        650,
+        70
       ],
       "flags": {},
       "order": 4,
       "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "VAE",
+          "type": "VAE",
+          "links": [
+            250,
+            274
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "VAELoader",
+        "models": [
+          {
+            "name": "minimax_h3_audio_vae_fp32.safetensors",
+            "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/vae/minimax_h3_audio_vae_fp32.safetensors",
+            "directory": "vae"
+          }
+        ]
+      },
+      "widgets_values": [
+        "minimax_h3_audio_vae_fp32.safetensors"
+      ]
+    },
+    {
+      "id": 121,
+      "type": "VAEDecodeAudio",
+      "pos": [
+        480,
+        5180
+      ],
+      "size": [
+        230,
+        60
+      ],
+      "flags": {
+        "collapsed": false
+      },
+      "order": 20,
+      "mode": 0,
       "inputs": [
         {
-          "name": "image",
-          "type": "IMAGE",
-          "link": 1
+          "name": "samples",
+          "type": "LATENT",
+          "link": 281
         },
         {
-          "name": "references",
-          "type": "MINIMAX_H3_REFERENCES",
-          "link": null
+          "name": "vae",
+          "type": "VAE",
+          "link": 250
         }
       ],
       "outputs": [
         {
-          "name": "references",
-          "type": "MINIMAX_H3_REFERENCES",
+          "name": "AUDIO",
+          "type": "AUDIO",
           "links": [
-            3
-          ],
-          "slot_index": 0
+            259
+          ]
         }
       ],
       "properties": {
-        "Node name for S&R": "RHMiniMaxH3Ref2VAImageReference"
+        "Node name for S&R": "VAEDecodeAudio"
       },
-      "widgets_values": [],
-      "title": "Image Reference"
+      "widgets_values": []
     },
     {
-      "id": 6,
-      "type": "LoadAudio",
+      "id": 122,
+      "type": "VAEDecode",
       "pos": [
-        460,
-        400
+        480,
+        5060
       ],
       "size": [
-        320,
-        100
+        230,
+        60
+      ],
+      "flags": {
+        "collapsed": false
+      },
+      "order": 19,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "samples",
+          "type": "LATENT",
+          "link": 280
+        },
+        {
+          "name": "vae",
+          "type": "VAE",
+          "link": 251
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            258
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "VAEDecode"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 123,
+      "type": "KSamplerSelect",
+      "pos": [
+        -260,
+        5190
+      ],
+      "size": [
+        370,
+        70
       ],
       "flags": {},
       "order": 5,
@@ -207,355 +310,296 @@
       "inputs": [],
       "outputs": [
         {
-          "name": "AUDIO",
-          "type": "AUDIO",
+          "name": "SAMPLER",
+          "type": "SAMPLER",
           "links": [
-            2
-          ],
-          "slot_index": 0
+            255
+          ]
         }
       ],
       "properties": {
-        "Node name for S&R": "LoadAudio"
+        "Node name for S&R": "KSamplerSelect"
       },
       "widgets_values": [
-        "example.mp3"
-      ],
-      "title": "Reference audio"
+        "res_multistep"
+      ]
     },
     {
-      "id": 7,
-      "type": "RHMiniMaxH3Ref2VAAudioReference",
+      "id": 124,
+      "type": "BasicScheduler",
       "pos": [
-        820,
-        400
+        -260,
+        5310
       ],
       "size": [
-        380,
-        100
+        370,
+        130
+      ],
+      "flags": {},
+      "order": 14,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 252
+        }
+      ],
+      "outputs": [
+        {
+          "name": "SIGMAS",
+          "type": "SIGMAS",
+          "links": [
+            256
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "BasicScheduler"
+      },
+      "widgets_values": [
+        "simple",
+        20,
+        1
+      ]
+    },
+    {
+      "id": 125,
+      "type": "SamplerCustomAdvanced",
+      "pos": [
+        150,
+        5110
+      ],
+      "size": [
+        230,
+        140
+      ],
+      "flags": {},
+      "order": 18,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "noise",
+          "type": "NOISE",
+          "link": 253
+        },
+        {
+          "name": "guider",
+          "type": "GUIDER",
+          "link": 254
+        },
+        {
+          "name": "sampler",
+          "type": "SAMPLER",
+          "link": 255
+        },
+        {
+          "name": "sigmas",
+          "type": "SIGMAS",
+          "link": 256
+        },
+        {
+          "name": "latent_image",
+          "type": "LATENT",
+          "link": 271
+        }
+      ],
+      "outputs": [
+        {
+          "name": "output",
+          "type": "LATENT",
+          "links": [
+            280,
+            281
+          ]
+        },
+        {
+          "name": "denoised_output",
+          "type": "LATENT",
+          "links": []
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "SamplerCustomAdvanced"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 126,
+      "type": "BasicGuider",
+      "pos": [
+        -260,
+        5080
+      ],
+      "size": [
+        360,
+        60
+      ],
+      "flags": {},
+      "order": 17,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 257
+        },
+        {
+          "name": "conditioning",
+          "type": "CONDITIONING",
+          "link": 270
+        }
+      ],
+      "outputs": [
+        {
+          "name": "GUIDER",
+          "type": "GUIDER",
+          "links": [
+            254
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "BasicGuider"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 127,
+      "type": "UNETLoader",
+      "pos": [
+        -1490,
+        4940
+      ],
+      "size": [
+        640,
+        90
       ],
       "flags": {},
       "order": 6,
       "mode": 0,
-      "inputs": [
-        {
-          "name": "audio",
-          "type": "AUDIO",
-          "link": 2
-        },
-        {
-          "name": "references",
-          "type": "MINIMAX_H3_REFERENCES",
-          "link": 3
-        }
-      ],
+      "inputs": [],
       "outputs": [
         {
-          "name": "references",
-          "type": "MINIMAX_H3_REFERENCES",
+          "name": "MODEL",
+          "type": "MODEL",
           "links": [
-            9,
-            10
-          ],
-          "slot_index": 0
+            283
+          ]
         }
       ],
       "properties": {
-        "Node name for S&R": "RHMiniMaxH3Ref2VAAudioReference"
+        "Node name for S&R": "UNETLoader",
+        "models": [
+          {
+            "name": "minimax_h3_ref2va_int8_convrot.safetensors",
+            "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/diffusion_models/minimax_h3_ref2va_int8_convrot.safetensors",
+            "directory": "diffusion_models"
+          }
+        ]
       },
-      "widgets_values": [],
-      "title": "Audio Reference"
+      "widgets_values": [
+        "minimax_h3_ref2va_int8_convrot.safetensors",
+        "default"
+      ]
     },
     {
-      "id": 8,
-      "type": "RHMiniMaxH3Ref2VATarget",
+      "id": 128,
+      "type": "CLIPLoader",
       "pos": [
-        1180,
-        40
+        -1490,
+        5090
       ],
       "size": [
-        380,
-        204
+        640,
+        120
       ],
       "flags": {},
       "order": 7,
       "mode": 0,
-      "inputs": [
-        {
-          "name": "references",
-          "type": "MINIMAX_H3_REFERENCES",
-          "link": 9
-        }
-      ],
+      "inputs": [],
       "outputs": [
         {
-          "name": "target",
-          "type": "MINIMAX_H3_TARGET",
+          "name": "CLIP",
+          "type": "CLIP",
           "links": [
-            13,
-            14
-          ],
-          "slot_index": 0
-        },
-        {
-          "name": "shape_info",
-          "type": "STRING",
-          "links": [],
-          "slot_index": 1
+            272
+          ]
         }
       ],
       "properties": {
-        "Node name for S&R": "RHMiniMaxH3Ref2VATarget"
+        "Node name for S&R": "CLIPLoader",
+        "models": [
+          {
+            "name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+            "url": "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/main/text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+            "directory": "text_encoders"
+          }
+        ]
       },
       "widgets_values": [
-        "16:9",
-        5.0,
-        832,
-        480
+        "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+        "minimax",
+        "default"
       ]
     },
     {
-      "id": 9,
-      "type": "RHMiniMaxH3Ref2VAEncode",
+      "id": 129,
+      "type": "RandomNoise",
       "pos": [
-        1180,
-        280
+        -260,
+        4940
       ],
       "size": [
-        420,
-        280
+        360,
+        90
       ],
       "flags": {},
       "order": 8,
       "mode": 0,
-      "inputs": [
-        {
-          "name": "h3_text_encoder",
-          "type": "MINIMAX_H3_TEXT_ENCODER",
-          "link": 11
-        },
-        {
-          "name": "h3_vae_bundle",
-          "type": "MINIMAX_H3_VAE_BUNDLE",
-          "link": 12
-        },
-        {
-          "name": "target",
-          "type": "MINIMAX_H3_TARGET",
-          "link": 13
-        },
-        {
-          "name": "references",
-          "type": "MINIMAX_H3_REFERENCES",
-          "link": 10
-        }
-      ],
+      "inputs": [],
       "outputs": [
         {
-          "name": "conditioning",
-          "type": "MINIMAX_H3_CONDITIONING",
+          "name": "NOISE",
+          "type": "NOISE",
           "links": [
-            16
-          ],
-          "slot_index": 0
+            253
+          ]
         }
       ],
       "properties": {
-        "Node name for S&R": "RHMiniMaxH3Ref2VAEncode"
-      },
-      "widgets_values": [
-        "Follow the supplied references in order: keep the referenced subject's identity and wardrobe, match the referenced audio's rhythm, and keep lip movement synchronized. Natural camera motion, no subtitles, no logos.",
-        "match"
-      ]
-    },
-    {
-      "id": 10,
-      "type": "RHMiniMaxH3EmptyAVLatent",
-      "pos": [
-        1640,
-        40
-      ],
-      "size": [
-        380,
-        100
-      ],
-      "flags": {},
-      "order": 9,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "target",
-          "type": "MINIMAX_H3_TARGET",
-          "link": 14
-        }
-      ],
-      "outputs": [
-        {
-          "name": "av_latent",
-          "type": "MINIMAX_H3_AV_LATENT",
-          "links": [
-            4
-          ],
-          "slot_index": 0
-        }
-      ],
-      "properties": {
-        "Node name for S&R": "RHMiniMaxH3EmptyAVLatent"
-      },
-      "widgets_values": [],
-      "title": "Empty AV Latent"
-    },
-    {
-      "id": 11,
-      "type": "RHMiniMaxH3DualSigmaSampler",
-      "pos": [
-        1640,
-        180
-      ],
-      "size": [
-        380,
-        386
-      ],
-      "flags": {},
-      "order": 10,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "h3_model",
-          "type": "MINIMAX_H3_DIRECT_MODEL",
-          "link": 15
-        },
-        {
-          "name": "conditioning",
-          "type": "MINIMAX_H3_CONDITIONING",
-          "link": 16
-        },
-        {
-          "name": "av_latent",
-          "type": "MINIMAX_H3_AV_LATENT",
-          "link": 4
-        }
-      ],
-      "outputs": [
-        {
-          "name": "sampled_av_latent",
-          "type": "MINIMAX_H3_AV_LATENT",
-          "links": [
-            5
-          ],
-          "slot_index": 0
-        }
-      ],
-      "properties": {
-        "Node name for S&R": "RHMiniMaxH3DualSigmaSampler"
+        "Node name for S&R": "RandomNoise"
       },
       "widgets_values": [
         42,
-        "fixed",
-        50,
-        12.0,
-        3.0,
-        "off",
-        true,
-        0.12,
-        2,
-        4,
-        4,
-        "euler",
-        false
-      ],
-      "title": "Dual Sigma Sampler"
+        "fixed"
+      ]
     },
     {
-      "id": 12,
-      "type": "RHMiniMaxH3DecodeAV",
-      "pos": [
-        2060,
-        40
-      ],
-      "size": [
-        380,
-        100
-      ],
-      "flags": {},
-      "order": 11,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "h3_vae_bundle",
-          "type": "MINIMAX_H3_VAE_BUNDLE",
-          "link": 17
-        },
-        {
-          "name": "sampled_av_latent",
-          "type": "MINIMAX_H3_AV_LATENT",
-          "link": 5
-        }
-      ],
-      "outputs": [
-        {
-          "name": "frames",
-          "type": "IMAGE",
-          "links": [
-            6
-          ],
-          "slot_index": 0
-        },
-        {
-          "name": "audio",
-          "type": "AUDIO",
-          "links": [
-            7
-          ],
-          "slot_index": 1
-        }
-      ],
-      "properties": {
-        "Node name for S&R": "RHMiniMaxH3DecodeAV"
-      },
-      "widgets_values": [],
-      "title": "Decode Video + Audio"
-    },
-    {
-      "id": 13,
+      "id": 130,
       "type": "CreateVideo",
       "pos": [
-        2060,
-        200
+        790,
+        5090
       ],
       "size": [
-        300,
-        100
+        270,
+        110
       ],
       "flags": {},
-      "order": 12,
+      "order": 21,
       "mode": 0,
       "inputs": [
         {
           "name": "images",
           "type": "IMAGE",
-          "link": 6
+          "link": 258
         },
         {
           "name": "audio",
+          "shape": 7,
           "type": "AUDIO",
-          "link": 7
-        },
-        {
-          "name": "fps",
-          "type": "FLOAT",
-          "link": null,
-          "widget": {
-            "name": "fps"
-          }
-        },
-        {
-          "name": "bit_depth",
-          "type": "INT",
-          "link": null,
-          "widget": {
-            "name": "bit_depth"
-          }
+          "link": 259
         }
       ],
       "outputs": [
@@ -563,9 +607,8 @@
           "name": "VIDEO",
           "type": "VIDEO",
           "links": [
-            8
-          ],
-          "slot_index": 0
+            260
+          ]
         }
       ],
       "properties": {
@@ -577,186 +620,684 @@
       ]
     },
     {
-      "id": 14,
-      "type": "SaveVideo",
+      "id": 131,
+      "type": "ComfyMathExpression",
       "pos": [
-        2060,
-        360
+        -1450,
+        5940
       ],
       "size": [
-        400,
-        130
+        225,
+        0
+      ],
+      "flags": {
+        "collapsed": true
+      },
+      "order": 15,
+      "mode": 0,
+      "inputs": [
+        {
+          "label": "a",
+          "name": "values.a",
+          "type": "FLOAT,INT,BOOLEAN",
+          "link": 261
+        },
+        {
+          "label": "b",
+          "name": "values.b",
+          "shape": 7,
+          "type": "FLOAT,INT,BOOLEAN",
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "FLOAT",
+          "type": "FLOAT",
+          "links": []
+        },
+        {
+          "name": "INT",
+          "type": "INT",
+          "links": [
+            275
+          ]
+        },
+        {
+          "name": "BOOL",
+          "type": "BOOLEAN",
+          "links": []
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "ComfyMathExpression"
+      },
+      "widgets_values": [
+        "max(5, round(a * 24)) + (5 - (max(5, round(a * 24)) % 17)) % 17"
+      ]
+    },
+    {
+      "id": 132,
+      "type": "PrimitiveFloat",
+      "pos": [
+        -1480,
+        5830
+      ],
+      "size": [
+        270,
+        70
+      ],
+      "flags": {},
+      "order": 9,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "FLOAT",
+          "type": "FLOAT",
+          "links": [
+            261
+          ]
+        }
+      ],
+      "title": "Float (Duration)",
+      "properties": {
+        "Node name for S&R": "PrimitiveFloat"
+      },
+      "widgets_values": [
+        5
+      ],
+      "color": "#322",
+      "bgcolor": "#533"
+    },
+    {
+      "id": 136,
+      "type": "MiniMaxH3ReferenceToVideo",
+      "pos": [
+        -750,
+        4940
+      ],
+      "size": [
+        410,
+        530
+      ],
+      "flags": {},
+      "order": 16,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 272
+        },
+        {
+          "name": "vae",
+          "type": "VAE",
+          "link": 273
+        },
+        {
+          "name": "audio_vae",
+          "type": "VAE",
+          "link": 274
+        },
+        {
+          "label": "ref_image_0",
+          "name": "ref_images.ref_image_0",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": 278
+        },
+        {
+          "label": "ref_image_1",
+          "name": "ref_images.ref_image_1",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": null
+        },
+        {
+          "label": "ref_image_2",
+          "name": "ref_images.ref_image_2",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": null
+        },
+        {
+          "label": "ref_video_0",
+          "name": "ref_videos.ref_video_0",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": null
+        },
+        {
+          "label": "ref_video_audio_0",
+          "name": "ref_video_audios.ref_video_audio_0",
+          "shape": 7,
+          "type": "AUDIO",
+          "link": null
+        },
+        {
+          "label": "ref_audio_0",
+          "name": "ref_audios.ref_audio_0",
+          "shape": 7,
+          "type": "AUDIO",
+          "link": 284
+        },
+        {
+          "name": "prompt",
+          "type": "STRING",
+          "widget": {
+            "name": "prompt"
+          },
+          "link": 279
+        },
+        {
+          "name": "width",
+          "type": "INT",
+          "widget": {
+            "name": "width"
+          },
+          "link": 276
+        },
+        {
+          "name": "height",
+          "type": "INT",
+          "widget": {
+            "name": "height"
+          },
+          "link": 277
+        },
+        {
+          "name": "length",
+          "type": "INT",
+          "widget": {
+            "name": "length"
+          },
+          "link": 275
+        }
+      ],
+      "outputs": [
+        {
+          "name": "positive",
+          "type": "CONDITIONING",
+          "links": [
+            270
+          ]
+        },
+        {
+          "name": "LATENT",
+          "type": "LATENT",
+          "links": [
+            271
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "MiniMaxH3ReferenceToVideo"
+      },
+      "widgets_values": [
+        "",
+        1344,
+        768,
+        124,
+        "match"
+      ]
+    },
+    {
+      "id": 137,
+      "type": "LoadImage",
+      "pos": [
+        -930,
+        5630
+      ],
+      "size": [
+        290,
+        330
+      ],
+      "flags": {},
+      "order": 10,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            278
+          ]
+        },
+        {
+          "name": "MASK",
+          "type": "MASK",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LoadImage"
+      },
+      "widgets_values": [
+        "example.png",
+        "image"
+      ],
+      "title": "Reference image (<Picture 1>)"
+    },
+    {
+      "id": 138,
+      "type": "PrimitiveStringMultiline",
+      "pos": [
+        -1480,
+        6000
+      ],
+      "size": [
+        370,
+        390
+      ],
+      "flags": {},
+      "order": 11,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "STRING",
+          "type": "STRING",
+          "links": [
+            279
+          ]
+        }
+      ],
+      "title": "Input Text (Prompt)",
+      "properties": {
+        "Node name for S&R": "PrimitiveStringMultiline"
+      },
+      "widgets_values": [
+        "Use <Picture 1> for the subject's identity, wardrobe, and visual style. Use <Audio 1> for voice, rhythm, and timing, keeping lip movement synchronized to the reference audio. Natural camera motion, no subtitles, logos, or watermarks."
+      ],
+      "color": "#322",
+      "bgcolor": "#533"
+    },
+    {
+      "id": 140,
+      "type": "MarkdownNote",
+      "pos": [
+        -1890,
+        5830
+      ],
+      "size": [
+        300,
+        520
       ],
       "flags": {},
       "order": 13,
       "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "title": "Note: Size Settings Reference",
+      "properties": {},
+      "widgets_values": [
+        "| megapixels | Aspect | Output (multiple=32) |\n|---|---|---|\n| 0.2 | 16:9 | 608 x 352 |\n| 0.3 | 16:9 | 736 x 416 |\n| 0.4 | 16:9 | 864 x 480 |\n| 0.5 | 16:9 | 960 x 544 |\n| 0.6 | 16:9 | 1056 x 608 |\n| 0.7 | 16:9 | 1152 x 640 |\n| 0.8 | 16:9 | 1216 x 672 |\n| 0.9 | 16:9 | 1280 x 736 |\n| 0.98 | 16:9 | 1344 x 768 |\n| 1.0 | 16:9 | 1376 x 768 |\n| 1.2 | 16:9 | 1504 x 832 |\n| 1.5 | 16:9 | 1664 x 928 |\n| 1.8 | 16:9 | 1824 x 1024 |\n| 2.0 | 16:9 | 1920 x 1088 |\n"
+      ],
+      "color": "#222",
+      "bgcolor": "#000"
+    },
+    {
+      "id": 141,
+      "type": "RHMiniMaxH3SageAttentionPatch",
+      "pos": [
+        -1490,
+        4710
+      ],
+      "size": [
+        640,
+        100
+      ],
+      "flags": {},
+      "order": 23,
+      "mode": 0,
       "inputs": [
         {
-          "name": "video",
-          "type": "VIDEO",
-          "link": 8
+          "name": "model",
+          "type": "MODEL",
+          "link": 283
         }
       ],
-      "outputs": [],
+      "outputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "links": [
+            252,
+            257
+          ]
+        }
+      ],
       "properties": {
-        "Node name for S&R": "SaveVideo"
+        "Node name for S&R": "RHMiniMaxH3SageAttentionPatch"
       },
       "widgets_values": [
-        "minimax_h3/ref2va_image_audio",
-        "mp4",
-        "h264"
-      ]
+        true
+      ],
+      "title": "Bundled SageAttention Patch"
+    },
+    {
+      "id": 142,
+      "type": "LoadAudio",
+      "pos": [
+        -580,
+        5630
+      ],
+      "size": [
+        320,
+        100
+      ],
+      "flags": {},
+      "order": 24,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "AUDIO",
+          "type": "AUDIO",
+          "links": [
+            284
+          ],
+          "slot_index": 0
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "LoadAudio"
+      },
+      "widgets_values": [
+        "example.mp3"
+      ],
+      "title": "Reference audio (<Audio 1>)"
     }
   ],
   "links": [
     [
+      250,
+      120,
+      0,
+      121,
       1,
-      4,
-      0,
-      5,
-      0,
-      "IMAGE"
+      "VAE"
     ],
     [
+      251,
+      119,
+      0,
+      122,
+      1,
+      "VAE"
+    ],
+    [
+      252,
+      141,
+      0,
+      124,
+      0,
+      "MODEL"
+    ],
+    [
+      253,
+      129,
+      0,
+      125,
+      0,
+      "NOISE"
+    ],
+    [
+      254,
+      126,
+      0,
+      125,
+      1,
+      "GUIDER"
+    ],
+    [
+      255,
+      123,
+      0,
+      125,
       2,
-      6,
-      0,
-      7,
-      0,
-      "AUDIO"
+      "SAMPLER"
     ],
     [
+      256,
+      124,
+      0,
+      125,
       3,
-      5,
-      0,
-      7,
-      1,
-      "MINIMAX_H3_REFERENCES"
+      "SIGMAS"
     ],
     [
-      4,
-      10,
+      257,
+      141,
       0,
-      11,
-      2,
-      "MINIMAX_H3_AV_LATENT"
+      126,
+      0,
+      "MODEL"
     ],
     [
-      5,
-      11,
+      258,
+      122,
       0,
-      12,
-      1,
-      "MINIMAX_H3_AV_LATENT"
-    ],
-    [
-      6,
-      12,
-      0,
-      13,
+      130,
       0,
       "IMAGE"
     ],
     [
-      7,
-      12,
-      1,
-      13,
+      259,
+      121,
+      0,
+      130,
       1,
       "AUDIO"
     ],
     [
-      8,
-      13,
+      260,
+      130,
       0,
-      14,
+      92,
       0,
       "VIDEO"
     ],
     [
-      9,
-      7,
+      261,
+      132,
       0,
-      8,
+      131,
       0,
-      "MINIMAX_H3_REFERENCES"
+      "FLOAT"
     ],
     [
-      10,
-      7,
+      270,
+      136,
       0,
-      9,
-      3,
-      "MINIMAX_H3_REFERENCES"
-    ],
-    [
-      11,
+      126,
       1,
-      0,
-      9,
-      0,
-      "MINIMAX_H3_TEXT_ENCODER"
+      "CONDITIONING"
     ],
     [
-      12,
-      3,
-      0,
-      9,
+      271,
+      136,
       1,
-      "MINIMAX_H3_VAE_BUNDLE"
+      125,
+      4,
+      "LATENT"
     ],
     [
-      13,
-      8,
+      272,
+      128,
       0,
-      9,
+      136,
+      0,
+      "CLIP"
+    ],
+    [
+      273,
+      119,
+      0,
+      136,
+      1,
+      "VAE"
+    ],
+    [
+      274,
+      120,
+      0,
+      136,
       2,
-      "MINIMAX_H3_TARGET"
+      "VAE"
     ],
     [
-      14,
-      8,
-      0,
-      10,
-      0,
-      "MINIMAX_H3_TARGET"
-    ],
-    [
-      15,
-      2,
-      0,
-      11,
-      0,
-      "MINIMAX_H3_DIRECT_MODEL"
-    ],
-    [
-      16,
-      9,
-      0,
-      11,
+      275,
+      131,
       1,
-      "MINIMAX_H3_CONDITIONING"
+      136,
+      12,
+      "INT"
     ],
     [
-      17,
+      276,
+      115,
+      0,
+      136,
+      10,
+      "INT"
+    ],
+    [
+      277,
+      115,
+      1,
+      136,
+      11,
+      "INT"
+    ],
+    [
+      278,
+      137,
+      0,
+      136,
       3,
+      "IMAGE"
+    ],
+    [
+      279,
+      138,
       0,
-      12,
+      136,
+      9,
+      "STRING"
+    ],
+    [
+      280,
+      125,
       0,
-      "MINIMAX_H3_VAE_BUNDLE"
+      122,
+      0,
+      "LATENT"
+    ],
+    [
+      281,
+      125,
+      0,
+      121,
+      0,
+      "LATENT"
+    ],
+    [
+      283,
+      127,
+      0,
+      141,
+      0,
+      "MODEL"
+    ],
+    [
+      284,
+      142,
+      0,
+      136,
+      8,
+      "AUDIO"
     ]
   ],
-  "groups": [],
+  "groups": [
+    {
+      "id": 1,
+      "title": "Models",
+      "bounding": [
+        -1520,
+        4660,
+        700,
+        850
+      ],
+      "color": "#3f789e",
+      "flags": {}
+    },
+    {
+      "id": 2,
+      "title": "Sampling",
+      "bounding": [
+        -280,
+        4840,
+        690,
+        670
+      ],
+      "color": "#3f789e",
+      "flags": {}
+    },
+    {
+      "id": 3,
+      "title": "Conditioning",
+      "bounding": [
+        -790,
+        4840,
+        480,
+        670
+      ],
+      "color": "#3f789e",
+      "flags": {}
+    },
+    {
+      "id": 4,
+      "title": "Decoding and create video",
+      "bounding": [
+        440,
+        4840,
+        670,
+        670
+      ],
+      "color": "#3f789e",
+      "flags": {}
+    },
+    {
+      "id": 5,
+      "title": "User Inputs",
+      "bounding": [
+        -1520,
+        5540,
+        1930,
+        900
+      ],
+      "color": "#3f789e",
+      "flags": {}
+    }
+  ],
   "config": {},
   "extra": {
     "ds": {
-      "scale": 0.7,
+      "scale": 1,
       "offset": [
-        20,
-        30
+        1062.9224582659933,
+        -4889.495457009915
       ]
     },
-    "workflow_note": "Ref2VA (reference image + audio): Reference inputs are strictly ordered. Changing the chain order changes the order of the multimodal prompt and conditioning rows. Before running, replace the Load* placeholders with real assets uploaded to ComfyUI's input/ folder."
+    "frontendVersion": "1.47.11",
+    "VHS_latentpreview": false,
+    "VHS_latentpreviewrate": 0,
+    "VHS_MetadataImage": true,
+    "VHS_KeepIntermediate": true,
+    "workflow_note": "Ref2VA image + audio (MiniMax H3, native + bundled SageAttention). Image uses ref_images.ref_image_0 and standalone audio uses ref_audios.ref_audio_0; stock res_multistep sampling; no legacy Direct loaders or Dual Sigma sampler."
   },
   "version": 0.4
 }

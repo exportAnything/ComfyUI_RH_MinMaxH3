@@ -385,6 +385,13 @@ class AttentionWorkflowTests(unittest.TestCase):
     def _load(self, name):
         return json.loads((WORKFLOWS / name).read_text(encoding="utf-8"))
 
+    @staticmethod
+    def _all_nodes(workflow):
+        nodes = list(workflow["nodes"])
+        for subgraph in workflow.get("definitions", {}).get("subgraphs", []):
+            nodes.extend(subgraph["nodes"])
+        return nodes
+
     def test_sage_workflow_uses_only_the_bundled_patch(self):
         workflow = self._load("t2va_native_sage_attention.json")
         subgraph = workflow["definitions"]["subgraphs"][0]
@@ -424,6 +431,127 @@ class AttentionWorkflowTests(unittest.TestCase):
             subgraph = workflow["definitions"]["subgraphs"][0]
             self.assertTrue(forbidden.isdisjoint(node["type"] for node in subgraph["nodes"]))
             self.assertIsNone(CJK.search(raw))
+
+    def test_every_published_workflow_uses_native_sampling_and_english_notes(self):
+        forbidden_exact = {
+            "RHMiniMaxH3DualSigmaSampler",
+            "RHMiniMaxH3EmptyAVLatent",
+            "RHMiniMaxH3DecodeAV",
+            "StandaloneSageAttentionPatch",
+            "SolAttnMiniMaxH3Patcher",
+        }
+        forbidden_prefixes = (
+            "RHMiniMaxH3Direct",
+            "RHMiniMaxH3Ref2VA",
+            "RHMiniMaxH3T2VA",
+        )
+
+        for path in sorted(WORKFLOWS.glob("*.json")):
+            with self.subTest(workflow=path.name):
+                raw = path.read_text(encoding="utf-8")
+                workflow = json.loads(raw)
+                types = {node["type"] for node in self._all_nodes(workflow)}
+
+                self.assertIsNone(CJK.search(raw))
+                self.assertTrue(forbidden_exact.isdisjoint(types))
+                self.assertFalse(
+                    any(
+                        node_type.startswith(forbidden_prefixes)
+                        for node_type in types
+                    )
+                )
+                self.assertIn("BasicScheduler", types)
+                self.assertIn("SamplerCustomAdvanced", types)
+                self.assertIn("RHMiniMaxH3SageAttentionPatch", types)
+
+    def test_default_t2va_workflow_uses_the_validated_native_subgraph(self):
+        workflow = self._load("t2va.json")
+        subgraph = workflow["definitions"]["subgraphs"][0]
+        types = {node["type"] for node in subgraph["nodes"]}
+        group = next(
+            node for node in workflow["nodes"] if node["type"] == subgraph["id"]
+        )
+        save = next(node for node in workflow["nodes"] if node["type"] == "SaveVideo")
+
+        self.assertIn("MiniMaxH3ImageToVideo", types)
+        self.assertIn("RHMiniMaxH3SageAttentionPatch", types)
+        self.assertIsNone(group["inputs"][0]["link"])
+        self.assertIsNone(group["inputs"][1]["link"])
+        self.assertEqual(save["widgets_values"], ["minimax_h3/t2va", "mp4", "h264"])
+
+    def test_ref2va_workflows_use_native_typed_reference_inputs(self):
+        expected = {
+            "ref2va_image.json": {
+                "ref_images.ref_image_0": ("LoadImage", 0, "IMAGE"),
+            },
+            "ref2va_image_audio.json": {
+                "ref_images.ref_image_0": ("LoadImage", 0, "IMAGE"),
+                "ref_audios.ref_audio_0": ("LoadAudio", 0, "AUDIO"),
+            },
+            "ref2va_video_audio.json": {
+                "ref_videos.ref_video_0": ("GetVideoComponents", 0, "IMAGE"),
+                "ref_video_audios.ref_video_audio_0": (
+                    "GetVideoComponents",
+                    1,
+                    "AUDIO",
+                ),
+            },
+        }
+
+        for name, expected_inputs in expected.items():
+            with self.subTest(workflow=name):
+                workflow = self._load(name)
+                nodes = {node["id"]: node for node in workflow["nodes"]}
+                links = {link[0]: link for link in workflow["links"]}
+                for link in workflow["links"]:
+                    self.assertEqual(len(link), 6)
+                    source = nodes[link[1]]
+                    target = nodes[link[3]]
+                    self.assertIn(link[0], source["outputs"][link[2]]["links"])
+                    self.assertEqual(target["inputs"][link[4]]["link"], link[0])
+                reference = next(
+                    node
+                    for node in workflow["nodes"]
+                    if node["type"] == "MiniMaxH3ReferenceToVideo"
+                )
+                input_slots = {
+                    input_spec["name"]: (slot, input_spec)
+                    for slot, input_spec in enumerate(reference["inputs"])
+                }
+
+                for input_name, (origin_type, origin_slot, link_type) in expected_inputs.items():
+                    slot, input_spec = input_slots[input_name]
+                    link = links[input_spec["link"]]
+                    self.assertEqual(nodes[link[1]]["type"], origin_type)
+                    self.assertEqual(link[2], origin_slot)
+                    self.assertEqual((link[3], link[4], link[5]), (136, slot, link_type))
+
+                model = next(node for node in workflow["nodes"] if node["type"] == "UNETLoader")
+                patch = next(
+                    node
+                    for node in workflow["nodes"]
+                    if node["type"] == "RHMiniMaxH3SageAttentionPatch"
+                )
+                scheduler = next(
+                    node for node in workflow["nodes"] if node["type"] == "BasicScheduler"
+                )
+                guider = next(node for node in workflow["nodes"] if node["type"] == "BasicGuider")
+                model_patch_link = links[patch["inputs"][0]["link"]]
+                scheduler_link = links[scheduler["inputs"][0]["link"]]
+                guider_link = links[guider["inputs"][0]["link"]]
+                self.assertEqual((model_patch_link[1], model_patch_link[3]), (model["id"], patch["id"]))
+                self.assertEqual((scheduler_link[1], scheduler_link[3]), (patch["id"], scheduler["id"]))
+                self.assertEqual((guider_link[1], guider_link[3]), (patch["id"], guider["id"]))
+
+                if name == "ref2va_video_audio.json":
+                    components = next(
+                        node
+                        for node in workflow["nodes"]
+                        if node["type"] == "GetVideoComponents"
+                    )
+                    video_link = links[components["inputs"][0]["link"]]
+                    self.assertEqual(nodes[video_link[1]]["type"], "LoadVideo")
+                    self.assertEqual(video_link[5], "VIDEO")
 
     def test_fl2va_workflows_use_native_keyframe_conditioning(self):
         cases = {

@@ -6,32 +6,34 @@ directly onto the canvas or opened with **Load**.
 
 | Task | Workflow | Conditioning input |
 |------|--------|----------|
-| T2VA | `t2va.json` | None |
+| T2VA | `t2va.json` | Native graph; text only; bundled SageAttention |
 | T2VA | `t2va_native_sage_attention.json` | None; native ComfyUI graph with SageAttention |
 | T2VA | `t2va_native_sol_attn.json` | None; native ComfyUI graph with Sol-Attn |
 | FL2VA | `fl2va_first_frame.json` | Native graph; first-frame image |
 | FL2VA | `fl2va_last_frame.json` | Native graph; last-frame image |
 | FL2VA | `fl2va_first_last_frame.json` | Native graph; first-frame + last-frame images |
-| Ref2VA | `ref2va_image.json` | Reference image |
-| Ref2VA | `ref2va_image_audio.json` | Reference image → reference audio (ordered chain) |
-| Ref2VA | `ref2va_video_audio.json` | Reference video with an audio track |
+| Ref2VA | `ref2va_image.json` | Native graph; reference image |
+| Ref2VA | `ref2va_image_audio.json` | Native graph; reference image + standalone audio |
+| Ref2VA | `ref2va_video_audio.json` | Native graph; 24-fps reference video + paired soundtrack |
 
-The native FL2VA workflows default to 16:9 / 0.4 megapixels (`864×480`),
-5 seconds, 20 steps, the `simple` scheduler, and `res_multistep`. The legacy
-Direct examples retain their explicit `832×480`, 50-point Euler defaults.
-Replace placeholder media filenames before queueing.
+All default workflows now use native ComfyUI MiniMax H3 conditioning and stock
+sampling. They default to 16:9 / 0.4 megapixels (`864×480`), 5 seconds, 20
+steps, the `simple` scheduler, and `res_multistep`. Replace placeholder media
+filenames before queueing.
 
 ## Native Attention Variants
 
-The `t2va_native_*` workflows and all three `fl2va_*` workflows use ComfyUI's
-native MiniMax H3 implementation and require ComfyUI 0.30.1 or newer. They are
-preconfigured for the official INT8-CONVROT transformer, NVFP4-AWQ text encoder,
-and native video/audio VAEs. Their model dropdowns can also select compatible
-native FP8 files discovered by ComfyUI.
+Every workflow in this directory uses ComfyUI's native MiniMax H3
+implementation and requires ComfyUI 0.30.1 or newer. They are preconfigured for
+the official INT8-CONVROT transformer, NVFP4-AWQ text encoder, and native
+video/audio VAEs. Their model dropdowns can also select compatible native FP8
+files discovered by ComfyUI.
 
 Choose an attention workflow:
 
 - `t2va_native_sage_attention.json` uses the fork-owned SageAttention patch.
+- `t2va.json`, the three `fl2va_*` workflows, and the three `ref2va_*`
+  workflows use that same bundled SageAttention patch as their safe default.
 - `t2va_native_sol_attn.json` chains the fork-owned SageAttention patch into the
   experimental Sol-style sparse-attention patch. Sol handles eligible middle
   steps; Sage is retained as the fallback for every other attention call.
@@ -57,17 +59,32 @@ The images are encoded conditioning anchors, not pixel-locked copies. Do not
 insert the legacy Dual Sigma Sampler into these graphs; native H3 derives the
 audio schedule internally and is designed to use ComfyUI's stock sampler.
 
+## Native Reference Variants
+
+The three `ref2va_*` files use `MiniMaxH3ReferenceToVideo` and one-based prompt
+tags such as `<Picture 1>`, `<Video 1>`, and `<Audio 1>`:
+
+- `ref2va_image.json` connects one image to `ref_images.ref_image_0`.
+- `ref2va_image_audio.json` connects an image and standalone audio to their
+  native typed reference inputs.
+- `ref2va_video_audio.json` uses `LoadVideo` and `GetVideoComponents`, pairing
+  the frames and soundtrack through matching `ref_video_0` and
+  `ref_video_audio_0` suffixes.
+
+The native reference-video node expects 24-fps frames and does not resample the
+input. Use a 24-fps, 2–15 second MP4 with an audio track for the video+audio
+workflow.
+
 ## Before Running
 
-1. **Model names**: The three Loaders' `model_root` values and component dropdowns
-   must match your local installation. See the "Model Directory" section of the
+1. **Model names**: The diffusion-model, text-encoder, and VAE dropdowns must
+   match your local installation. See the "Model Directory" section of the
    repository's root README for weight placement rules. T2VA/FL2VA workflows
-   require an FL2VA transformer; the Ref2VA FP8 file cannot replace it.
+   require an FL2VA transformer; Ref2VA workflows require a Ref2VA transformer.
 2. **Input assets**: The filenames in `LoadImage`, `LoadAudio`, and `LoadVideo` are
    placeholders. Replace them with real files uploaded to ComfyUI's `input/` folder.
-3. **Ref2VA reference order**: The reference chain is strictly ordered. Connect each
-   reference node's `references` output to the next reference node. Changing the chain
-   order changes the order of the multimodal prompt and conditioning rows.
-4. **Target dimensions**: `width` and `height` are explicitly set. When left blank,
-   they are resolved from `aspect_ratio`; Ref2VA will resolve to 1344×768, greatly
-   increasing the sequence length and processing time.
+3. **Ref2VA prompt tags**: Reference tags are one-based and grouped by media
+   type. Keep `<Picture N>`, `<Video N>`, and `<Audio N>` synchronized with the
+   corresponding native autogrow socket order.
+4. **Target dimensions**: Width and height come from Resolution Selector and
+   are rounded to multiples of 32.

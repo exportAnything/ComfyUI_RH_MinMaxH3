@@ -31,9 +31,10 @@ partner; this plugin is developed and maintained by RunningHub.
   image/audio/video references (Ref2VA).
 - **Image-to-video is FL2VA with a first frame only** — the supplied image
   conditions frame 0 through ComfyUI's native MiniMax-H3 implementation.
-- **Native keyframe sampling** — the first/last-frame examples use ComfyUI's
-  stock sampler. H3 derives the audio schedule internally, keeping audio locked
-  to motion without a separate workflow-level dual-sigma sampler.
+- **Native stock sampling in every example** — T2VA, FL2VA, and Ref2VA use
+  ComfyUI's native H3 nodes and stock sampler. H3 derives the audio schedule
+  internally, keeping audio locked to motion without a separate workflow-level
+  dual-sigma sampler.
 - **2.5× less denoising work with `res_multistep`** — a second-order exponential
   integrator reaches the quality of 50-step Euler in about 21 sigma points
   (20 DiT calls instead of 49). Same weights, no requantisation; `euler` stays
@@ -84,11 +85,11 @@ not make it small — expect substantial host RAM and fast storage on top of VRA
 ## 📦 Model Download & Installation
 
 The fork supports two model layouts. The native Comfy layout is recommended
-for FP8/NVFP4 and does **not** require a copied Diffusers release tree:
+for INT8/FP8/NVFP4 and does **not** require a copied Diffusers release tree:
 
 | Location | Holds | Why it is needed |
 |----------|-------|------------------|
-| `ComfyUI/models/diffusion_models/` | FP8 MiniMax-H3 DiT | Standard Comfy diffusion-model discovery |
+| `ComfyUI/models/diffusion_models/` | INT8 or FP8 MiniMax-H3 DiT | Standard Comfy diffusion-model discovery |
 | `ComfyUI/models/text_encoders/` | NVFP4 MiniMax-H3 Qwen3-VL | Standard Comfy text-encoder discovery |
 | `ComfyUI/models/vae/` | Video and audio VAEs | Standard Comfy VAE discovery |
 
@@ -113,8 +114,9 @@ cross-node fingerprint check deliberately rejects that combination.
 ComfyUI/
 └── models/
     ├── diffusion_models/
-    │   ├── minimax_h3_fl2va_pruned_fp8_scaled.safetensors  # T2VA + FL2VA
-    │   └── minimax_h3_ref2va_pruned_fp8_scaled.safetensors # Ref2VA
+    │   ├── minimax_h3_fl2va_pruned_int8_convrot.safetensors # T2VA + FL2VA default
+    │   ├── minimax_h3_ref2va_int8_convrot.safetensors       # Ref2VA default
+    │   └── *_fp8_scaled.safetensors                         # compatible FP8 alternatives
     ├── text_encoders/
     │   └── qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors
     └── vae/
@@ -123,7 +125,7 @@ ComfyUI/
 ```
 
 T2VA and keyframe workflows use the **FL2VA** DiT. A Ref2VA-only transformer
-cannot run those graphs; install the matching FL2VA FP8 file as well.
+cannot run those graphs; install the matching FL2VA INT8 or FP8 file as well.
 
 ### Legacy INT8-CONVROT Download Methods
 
@@ -156,8 +158,9 @@ modelscope download --model Gluttony10/MiniMax-H3-INT8-CONVROT --local_dir Comfy
 
 | Selection | Loader dropdown value | Notes |
 |-----------|----------------------|-------|
-| DiT FP8 (native) | `minimax_h3_fl2va_pruned_fp8_scaled.safetensors` / `minimax_h3_ref2va_pruned_fp8_scaled.safetensors` | Normal `diffusion_models` folder; partition is enforced |
-| DiT INT8 | `MiniMax-H3-FL2VA-int8_convrot.safetensors` / `MiniMax-H3-Ref2VA-int8_convrot.safetensors` | Smallest footprint; the partition is proven by the filename |
+| DiT INT8 (native default) | `minimax_h3_fl2va_pruned_int8_convrot.safetensors` / `minimax_h3_ref2va_int8_convrot.safetensors` | Normal `diffusion_models` folder; used by the published workflows |
+| DiT FP8 (native alternative) | `minimax_h3_fl2va_pruned_fp8_scaled.safetensors` / `minimax_h3_ref2va_pruned_fp8_scaled.safetensors` | Normal `diffusion_models` folder; partition is enforced |
+| DiT INT8 (legacy Direct layout) | `MiniMax-H3-FL2VA-int8_convrot.safetensors` / `MiniMax-H3-Ref2VA-int8_convrot.safetensors` | RunningHub layout for legacy Direct graphs |
 | DiT BF16 (sharded) | `MiniMax-H3-FL2VA` / `MiniMax-H3-Ref2VA` | Highest fidelity; layerwise offload keeps it viable on 24GB |
 | Text encoder NVFP4 (native) | `qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors` | Normal `text_encoders` folder; loaded through Comfy's native mixed-precision ops |
 | Text encoder INT8 | `qwen3-vl-32b-int8_convrot.safetensors` | Roughly 26GB versus 62GB for BF16 |
@@ -170,11 +173,11 @@ partition — an FL2VA node never offers Ref2VA weights.
 
 ## 🚀 Usage
 
-The T2VA Direct and Ref2VA examples use this repository's typed direct-runtime
-loaders and AV nodes. The three FL2VA examples use ComfyUI's native MiniMax-H3
-model, `MiniMaxH3ImageToVideo` conditioning, stock `res_multistep` sampling,
-and the bundled SageAttention patch. This native path is also the recommended
-way to use FP8/NVFP4 or INT8-CONVROT checkpoints for keyframe generation.
+All published examples use ComfyUI's native MiniMax-H3 implementation, stock
+`res_multistep` sampling, and the bundled SageAttention patch. T2VA and FL2VA
+use `MiniMaxH3ImageToVideo`; Ref2VA uses `MiniMaxH3ReferenceToVideo`. The older
+Direct runtime remains available for compatibility and future investigation,
+but it is not used by the default workflows.
 
 ### Example Workflows
 
@@ -182,21 +185,20 @@ Ready-to-load graphs live in [`examples/workflows/`](examples/workflows):
 
 | Task | Workflow | Condition material |
 |------|----------|--------------------|
-| T2VA | [`t2va.json`](examples/workflows/t2va.json) | none |
+| T2VA | [`t2va.json`](examples/workflows/t2va.json) | native text-only graph + bundled Sage patch |
 | T2VA | [`t2va_native_sage_attention.json`](examples/workflows/t2va_native_sage_attention.json) | native Comfy graph + bundled Sage patch |
 | T2VA | [`t2va_native_sol_attn.json`](examples/workflows/t2va_native_sol_attn.json) | native Comfy graph + bundled Sage fallback and Sol-style sparse patch |
 | FL2VA | [`fl2va_first_frame.json`](examples/workflows/fl2va_first_frame.json) | native graph + first frame — **this is image-to-video** |
 | FL2VA | [`fl2va_last_frame.json`](examples/workflows/fl2va_last_frame.json) | native graph + last frame |
 | FL2VA | [`fl2va_first_last_frame.json`](examples/workflows/fl2va_first_last_frame.json) | native graph + first and last frames |
-| Ref2VA | [`ref2va_image.json`](examples/workflows/ref2va_image.json) | one reference image |
-| Ref2VA | [`ref2va_image_audio.json`](examples/workflows/ref2va_image_audio.json) | image → audio, ordered chain |
-| Ref2VA | [`ref2va_video_audio.json`](examples/workflows/ref2va_video_audio.json) | video carrying an audio track |
+| Ref2VA | [`ref2va_image.json`](examples/workflows/ref2va_image.json) | native graph + one reference image |
+| Ref2VA | [`ref2va_image_audio.json`](examples/workflows/ref2va_image_audio.json) | native graph + image and standalone audio |
+| Ref2VA | [`ref2va_video_audio.json`](examples/workflows/ref2va_video_audio.json) | native graph + 24-fps video and paired soundtrack |
 
-The native FL2VA graphs default to the 16:9 / 0.4-megapixel resolution preset
+The native graphs default to the 16:9 / 0.4-megapixel resolution preset
 (`864×480`), five seconds, 20 steps, the `simple` scheduler, and
-`res_multistep`. The Direct examples keep their explicit `832×480`, 50-point
-Euler defaults. Replace placeholder media filenames with files already uploaded
-to ComfyUI `input/`.
+`res_multistep`. Replace placeholder media filenames with files already
+uploaded to ComfyUI `input/`.
 
 **Keyframes and references are different mechanisms.** Native FL2VA encodes a
 first and/or last image as a conditioning anchor at index `0` or the final frame.
@@ -204,15 +206,20 @@ The model normally reproduces the anchor closely, but it is not a byte-for-byte
 pixel lock. A Ref2VA reference has no frame position and steers identity rather
 than anchoring a specific output frame.
 
-**Ref2VA reference order is significant.** Chain each reference node's
-`references` output into the next one; reordering the chain changes the
-multimodal prompt and the condition rows.
+**Ref2VA reference order is significant.** Native reference sockets are grouped
+by media type and use one-based prompt tags such as `<Picture 1>`, `<Video 1>`,
+and `<Audio 1>`. The video+audio workflow pairs frames and soundtrack through
+matching native socket suffixes. Its source video must be 24 fps because
+`GetVideoComponents` does not resample frames.
 
 ## 📝 Node Reference
 
 All nodes register under the `RunningHub/MiniMax H3/*` category.
 
-### Loaders
+### Legacy Direct Loaders
+
+These nodes remain available for compatibility and scheduler research. The
+published example workflows use ComfyUI's native loaders instead.
 
 | Node | Purpose |
 |------|---------|
@@ -284,6 +291,15 @@ turned off independently for rollback.
   and peak VRAM; `OPT_WRITE_SIDECAR` writes a JSON sidecar beside each render.
 
 ## 📋 Changelog
+
+### 0.6.2
+
+- Rebuilt the default T2VA and all three Ref2VA examples on ComfyUI's native
+  MiniMax-H3 conditioning and stock `res_multistep` sampler path.
+- Added native typed image, standalone-audio, video, and paired-soundtrack
+  wiring, with English prompt-tag and 24-fps reference-video guidance.
+- Added a repository-wide workflow test that prevents legacy Direct/Dual Sigma
+  nodes or Chinese helper text from returning to published examples.
 
 ### 0.6.1
 
