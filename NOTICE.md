@@ -24,3 +24,27 @@ licence and confidentiality terms that apply to their checkpoint files.
 
 ComfyUI and Transformers are runtime dependencies/interfaces; their source code
 is not bundled in this archive.
+
+## Bundled Sol-style sparse FlexAttention
+
+`minimax_h3_nodes/runtime/attention_backends.py` contains an adapted and
+substantially revised block-routing/FlexAttention path based on the Apache-2.0
+project:
+
+- KingGore/ComfyUI_sol-attn_Blackwell
+- source snapshot: `de7ffe310fbfedb2920489fc4690a98410a189bb`
+- upstream license: Apache License 2.0
+
+The adaptation removes startup warm-up and Torch-install mutation, fixes
+attention-scale/output-layout/fallback handling, preserves previously installed
+ComfyUI attention overrides, adds sampling-window and minimum-sequence gating,
+uses deterministic routed indices, and handles partial block means correctly.
+
+This bundled path is described as **Sol-style sparse FlexAttention**. It is not
+the official NVIDIA Sol-Attn kernel: unselected blocks are omitted instead of
+receiving the proxy correction used by the official algorithm. No code from the
+Kijai `ComfyUI-SolAttn_triton` repository is bundled. The algorithm reference
+is the NVLabs Sol-Attn project: <https://nvlabs.github.io/Sana/Sol-Attn/>.
+
+SageAttention is an optional runtime library/interface. Its CUDA/Triton kernels
+are not copied into this repository.

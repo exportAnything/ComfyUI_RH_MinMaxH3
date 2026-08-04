@@ -41,6 +41,10 @@ from .api.sampling_nodes import (
     MiniMaxH3SeparateAVLatent,
 )
 from .api.decode import MiniMaxH3DecodeAV
+from .api.attention import (
+    MiniMaxH3SageAttentionPatch,
+    MiniMaxH3SolAttentionPatch,
+)
 
 NODE_CLASS_MAPPINGS = {
     "RHMiniMaxH3DirectModelLoader": MiniMaxH3DirectModelLoader,
@@ -71,6 +75,8 @@ NODE_CLASS_MAPPINGS = {
     "RHMiniMaxH3FrameRate": MiniMaxH3FrameRate,
     "RHMiniMaxH3DualSigmaSampler": MiniMaxH3DualSigmaSampler,
     "RHMiniMaxH3DecodeAV": MiniMaxH3DecodeAV,
+    "RHMiniMaxH3SageAttentionPatch": MiniMaxH3SageAttentionPatch,
+    "RHMiniMaxH3SolAttentionPatch": MiniMaxH3SolAttentionPatch,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -104,6 +110,12 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "RHMiniMaxH3FrameRate": "RunningHub MiniMax H3 Frame Rate (Experimental)",
     "RHMiniMaxH3DualSigmaSampler": "RunningHub MiniMax H3 Dual Sigma Sampler",
     "RHMiniMaxH3DecodeAV": "RunningHub MiniMax H3 Decode Video + Audio",
+    "RHMiniMaxH3SageAttentionPatch": (
+        "RunningHub MiniMax H3 SageAttention Patch (Bundled)"
+    ),
+    "RHMiniMaxH3SolAttentionPatch": (
+        "RunningHub MiniMax H3 Sol-Style Sparse Attention (Experimental)"
+    ),
 }
 
 

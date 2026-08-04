@@ -1,6 +1,6 @@
 [project]
 name = "comfyui-rh-minimax-h3"
-version = "0.5.0"
+version = "0.6.0"
 description = "RunningHub MiniMax-H3 audio-video custom nodes for ComfyUI (direct, in-process)"
 readme = "README.md"
 requires-python = ">=3.10"

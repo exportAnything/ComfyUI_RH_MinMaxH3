@@ -28,16 +28,19 @@ The two `t2va_native_*` workflows use ComfyUI's native MiniMax H3 implementation
 and require ComfyUI 0.30.1 or newer. They are preconfigured for the official
 INT8-CONVROT transformer, NVFP4-AWQ text encoder, and native video/audio VAEs.
 
-Choose **one** attention workflow:
+Choose an attention workflow:
 
-- `t2va_native_sage_attention.json` uses Patch Sage Attention in `auto` mode.
-- `t2va_native_sol_attn.json` uses the MiniMax H3 Sol-Attn patch with `tau=1.0`
-  and the `diag` threshold.
+- `t2va_native_sage_attention.json` uses the fork-owned SageAttention patch.
+- `t2va_native_sol_attn.json` chains the fork-owned SageAttention patch into the
+  experimental Sol-style sparse-attention patch. Sol handles eligible middle
+  steps; Sage is retained as the fallback for every other attention call.
 
-Do not chain SageAttention and Sol-Attn. Both replace the same ComfyUI optimized
-attention hook, so the last patch would override the first. In each native graph,
-the selected patch is already connected between Load Diffusion Model and both the
-scheduler and guider.
+No additional Sage or Sol custom-node pack is required. A compatible
+hardware-specific `sageattention` Python/CUDA library remains optional; when it
+is missing, the included Sage node safely leaves normal ComfyUI attention active.
+The included Sol-style node has no additional dependency beyond ComfyUI's PyTorch
+runtime. Both graphs are already wired between Load Diffusion Model and the
+scheduler/guider.
 
 ## Before Running
 

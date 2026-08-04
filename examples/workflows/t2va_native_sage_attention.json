@@ -186,7 +186,7 @@
       "title": "Note: MiniMax H3",
       "properties": {},
       "widgets_values": [
-        "## MiniMax H3\n\n[MiniMax H3](https://www.minimax.io/blog/minimax-h3) is MiniMax's general-purpose, omni-modal generation model. It jointly understands text, image, video, and audio, and generates video with **native stereo audio**: voice, sound effects, and music are modeled jointly in a single forward pass, not layered on afterward. Output is up to 2K resolution, 24fps, and up to about 15 seconds.\n\n## ComfyUI links\n- [ComfyUI#15224](https://github.com/Comfy-Org/ComfyUI/pull/15224)\n- [🤗 Comfy-Org/MiniMax-H3](https://huggingface.co/Comfy-Org/MiniMax-H3)\n\n## About this workflow\n\n**Key inputs**\n\n- **prompt**: describe the shots, camera moves, and the accompanying audio (dialogue, SFX, music) in one block\n- **width / height**: set via Resolution Selector. H3's native canvas is a 768px short edge, capped at 768x1344 pixels, rounded to a multiple of 32\n- **duration (seconds)**: converted to a valid frame `length` by the Math Expression node, snapping up to the model's 17-frame-per-block (17k+5) grid at 24fps\n\n\n## Attention backend\n\nThis variant routes the native ComfyUI `MODEL` through **Patch Sage Attention (Standalone)** before both the scheduler and guider. `auto` selects the best installed SageAttention kernel for the GPU.\n\nUse this SageAttention variant **or** the Sol-Attn variant, not both. Both nodes replace the same attention hook, so chaining them does not combine them; the last patch wins. Requires ComfyUI 0.30.1 or newer."
+        "## MiniMax H3\n\n[MiniMax H3](https://www.minimax.io/blog/minimax-h3) is MiniMax's general-purpose, omni-modal generation model. It jointly understands text, image, video, and audio, and generates video with **native stereo audio**: voice, sound effects, and music are modeled jointly in a single forward pass, not layered on afterward. Output is up to 2K resolution, 24fps, and up to about 15 seconds.\n\n## ComfyUI links\n- [ComfyUI#15224](https://github.com/Comfy-Org/ComfyUI/pull/15224)\n- [🤗 Comfy-Org/MiniMax-H3](https://huggingface.co/Comfy-Org/MiniMax-H3)\n\n## About this workflow\n\n**Key inputs**\n\n- **prompt**: describe the shots, camera moves, and the accompanying audio (dialogue, SFX, music) in one block\n- **width / height**: set via Resolution Selector. H3's native canvas is a 768px short edge, capped at 768x1344 pixels, rounded to a multiple of 32\n- **duration (seconds)**: converted to a valid frame `length` by the Math Expression node, snapping up to the model's 17-frame-per-block (17k+5) grid at 24fps\n\n\n## Attention backend\n\nThis workflow uses **RunningHub MiniMax H3 SageAttention Patch (Bundled)**. The node is part of this repository, so no additional Sage custom-node pack is needed. If a compatible SageAttention Python/CUDA library is installed, the node selects it automatically; otherwise it safely uses ComfyUI's normal attention.\n\nRequires ComfyUI 0.30.1 or newer.\n"
       ],
       "color": "#222",
       "bgcolor": "#000"
@@ -1229,14 +1229,14 @@
           },
           {
             "id": 119,
-            "type": "StandaloneSageAttentionPatch",
+            "type": "RHMiniMaxH3SageAttentionPatch",
             "pos": [
               -1290,
               5250
             ],
             "size": [
-              390,
-              120
+              420,
+              100
             ],
             "flags": {},
             "order": 15,
@@ -1259,11 +1259,10 @@
               }
             ],
             "properties": {
-              "Node name for S&R": "StandaloneSageAttentionPatch"
+              "Node name for S&R": "RHMiniMaxH3SageAttentionPatch"
             },
             "widgets_values": [
-              "auto",
-              false
+              true
             ]
           }
         ],
@@ -1318,7 +1317,7 @@
           },
           {
             "id": 5,
-            "title": "Attention backend — use one",
+            "title": "Bundled SageAttention backend",
             "bounding": [
               -1320,
               5220,

@@ -49,6 +49,10 @@ partner; this plugin is developed and maintained by RunningHub.
   checkpoint mid-graph, fails closed instead of rendering something wrong.
 - **Optional approximate acceleration** — velocity-cache or Cache-DiT, both off
   by default.
+- **Bundled native attention patches** — fork-owned SageAttention and
+  experimental Sol-style sparse-attention nodes eliminate the need for separate
+  Sage/Sol custom-node packs. The Sol workflow composes them automatically:
+  Sage handles fallback calls and Sol-style routing takes eligible middle steps.
 
 ## 🛠️ Installation
 
@@ -67,6 +71,11 @@ Restart ComfyUI afterwards — node definitions are read once at start-up.
 - `ffmpeg` and `ffprobe` on `PATH` for Ref2VA video and audio references
 - `transformers>=4.57.0`; the legacy Transformers-based Qwen loader validates
   `<=5.8.1`, while native NVFP4 uses ComfyUI's built-in MiniMax encoder
+- SageAttention is optional and hardware-specific. The bundled Sage patch node
+  uses a compatible installed `sageattention` Python/CUDA build when available
+  and otherwise passes through safely to ComfyUI attention. It is intentionally
+  not pinned in `requirements.txt` because its wheel must match Python, PyTorch,
+  CUDA, and the GPU architecture.
 
 MiniMax-H3 is a large model. INT8 reduces storage and transfer cost but does
 not make it small — expect substantial host RAM and fast storage on top of VRAM.
@@ -171,6 +180,8 @@ Ready-to-load graphs live in [`examples/workflows/`](examples/workflows):
 | Task | Workflow | Condition material |
 |------|----------|--------------------|
 | T2VA | [`t2va.json`](examples/workflows/t2va.json) | none |
+| T2VA | [`t2va_native_sage_attention.json`](examples/workflows/t2va_native_sage_attention.json) | native Comfy graph + bundled Sage patch |
+| T2VA | [`t2va_native_sol_attn.json`](examples/workflows/t2va_native_sol_attn.json) | native Comfy graph + bundled Sage fallback and Sol-style sparse patch |
 | FL2VA | [`fl2va_first_frame.json`](examples/workflows/fl2va_first_frame.json) | first frame — **this is image-to-video** |
 | FL2VA | [`fl2va_last_frame.json`](examples/workflows/fl2va_last_frame.json) | last frame |
 | FL2VA | [`fl2va_first_last_frame.json`](examples/workflows/fl2va_first_last_frame.json) | first + last frame |
@@ -227,6 +238,29 @@ All nodes register under the `RunningHub/MiniMax H3/*` category.
 | `RHMiniMaxH3DualSigmaSampler` | Joint video + audio sampling. `sampler_mode` selects `euler` (default, 50 sigma points) or `res_multistep` (second order, ~21 points). Full parameter guide: [docs/sampling.md](docs/sampling.md) |
 | `RHMiniMaxH3DecodeAV` | Decode to `IMAGE` frames and `AUDIO` |
 
+### Native MODEL attention patches
+
+These nodes use the standard ComfyUI `MODEL` type and are intended for the two
+`t2va_native_*` workflows. They do not attach to the legacy direct-runtime
+`MINIMAX_H3_DIRECT_MODEL` socket.
+
+| Node | Purpose |
+|------|---------|
+| `RHMiniMaxH3SageAttentionPatch` | Bundled English SageAttention patch node. Uses Sage's automatic backend selection when its optional ABI-compatible Python/CUDA library is present; otherwise leaves normal ComfyUI attention active. |
+| `RHMiniMaxH3SolAttentionPatch` | Bundled English experimental Sol-style sparse FlexAttention node. Chains the preceding override, so Sage handles early/late, short, masked, unsupported, or failed calls. No separate Sol custom-node pack is needed. |
+
+Recommended order for the Sol workflow:
+
+```text
+Load Diffusion Model → RHMiniMaxH3SageAttentionPatch
+                     → RHMiniMaxH3SolAttentionPatch
+                     → Scheduler / Guider
+```
+
+The Sol-style path is quality-changing and is not the official NVIDIA Sol-Attn
+kernel. Its conservative defaults use `tau=1.2`, the middle 20%–90% of the
+sampling schedule, and sequences of at least 4096 tokens.
+
 ## ⚙️ Advanced
 
 Feature flags live in `minimax_h3_nodes/runtime/h3_settings.py` and can each be
@@ -244,6 +278,15 @@ turned off independently for rollback.
   and peak VRAM; `OPT_WRITE_SIDECAR` writes a JSON sidecar beside each render.
 
 ## 📋 Changelog
+
+### 0.6.0
+
+- Added fork-owned English SageAttention and Sol-style sparse-attention patch
+  nodes, removing external custom-node dependencies from the native workflows.
+- The Sol-style patch preserves and delegates to a preceding Sage override for
+  early/late schedule steps and all ineligible or failed calls.
+- Updated the native Sage and Sol workflow files to use only nodes registered by
+  this repository.
 
 ### 0.5.0
 

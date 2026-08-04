@@ -1,8 +1,8 @@
 {
   "id": "f759ed6d-e61b-54fc-aa90-01be4aa23625",
   "revision": 1,
-  "last_node_id": 119,
-  "last_link_id": 230,
+  "last_node_id": 120,
+  "last_link_id": 231,
   "nodes": [
     {
       "id": 92,
@@ -165,7 +165,7 @@
         "minimax_h3_video_vae_fp16.safetensors",
         "minimax_h3_audio_vae_fp32.safetensors"
       ],
-      "title": "Text to Video + Audio (MiniMax H3, Sol-Attn)"
+      "title": "Text to Video + Audio (MiniMax H3, Sage + Sol-Style)"
     },
     {
       "id": 116,
@@ -186,7 +186,7 @@
       "title": "Note: MiniMax H3",
       "properties": {},
       "widgets_values": [
-        "## MiniMax H3\n\n[MiniMax H3](https://www.minimax.io/blog/minimax-h3) is MiniMax's general-purpose, omni-modal generation model. It jointly understands text, image, video, and audio, and generates video with **native stereo audio**: voice, sound effects, and music are modeled jointly in a single forward pass, not layered on afterward. Output is up to 2K resolution, 24fps, and up to about 15 seconds.\n\n## ComfyUI links\n- [ComfyUI#15224](https://github.com/Comfy-Org/ComfyUI/pull/15224)\n- [🤗 Comfy-Org/MiniMax-H3](https://huggingface.co/Comfy-Org/MiniMax-H3)\n\n## About this workflow\n\n**Key inputs**\n\n- **prompt**: describe the shots, camera moves, and the accompanying audio (dialogue, SFX, music) in one block\n- **width / height**: set via Resolution Selector. H3's native canvas is a 768px short edge, capped at 768x1344 pixels, rounded to a multiple of 32\n- **duration (seconds)**: converted to a valid frame `length` by the Math Expression node, snapping up to the model's 17-frame-per-block (17k+5) grid at 24fps\n\n\n## Attention backend\n\nThis variant routes the native ComfyUI `MODEL` through **Sol-Attn MiniMax H3 Patcher** before both the scheduler and guider. The default uses `tau=1.0` and the `diag` threshold on supported Blackwell GPUs.\n\nUse this Sol-Attn variant **or** the SageAttention variant, not both. Both nodes replace the same attention hook, so chaining them does not combine them; the last patch wins. Requires ComfyUI 0.30.1 or newer."
+        "## MiniMax H3\n\n[MiniMax H3](https://www.minimax.io/blog/minimax-h3) is MiniMax's general-purpose, omni-modal generation model. It jointly understands text, image, video, and audio, and generates video with **native stereo audio**: voice, sound effects, and music are modeled jointly in a single forward pass, not layered on afterward. Output is up to 2K resolution, 24fps, and up to about 15 seconds.\n\n## ComfyUI links\n- [ComfyUI#15224](https://github.com/Comfy-Org/ComfyUI/pull/15224)\n- [🤗 Comfy-Org/MiniMax-H3](https://huggingface.co/Comfy-Org/MiniMax-H3)\n\n## About this workflow\n\n**Key inputs**\n\n- **prompt**: describe the shots, camera moves, and the accompanying audio (dialogue, SFX, music) in one block\n- **width / height**: set via Resolution Selector. H3's native canvas is a 768px short edge, capped at 768x1344 pixels, rounded to a multiple of 32\n- **duration (seconds)**: converted to a valid frame `length` by the Math Expression node, snapping up to the model's 17-frame-per-block (17k+5) grid at 24fps\n\n\n## Attention backend\n\nThis workflow includes both fork-owned attention nodes in the correct order:\n\n`Load Diffusion Model → Bundled SageAttention Patch → Bundled Sol-Style Sparse Attention → Scheduler / Guider`\n\nThe Sol-style node handles eligible long-sequence middle sampling steps. Early, late, short, masked, unsupported, or failed calls delegate to SageAttention; if its optional Python/CUDA library is unavailable, ComfyUI's normal attention is used. No additional Sage or Sol custom-node pack is required.\n\nThe bundled Sol-style FlexAttention path is experimental and can change output quality. Defaults: `tau=1.2`, schedule window `20%–90%`, and minimum sequence length `4096`. Requires ComfyUI 0.30.1 or newer.\n"
       ],
       "color": "#222",
       "bgcolor": "#000"
@@ -274,13 +274,13 @@
         "version": 1,
         "state": {
           "lastGroupId": 5,
-          "lastNodeId": 119,
-          "lastLinkId": 230,
+          "lastNodeId": 120,
+          "lastLinkId": 231,
           "lastRerouteId": 0
         },
-        "revision": 1,
+        "revision": 2,
         "config": {},
-        "name": "Text to Video + Audio (MiniMax H3, Sol-Attn)",
+        "name": "Text to Video + Audio (MiniMax H3, Sage + Sol-Style)",
         "inputNode": {
           "id": -10,
           "bounding": [
@@ -1229,14 +1229,56 @@
           },
           {
             "id": 119,
-            "type": "SolAttnMiniMaxH3Patcher",
+            "type": "RHMiniMaxH3SolAttentionPatch",
+            "pos": [
+              -1290,
+              5400
+            ],
+            "size": [
+              420,
+              300
+            ],
+            "flags": {},
+            "order": 16,
+            "mode": 0,
+            "inputs": [
+              {
+                "name": "model",
+                "type": "MODEL",
+                "link": 231
+              }
+            ],
+            "outputs": [
+              {
+                "name": "model",
+                "type": "MODEL",
+                "links": [
+                  229,
+                  230
+                ]
+              }
+            ],
+            "properties": {
+              "Node name for S&R": "RHMiniMaxH3SolAttentionPatch"
+            },
+            "widgets_values": [
+              true,
+              1.2,
+              0.2,
+              0.9,
+              4096
+            ]
+          },
+          {
+            "id": 120,
+            "type": "RHMiniMaxH3SageAttentionPatch",
             "pos": [
               -1290,
               5250
             ],
             "size": [
-              390,
-              150
+              420,
+              100
             ],
             "flags": {},
             "order": 15,
@@ -1250,22 +1292,18 @@
             ],
             "outputs": [
               {
-                "name": "MODEL",
+                "name": "model",
                 "type": "MODEL",
                 "links": [
-                  229,
-                  230
+                  231
                 ]
               }
             ],
             "properties": {
-              "aux_id": "KingGore/ComfyUI_sol-attn_Blackwell",
-              "Node name for S&R": "SolAttnMiniMaxH3Patcher"
+              "Node name for S&R": "RHMiniMaxH3SageAttentionPatch"
             },
             "widgets_values": [
-              true,
-              1.0,
-              "diag"
+              true
             ]
           }
         ],
@@ -1320,12 +1358,12 @@
           },
           {
             "id": 5,
-            "title": "Attention backend — use one",
+            "title": "Bundled attention chain — Sage fallback, then Sol-style",
             "bounding": [
               -1320,
               5220,
               480,
-              220
+              520
             ],
             "color": "#6f4b9e",
             "flags": {}
@@ -1560,7 +1598,7 @@
             "id": 228,
             "origin_id": 6,
             "origin_slot": 0,
-            "target_id": 119,
+            "target_id": 120,
             "target_slot": 0,
             "type": "MODEL"
           },
@@ -1577,6 +1615,14 @@
             "origin_id": 119,
             "origin_slot": 0,
             "target_id": 16,
+            "target_slot": 0,
+            "type": "MODEL"
+          },
+          {
+            "id": 231,
+            "origin_id": 120,
+            "origin_slot": 0,
+            "target_id": 119,
             "target_slot": 0,
             "type": "MODEL"
           }
