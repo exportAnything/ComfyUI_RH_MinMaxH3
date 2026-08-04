@@ -7,6 +7,8 @@ directly onto the canvas or opened with **Load**.
 | Task | Workflow | Conditioning input |
 |------|--------|----------|
 | T2VA | `t2va.json` | None |
+| T2VA | `t2va_native_sage_attention.json` | None; native ComfyUI graph with SageAttention |
+| T2VA | `t2va_native_sol_attn.json` | None; native ComfyUI graph with Sol-Attn |
 | FL2VA | `fl2va_first_frame.json` | First-frame image |
 | FL2VA | `fl2va_last_frame.json` | Last-frame image |
 | FL2VA | `fl2va_first_last_frame.json` | First-frame + last-frame images |
@@ -19,6 +21,23 @@ shift `12/3`, `accel=off`, and `denoise_video=true`. The Loaders use native FP8
 DiT, NVFP4 Qwen, and single-file VAE names from the documentation. If your local
 installation uses RunningHub INT8-CONVROT or BF16 shards, select the matching
 entries from the dropdowns.
+
+## Native Attention Variants
+
+The two `t2va_native_*` workflows use ComfyUI's native MiniMax H3 implementation
+and require ComfyUI 0.30.1 or newer. They are preconfigured for the official
+INT8-CONVROT transformer, NVFP4-AWQ text encoder, and native video/audio VAEs.
+
+Choose **one** attention workflow:
+
+- `t2va_native_sage_attention.json` uses Patch Sage Attention in `auto` mode.
+- `t2va_native_sol_attn.json` uses the MiniMax H3 Sol-Attn patch with `tau=1.0`
+  and the `diag` threshold.
+
+Do not chain SageAttention and Sol-Attn. Both replace the same ComfyUI optimized
+attention hook, so the last patch would override the first. In each native graph,
+the selected patch is already connected between Load Diffusion Model and both the
+scheduler and guider.
 
 ## Before Running
 
