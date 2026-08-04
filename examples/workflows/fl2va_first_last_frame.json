@@ -712,7 +712,7 @@
         30
       ]
     },
-    "workflow_note": "FL2VA（首帧+尾帧）：三种合法条件签名之一。运行前把 LoadImage 换成已上传到 ComfyUI input/ 的真实图片；Target 与 Encode 必须接同一个 keyframes。"
+    "workflow_note": "FL2VA (first + last frames): One of the three valid conditioning signatures. Before running, replace the LoadImage placeholders with real images uploaded to ComfyUI's input/ folder. Target and Encode must connect to the same keyframes."
   },
   "version": 0.4
 }

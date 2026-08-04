@@ -756,7 +756,7 @@
         30
       ]
     },
-    "workflow_note": "Ref2VA（图片 + 音频参考）：参考素材严格有序，改动链路顺序会改变多模态提示与条件行顺序。运行前把 Load* 换成已上传到 ComfyUI input/ 的真实素材。"
+    "workflow_note": "Ref2VA (reference image + audio): Reference inputs are strictly ordered. Changing the chain order changes the order of the multimodal prompt and conditioning rows. Before running, replace the Load* placeholders with real assets uploaded to ComfyUI's input/ folder."
   },
   "version": 0.4
 }

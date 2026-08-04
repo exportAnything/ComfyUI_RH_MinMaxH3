@@ -518,7 +518,7 @@
         30
       ]
     },
-    "workflow_note": "T2VA：纯文本生成视频+音频。三个 Direct Loader 的模型名请按本地实际选择；Target 已显式 832×480/5s，留空 width/height 会按比例解析到 1344×768。"
+    "workflow_note": "T2VA: Generate video and audio from text only. Select the three Direct Loader model names that match your local installation. The Target is explicitly set to 832×480/5s; if width/height are left blank, the aspect ratio will resolve to 1344×768."
   },
   "version": 0.4
 }
