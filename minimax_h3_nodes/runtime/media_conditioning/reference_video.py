@@ -1,4 +1,4 @@
-"""media_conditioning.reference_video facade。"""
+"""media_conditioning.reference_video facade."""
 from __future__ import annotations
 from ._impl import (
     resolve_reference_video_shape,

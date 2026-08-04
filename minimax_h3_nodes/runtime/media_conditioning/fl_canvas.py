@@ -1,4 +1,4 @@
-"""media_conditioning.fl_canvas facade。"""
+"""media_conditioning.fl_canvas facade."""
 from __future__ import annotations
 from ._impl import (
     cover_crop_plan,

@@ -1,4 +1,4 @@
-"""可观测性：阶段计时 + CUDA Event + 峰值显存 + 每步分位数。"""
+"""Observability: stage timing, CUDA events, peak VRAM, and per-step percentiles."""
 from __future__ import annotations
 import logging, statistics, time
 from contextlib import contextmanager
@@ -72,7 +72,7 @@ class H3Telemetry:
                 try:
                     import torch
                     ev1.record(); torch.cuda.synchronize(self.device)
-                    self.stages[name] = float(ev0.elapsed_time(ev1)) / 1000.0  # 优先 CUDA 秒
+                    self.stages[name] = float(ev0.elapsed_time(ev1)) / 1000.0  # Prefer CUDA seconds.
                 except Exception:
                     self.stages[name] = host
             else:

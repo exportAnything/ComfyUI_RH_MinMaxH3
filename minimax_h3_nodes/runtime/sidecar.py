@@ -1,4 +1,4 @@
-"""采样/解码元数据 JSON sidecar。"""
+"""JSON sidecar for sampling/decoding metadata."""
 from __future__ import annotations
 import hashlib, json, logging, subprocess, time
 from pathlib import Path

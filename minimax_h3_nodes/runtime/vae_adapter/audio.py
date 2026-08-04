@@ -1,4 +1,4 @@
-"""vae_adapter.audio facade。"""
+"""vae_adapter.audio facade."""
 from __future__ import annotations
 from ._impl import (
     MiniMaxH3AudioVAEAdapter,

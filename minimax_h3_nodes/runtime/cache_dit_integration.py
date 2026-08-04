@@ -1,4 +1,4 @@
-"""Comfy 侧 Cache-DiT 集成：MiniMax H3 DiT BlockAdapter（Pattern_3）。"""
+"""Comfy-side Cache-DiT integration: MiniMax H3 DiT BlockAdapter (Pattern_3)."""
 from __future__ import annotations
 import logging
 from typing import Any
@@ -13,23 +13,23 @@ def _import_cache_dit():
         import cache_dit
         from cache_dit import BlockAdapter, DBCacheConfig, ForwardPattern, TaylorSeerCalibratorConfig
     except ImportError as exc:
-        raise RuntimeError(f"未安装 {CACHE_DIT_PKG}，无法启用 Cache-DiT") from exc
+        raise RuntimeError(f"{CACHE_DIT_PKG} is not installed, so Cache-DiT cannot be enabled") from exc
     return cache_dit, BlockAdapter, DBCacheConfig, ForwardPattern, TaylorSeerCalibratorConfig
 
 def _forward_pattern(ForwardPattern: Any):
     pat = getattr(ForwardPattern, CACHE_DIT_FORWARD_PATTERN, None)
-    if pat is None: raise RuntimeError(f"cache-dit 缺少 ForwardPattern.{CACHE_DIT_FORWARD_PATTERN}")
+    if pat is None: raise RuntimeError(f"cache-dit is missing ForwardPattern.{CACHE_DIT_FORWARD_PATTERN}")
     return pat
 
 def _build_adapter(transformer: Any, BlockAdapter: Any, ForwardPattern: Any):
     name = transformer.__class__.__name__
     if name != "MiniMaxH3DiTModel":
-        raise TypeError(f"Cache-DiT 仅支持 MiniMaxH3DiTModel，实际为 {name}")
+        raise TypeError(f"Cache-DiT supports MiniMaxH3DiTModel only; got {name}")
     blocks = getattr(transformer, CACHE_DIT_BLOCKS_ATTR, None)
-    if blocks is None: raise ValueError(f"MiniMaxH3DiTModel 缺少 {CACHE_DIT_BLOCKS_ATTR!r}")
+    if blocks is None: raise ValueError(f"MiniMaxH3DiTModel is missing {CACHE_DIT_BLOCKS_ATTR!r}")
     return BlockAdapter(
         transformer=transformer, blocks=blocks, forward_pattern=_forward_pattern(ForwardPattern),
-        has_separate_cfg=False,  # H3 checkpoint 为 CFG-distilled，单正分支
+        has_separate_cfg=False,  # H3 checkpoints are CFG-distilled with one positive branch.
     )
 
 def _db_config(cfg: CacheDitResolved, DBCacheConfig: Any, *, num_denoise_steps: int, mask: list[int] | None):
@@ -47,7 +47,7 @@ def _scm_mask(cache_dit: Any, cfg: CacheDitResolved, num_denoise_steps: int) -> 
     return list(cache_dit.steps_mask(mask_policy=cfg.scm_preset, total_steps=int(num_denoise_steps)))
 
 def prepare_transformer_cache_dit(transformer: Any, cfg: CacheDitResolved, *, num_denoise_steps: int) -> Any:
-    """在 denoise 前 enable/refresh Cache-DiT；num_denoise_steps = len(sigmas)-1（H3 合同）。"""
+    """Enable/refresh Cache-DiT before denoising; num_denoise_steps = len(sigmas)-1 (H3 contract)."""
     if not cfg.enabled or int(num_denoise_steps) < 1: return transformer
     cache_dit, BlockAdapter, DBCacheConfig, ForwardPattern, TaylorSeerCalibratorConfig = _import_cache_dit()
     mask = _scm_mask(cache_dit, cfg, num_denoise_steps)

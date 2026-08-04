@@ -52,7 +52,7 @@ _FFMPEG_CACHE: tuple[str, str] | BaseException | None = None
 
 
 def ensure_ffmpeg_tools(*, required: bool = True) -> tuple[str, str]:
-    """探测 PATH 上的 ffmpeg/ffprobe；结果进程内缓存一次。"""
+    """Probe ffmpeg/ffprobe on PATH and cache the result once per process."""
     global _FFMPEG_CACHE
     if isinstance(_FFMPEG_CACHE, tuple):
         return _FFMPEG_CACHE
@@ -63,8 +63,8 @@ def ensure_ffmpeg_tools(*, required: bool = True) -> tuple[str, str]:
     if ff and fp:
         _FFMPEG_CACHE = (ff, fp); return _FFMPEG_CACHE
     err = RuntimeError(
-        f"Ref2VA 需要系统 PATH 中的 {FFMPEG_BIN}/{FFPROBE_BIN}；"
-        f"当前 {FFMPEG_BIN}={ff!r} {FFPROBE_BIN}={fp!r}"
+        f"Ref2VA requires {FFMPEG_BIN}/{FFPROBE_BIN} on the system PATH; "
+        f"currently {FFMPEG_BIN}={ff!r} {FFPROBE_BIN}={fp!r}"
     )
     _FFMPEG_CACHE = err
     if required: raise err
@@ -1077,9 +1077,10 @@ def encode_visual_condition_rows(
 ) -> dict[str, Any]:
     """Encode one image/video condition and return a unified block entry.
 
-    ``shape_policy`` 描述送进来的像素是按哪套尺寸策略准备的（如参考图的
-    match/max）。它必须进缓存键：同一素材 + 同一 target 下换策略会得到不同的
-    像素，否则会命中上一策略的旧行。
+    ``shape_policy`` describes which sizing policy prepared the incoming pixels
+    (for example, match/max for reference images). It must be part of the cache key:
+    switching policies for the same asset and target produces different pixels and
+    must not reuse rows from the previous policy.
     """
 
     import torch

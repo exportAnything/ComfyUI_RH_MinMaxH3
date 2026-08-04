@@ -1,4 +1,4 @@
-"""contracts.constants facade（实现见 _impl）。"""
+"""contracts.constants facade (implementation lives in _impl)."""
 from __future__ import annotations
 from ._impl import (
     H3_ASPECT_RATIOS,

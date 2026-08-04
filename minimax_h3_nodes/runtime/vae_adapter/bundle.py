@@ -1,4 +1,4 @@
-"""vae_adapter.bundle facade。"""
+"""vae_adapter.bundle facade."""
 from __future__ import annotations
 from ._impl import (
     H3VAEBundle,

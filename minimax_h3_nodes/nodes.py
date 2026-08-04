@@ -1,4 +1,4 @@
-"""ComfyUI nodes facade：节点注册表与兼容导入；实现见 api/。"""
+"""ComfyUI nodes facade: node registry and compatibility imports; implementations live in api/."""
 from __future__ import annotations
 
 from .api._shared import *  # noqa: F403

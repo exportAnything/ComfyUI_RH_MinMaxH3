@@ -1,4 +1,4 @@
-"""H3 加速 quality profile 解析（Cache-DiT / velocity-cache）。"""
+"""Resolve H3 acceleration quality profiles (Cache-DiT / velocity-cache)."""
 from __future__ import annotations
 import json, logging
 from dataclasses import dataclass
@@ -32,20 +32,20 @@ class AccelResolved:
 
 def _load_profile(profile_id: str) -> dict[str, Any]:
     path = _PROFILES_DIR / f"{profile_id}.json"
-    if not path.is_file(): raise FileNotFoundError(f"未找到 quality profile：{profile_id} ({path})")
+    if not path.is_file(): raise FileNotFoundError(f"Quality profile not found: {profile_id} ({path})")
     data = json.loads(path.read_text(encoding="utf-8"))
     if str(data.get("profile_id", "")) != profile_id:
-        raise ValueError(f"profile_id 与文件名不一致：{data.get('profile_id')!r} vs {profile_id!r}")
-    if str(data.get("status", "")) != "validated": raise ValueError(f"profile {profile_id!r} status 非 validated")
+        raise ValueError(f"profile_id does not match the filename: {data.get('profile_id')!r} vs {profile_id!r}")
+    if str(data.get("status", "")) != "validated": raise ValueError(f"profile {profile_id!r} status is not validated")
     return data
 
 def _pkg_ok(required: Mapping[str, str]) -> None:
     for name, want in required.items():
         try: got = metadata.version(name)
         except metadata.PackageNotFoundError as exc:
-            raise RuntimeError(f"启用加速需要安装 {name}>={want}（当前未安装）") from exc
+            raise RuntimeError(f"Acceleration requires {name}>={want} (not currently installed)") from exc
         if tuple(int(x) for x in got.split(".")[:3]) < tuple(int(x) for x in want.split(".")[:3]):
-            raise RuntimeError(f"{name} 版本过低：需要 >={want}，当前 {got}")
+            raise RuntimeError(f"{name} version is too old: need >={want}, got {got}")
 
 def _workload_match(wl: Mapping[str, Any], *, task: str, target: Mapping[str, Any],
                     sigma_points: int, video_shift: float, audio_shift: float) -> bool:
@@ -97,7 +97,7 @@ def resolve_accel_request(
     video_shift: float, audio_shift: float, rdt: float | None = None,
     mc: int | None = None, warmup: int | None = None, velocity_stride: int | None = None,
 ) -> AccelResolved | None:
-    """解析 Dual Sigma Sampler 加速模式；off/auto 未命中 → None。"""
+    """Resolve the Dual Sigma Sampler acceleration mode; off or an unmatched auto returns None."""
     key = _alias(mode)
     kw = dict(task=task, target=target, sigma_points=sigma_points, video_shift=video_shift, audio_shift=audio_shift)
     if key in ("", ACCEL_OFF): return None
@@ -106,7 +106,7 @@ def resolve_accel_request(
           f"shift={video_shift}/{audio_shift}")
     if key == ACCEL_MANUAL_CACHE_DIT:
         _pkg_ok({CACHE_DIT_PKG: CACHE_DIT_MIN_VERSION})
-        LOGGER.warning("accel=manual-cache-dit：近似加速（非 GT）；%s", wl)
+        LOGGER.warning("accel=manual-cache-dit: approximate acceleration (not ground truth); %s", wl)
         return AccelResolved("cache-dit", cache_dit=_cache_from({
             "enabled": True, "Fn_compute_blocks": CACHE_DIT_FN, "Bn_compute_blocks": CACHE_DIT_BN,
             "max_warmup_steps": warmup if warmup is not None else CACHE_DIT_WARMUP,
@@ -118,7 +118,7 @@ def resolve_accel_request(
     if key == ACCEL_MANUAL_VELOCITY:
         stride = int(velocity_stride if velocity_stride is not None else VELOCITY_STRIDE)
         LOGGER.warning(
-            "accel=manual-velocity：近似加速 stride=%s（非 GT）；理论满步≈%s；%s",
+            "accel=manual-velocity: approximate acceleration stride=%s (not ground truth); theoretical full steps≈%s; %s",
             stride, max(0, int(sigma_points) - 1), wl,
         )
         return AccelResolved("velocity-cache", velocity=VelocityCacheConfig(
@@ -127,33 +127,33 @@ def resolve_accel_request(
             final_refresh=VELOCITY_FINAL_REFRESH, profile_id=None,
         ))
     if key == ACCEL_AUTO:
-        for pid in (ACCEL_VELOCITY_PROFILE, ACCEL_CACHE_DIT_PROFILE):  # 优先 ~3× velocity
+        for pid in (ACCEL_VELOCITY_PROFILE, ACCEL_CACHE_DIT_PROFILE):  # Prefer ~3× velocity.
             data = _load_profile(pid)
             if _match_any(data, **kw):
                 return resolve_accel_request(pid, **kw, rdt=rdt, mc=mc, warmup=warmup,
                                              velocity_stride=velocity_stride)
-        LOGGER.warning("accel=auto：未命中已验证 profile，保持关闭；%s", wl); return None
+        LOGGER.warning("accel=auto: no validated profile matched; leaving acceleration off; %s", wl); return None
     data = _load_profile(key)
     if not _match_any(data, **kw):
         raise ValueError(
-            f"accel={key!r} 仅验证过特定 workload（如 1344x768/124f/50steps/shift12·3）；"
-            f"当前不匹配（{wl}）。可改用 manual-*，或把参数调到已验证合同。"
+            f"accel={key!r} is validated only for a specific workload (for example, 1344x768/124f/50 steps/shift 12/3); "
+            f"the current workload does not match ({wl}). Use manual-* or return the parameters to the validated contract."
         )
     technique = str(data.get("technique") or ("velocity-cache" if "velocity_cache" in data else "cache-dit"))
     if technique == "velocity-cache":
-        LOGGER.info("accel=%s velocity-cache 已启用（近似）；%s", key, wl)
+        LOGGER.info("accel=%s velocity-cache enabled (approximate); %s", key, wl)
         return AccelResolved("velocity-cache", velocity=_velocity_from(data.get("velocity_cache") or {}, profile_id=key))
     _pkg_ok(data.get("required_packages") or {CACHE_DIT_PKG: CACHE_DIT_MIN_VERSION})
     raw = dict(data.get("cache_dit") or {}); raw.setdefault("residual_diff_threshold", CACHE_DIT_RDT_PROFILE)
-    LOGGER.info("accel=%s Cache-DiT 已启用（block 级近似）；%s", key, wl)
+    LOGGER.info("accel=%s Cache-DiT enabled (block-level approximation); %s", key, wl)
     return AccelResolved("cache-dit", cache_dit=_cache_from(raw, profile_id=key, rdt_default=CACHE_DIT_RDT_PROFILE))
 
-# 兼容旧名
+# Legacy-name compatibility.
 def resolve_cache_dit_request(mode: str, **kw) -> CacheDitResolved | None:
     resolved = resolve_accel_request(mode, **kw)
     if resolved is None: return None
     if resolved.kind != "cache-dit" or resolved.cache_dit is None:
-        raise ValueError(f"resolve_cache_dit_request 不支持 accel={mode!r}（请改用 resolve_accel_request）")
+        raise ValueError(f"resolve_cache_dit_request does not support accel={mode!r} (use resolve_accel_request)")
     return resolved.cache_dit
 
 __all__ = ["AccelResolved", "CacheDitResolved", "resolve_accel_request", "resolve_cache_dit_request"]

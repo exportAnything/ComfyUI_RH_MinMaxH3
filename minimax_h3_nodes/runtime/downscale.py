@@ -1,4 +1,4 @@
-"""按原宽高比精细降档；复用动态激活预留的 reject 提示。"""
+"""Fine-grained downscaling that preserves the source aspect ratio and reuses dynamic activation-reserve rejection hints."""
 from __future__ import annotations
 from .h3_settings import H3_DOWNSCALE_16_9, H3_DOWNSCALE_SHORT_EDGES
 from ..contracts import H3_CANVAS_MULTIPLE, H3_MAX_PIXELS
@@ -10,9 +10,9 @@ def _is_approx_16_9(width: int, height: int) -> bool:
     return abs((width / height) - (16 / 9)) < 0.05
 
 def downscale_chain(width: int, height: int) -> list[tuple[int, int]]:
-    """生成保比例降档链。16:9 用上游桶；其它比例按短边序列缩放。"""
+    """Generate an aspect-preserving downscale chain. Use upstream buckets for 16:9 and short-edge steps for other ratios."""
     w, h = _align(int(width)), _align(int(height))
-    if w <= 0 or h <= 0: raise ValueError("width/height 必须为正")
+    if w <= 0 or h <= 0: raise ValueError("width/height must be positive")
     if _is_approx_16_9(w, h):
         chain = [p for p in H3_DOWNSCALE_16_9 if p[0] * p[1] <= w * h]
         return chain or list(H3_DOWNSCALE_16_9[-1:])

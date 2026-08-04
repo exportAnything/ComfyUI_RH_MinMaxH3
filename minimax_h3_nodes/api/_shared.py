@@ -1,4 +1,4 @@
-"""节点共享 helpers。"""
+"""Shared node helpers."""
 from __future__ import annotations
 
 import hashlib
@@ -119,7 +119,7 @@ REFERENCES_TYPE = "MINIMAX_H3_REFERENCES"
 def _require_torch():
     if torch is None:
         raise RuntimeError(
-            "MiniMax-H3 Direct 需要 ComfyUI 自带的 PyTorch；当前 Python 环境未安装 torch"
+            "MiniMax-H3 Direct requires the PyTorch bundled with ComfyUI; torch is not installed in this Python environment"
         )
     return torch
 
@@ -127,7 +127,7 @@ def _require_torch():
 def _require_comfy():
     if model_management is None:
         raise RuntimeError(
-            "该节点只能在 ComfyUI 进程中执行；未找到 comfy.model_management"
+            "This node can run only inside the ComfyUI process; comfy.model_management was not found"
         )
 
 
@@ -138,7 +138,7 @@ def _h3_temporary_directory(prefix: str):
     try:
         import folder_paths
     except ImportError as exc:
-        raise RuntimeError("ComfyUI folder_paths 不可用，无法创建 H3 临时目录") from exc
+        raise RuntimeError("ComfyUI folder_paths is unavailable, so the H3 temporary directory cannot be created") from exc
     temp_root = Path(folder_paths.get_temp_directory()).resolve()
     temp_root.mkdir(parents=True, exist_ok=True)
     safe_prefix = str(prefix).strip() or "h3_"
@@ -163,7 +163,8 @@ def _check_interrupted() -> None:
 
 def _runtime_module(name: str):
     """Import a sibling runtime module without any SGLang fallback."""
-    # Comfy 以 custom_nodes.<插件名>.minimax_h3_nodes.api 加载，不能写死顶层 minimax_h3_nodes
+    # Comfy loads this as custom_nodes.<plugin_name>.minimax_h3_nodes.api, so the
+    # top-level minimax_h3_nodes package name cannot be hard-coded.
     errs: list[BaseException] = []
     for modname, package in (
         (f"..runtime.{name}", __package__),  # api -> runtime
@@ -181,13 +182,13 @@ def _runtime_module(name: str):
         except ImportError as exc:
             errs.append(exc)
     raise RuntimeError(
-        f"MiniMax-H3 Direct runtime.{name} 未安装完整：{errs[-1] if errs else 'unknown'}. "
-        "请确认 custom node 目录包含原生 runtime 代码，而不是旧版服务端节点包。"
+        f"MiniMax-H3 Direct runtime.{name} is incomplete: {errs[-1] if errs else 'unknown'}. "
+        "Confirm that the custom node directory contains the native runtime code, not the legacy server-side node package."
     ) from (errs[-1] if errs else None)
 
 
 def _model_root_choices() -> list[str]:
-    """Loader COMBO 选项；失败时回退占位，保证 object_info 可生成。"""
+    """Return Loader COMBO options, falling back to a placeholder so object_info can still be generated."""
     try:
         module = _runtime_module("components")
         lister = getattr(module, "list_h3_model_roots", None)
@@ -196,18 +197,18 @@ def _model_root_choices() -> list[str]:
             if choices:
                 return choices
         logging.getLogger(__name__).warning(
-            "runtime.components 未暴露 list_h3_model_roots，INPUT_TYPES 回退占位 MiniMax-H3"
+            "runtime.components does not expose list_h3_model_roots; INPUT_TYPES is using the MiniMax-H3 placeholder"
         )
     except Exception as exc:
         logging.getLogger(__name__).warning(
-            "list_h3_model_roots 失败，INPUT_TYPES 回退占位 MiniMax-H3: %s", exc
+            "list_h3_model_roots failed; INPUT_TYPES is using the MiniMax-H3 placeholder: %s", exc
         )
     return ["MiniMax-H3"]
 
 
 _COMPONENT_KIND_LABELS = {
     "transformer": "DiT",
-    "text_encoder": "文本编码器",
+    "text_encoder": "text encoder",
     VIDEO_VAE_DIRNAME: "Video VAE",
     AUDIO_VAE_DIRNAME: "Audio VAE",
 }
@@ -217,7 +218,7 @@ def _normalized_kind(kind: str) -> str:
     normalized = str(kind).strip().lower()
     if normalized not in H3_COMPONENT_KINDS:
         raise ValueError(
-            f"未知 MiniMax-H3 组件类型 {kind!r}；可选：{H3_COMPONENT_KINDS!r}"
+            f"Unknown MiniMax-H3 component type {kind!r}; choices: {H3_COMPONENT_KINDS!r}"
         )
     return normalized
 
@@ -384,8 +385,9 @@ def _component_kind_of(path: Path) -> str | None:
         str(name) == "Qwen3VLForConditionalGeneration" for name in architectures
     ):
         return "text_encoder"
-    # 上游 DiT config 没有 _class_name 时按结构字段判定（与 model_loader 的
-    # _TRANSFORMER_CONFIG_FIELDS 同源，仅取判别力最强的三个）。
+    # When the upstream DiT config lacks _class_name, identify it from structural
+    # fields (same source as model_loader's _TRANSFORMER_CONFIG_FIELDS, using only
+    # the three most discriminating fields).
     if all(
         field in architecture
         for field in ("latents_dim", "audio_latents_dim", "adaln_out_features")
@@ -412,7 +414,8 @@ def _model_name_for_component_dir(
     part = _partition_label(partition)
     dirname = component_dir.name
     singles = _single_weight_names(component_dir)
-    # 通用文件名不带类型信息，退回逻辑名，避免 video/audio 两个下拉出现同名项。
+    # Generic filenames carry no type information; fall back to the logical name
+    # so the video/audio dropdowns do not contain identical entries.
     distinctive = [name for name in singles if name != "model.safetensors"]
     if kind == "transformer":
         preferred = int8_dit_filename(part)
@@ -474,7 +477,7 @@ def _selector_alias_map(kind: str, partition: str) -> dict[str, str]:
             AUDIO_VAE_FILENAME: AUDIO_VAE_DIRNAME,
             AUDIO_VAE_DIRNAME: AUDIO_VAE_DIRNAME,
         }
-    if kind == "vae":  # 合并双 VAE 包（旧工作流）
+    if kind == "vae":  # Combined dual-VAE package (legacy workflows).
         return {
             VAE_MERGED_MODEL_NAME: VAE_MERGED_DIRNAME,
             VAE_MERGED_DIRNAME: VAE_MERGED_DIRNAME,
@@ -482,8 +485,9 @@ def _selector_alias_map(kind: str, partition: str) -> dict[str, str]:
     return {}
 
 
-# 上游 release 里携带 config/tokenizer/processor 的组件目录，按优先级排列。
-# 扁平单文件权重没有 sidecar，其配置就从这里取。
+# Component directories in the upstream release that carry config/tokenizer/processor
+# files, ordered by priority. Flat single-file weights have no sidecar and obtain their
+# configuration here.
 _KIND_CONFIG_DIRNAMES = {
     "transformer": ("transformer",),
     "text_encoder": ("text_encoder",),
@@ -615,9 +619,10 @@ def _selector_to_component_dirname(
 
     text = str(value or "").strip()
     if not text:
-        raise ValueError(f"{prefix} 模型名不能为空")
+        raise ValueError(f"{prefix} model name cannot be empty")
     if prefix == "vae":
-        # 合并双 VAE 包：只保留旧工作流的目录名解析路径。
+        # Combined dual-VAE package: retain only the directory-name resolution path
+        # for legacy workflows.
         for root in _prefer_selected_root(_partition_roots(partition), model_root):
             if (root / text / "video_vae" / "config.json").is_file():
                 return text
@@ -646,7 +651,7 @@ def _selector_to_component_dirname(
     if prefix == "vae" and text == VAE_MERGED_DIRNAME:
         return text
     label = _COMPONENT_KIND_LABELS.get(prefix, prefix)
-    raise ValueError(f"无法解析{label}模型名：{text}")
+    raise ValueError(f"Cannot resolve the {label} model name: {text}")
 
 
 def _component_model_choices(
@@ -694,8 +699,8 @@ def _component_dir_input(
         {
             "default": choices[0],
             "tooltip": (
-                f"必须明确选择{label}模型名（权重文件名或逻辑名）；"
-                "不会再自动切换量化/BF16 权重。"
+                f"You must explicitly select a {label} model name (weight filename or logical name); "
+                "quantized/BF16 weights are no longer switched automatically."
             ),
         },
     )
@@ -708,8 +713,8 @@ def _video_vae_input(partition: str = H3_T2VA_PARTITION):
         {
             "default": choices[0],
             "tooltip": (
-                "24 通道视频 VAE 权重；上游合并产物文件名为 "
-                f"{VIDEO_VAE_FILENAME}，分片原始包逻辑名为 {VIDEO_VAE_MODEL_NAME}。"
+                "24-channel video VAE weights; the upstream combined artifact is named "
+                f"{VIDEO_VAE_FILENAME}, and the sharded source package uses the logical name {VIDEO_VAE_MODEL_NAME}."
             ),
         },
     )
@@ -722,8 +727,8 @@ def _audio_vae_input(partition: str = H3_T2VA_PARTITION):
         {
             "default": choices[0],
             "tooltip": (
-                "32 通道音频 VAE 权重；上游合并产物文件名为 "
-                f"{AUDIO_VAE_FILENAME}，分片原始包逻辑名为 {AUDIO_VAE_MODEL_NAME}。"
+                "32-channel audio VAE weights; the upstream combined artifact is named "
+                f"{AUDIO_VAE_FILENAME}, and the sharded source package uses the logical name {AUDIO_VAE_MODEL_NAME}."
             ),
         },
     )
@@ -731,7 +736,7 @@ def _audio_vae_input(partition: str = H3_T2VA_PARTITION):
 
 def _model_root_input(partition: str | None = None):
     partition_hint = (
-        f"；该节点固定解析 {partition.upper()} 分区"
+        f"; this node always resolves the {partition.upper()} partition"
         if partition is not None
         else ""
     )
@@ -739,21 +744,22 @@ def _model_root_input(partition: str | None = None):
         _model_root_choices(),
         {
             "tooltip": (
-                "选择 MiniMax-H3 权重根目录：专属根 models/MiniMax-H3"
-                "（<类型>/<分区>/<模型>，放量化与合并产物），或 models/diffusers "
-                f"下的上游 release 根（含 FL2VA/Ref2VA 分片子目录）{partition_hint}。"
-                "三个组件必须来自同一个根。"
+                "Select the MiniMax-H3 weight root: either the dedicated models/MiniMax-H3 root "
+                "(<type>/<partition>/<model>, containing quantized and combined artifacts), or the upstream "
+                f"release root under models/diffusers (with FL2VA/Ref2VA sharded subdirectories){partition_hint}. "
+                "All three components must come from the same root."
             ),
         },
     )
 
 
 def _validate_model_root_input(model_root="MiniMax-H3", **kwargs):
-    # RH / 工作流可能注入不在本机 COMBO 列表中的真实目录名，放行后由执行期解析。
+    # RunningHub/workflows may inject a real directory name that is absent from the
+    # local COMBO list; allow it and resolve it at execution time.
     if model_root is None:
         return True
     if not str(model_root).strip():
-        return "model_root 不能为空"
+        return "model_root cannot be empty"
     return True
 
 
@@ -763,7 +769,7 @@ def _validate_explicit_component_input(value, label: str):
         return True
     text = str(value).strip()
     if not text or text.lower() == "auto":
-        return f"{label} 必须显式选择模型，不能使用 auto 或空值"
+        return f"{label} must explicitly select a model; auto and empty values are not allowed"
     return True
 
 
@@ -777,14 +783,14 @@ def _existing_directory(
 ) -> Path:
     path = Path(str(value or "").strip()).expanduser()
     if not str(value or "").strip():
-        raise ValueError(f"{label} 不能为空")
+        raise ValueError(f"{label} cannot be empty")
     if path.exists() and not path.is_dir():
-        raise NotADirectoryError(f"{label} 不是目录：{path}")
+        raise NotADirectoryError(f"{label} is not a directory: {path}")
     if path.is_absolute() and not path.is_dir():
-        raise FileNotFoundError(f"{label} 不存在：{path}")
+        raise FileNotFoundError(f"{label} does not exist: {path}")
 
     # Keep the node UI aligned with runtime.components.model_root_path(): a
-    # simple folder name below models/diffusers 或 models/minimax_h3 也有效。
+    # A simple folder name below models/diffusers or models/minimax_h3 is also valid.
     module = _runtime_module("components")
     resolver = getattr(module, "model_root_path", None)
     if callable(resolver):
@@ -801,10 +807,10 @@ def _existing_directory(
             component_error = getattr(module, "H3ComponentError", None)
             if component_error is not None and isinstance(exc, component_error):
                 raise
-            raise FileNotFoundError(f"{label} 不存在：{path}") from exc
+            raise FileNotFoundError(f"{label} does not exist: {path}") from exc
     if path.is_dir():
         return path.resolve()
-    raise FileNotFoundError(f"{label} 不存在：{path}")
+    raise FileNotFoundError(f"{label} does not exist: {path}")
 
 
 def _resolve_t2va_release(
@@ -932,19 +938,19 @@ def _wrapper_release_fingerprint(wrapper: Mapping[str, Any]) -> str:
     partition = wrapper.get("partition")
     metadata = wrapper.get("release_metadata", {})
     if root is None or partition is None or not isinstance(metadata, Mapping):
-        raise ValueError("MiniMax-H3 component wrapper 缺少 release identity")
+        raise ValueError("MiniMax-H3 component wrapper is missing its release identity")
     computed = _release_fingerprint(root, str(partition), metadata)
     declared = wrapper.get("release_fingerprint")
     if declared is not None and declared != computed:
-        raise ValueError("MiniMax-H3 component release_fingerprint 被篡改或已过期")
+        raise ValueError("MiniMax-H3 component release_fingerprint was modified or is stale")
     return computed
 
 
-# 必须与 contracts._impl 的 _H3_COMPONENT_RELATED_PATH_FIELDS +
-# _H3_COMPONENT_EXTERNAL_PATH_FIELDS 合起来一致：两侧算出的 component
-# fingerprint 会被逐字比对。键是 fingerprint kind（contracts 的
-# _H3_COMPONENT_FINGERPRINT_KINDS 值），不是 contract 的 component_kind：
-# DiT 在这里叫 "transformer" 而不是 "model"。
+# Must match the union of contracts._impl's _H3_COMPONENT_RELATED_PATH_FIELDS and
+# _H3_COMPONENT_EXTERNAL_PATH_FIELDS: component fingerprints computed on both sides
+# are compared exactly. Keys are fingerprint kinds (values of contracts'
+# _H3_COMPONENT_FINGERPRINT_KINDS), not contract component_kind values: DiT is named
+# "transformer" here rather than "model".
 _WRAPPER_RELATED_PATH_FIELDS = {
     "transformer": ("transformer_weights_path",),
     "text_encoder": (
@@ -969,7 +975,7 @@ def _wrapper_component_fingerprint(
 ) -> str:
     path = wrapper.get(path_key)
     if not isinstance(path, str) or not path:
-        raise ValueError(f"MiniMax-H3 {component_kind} wrapper 缺少 {path_key}")
+        raise ValueError(f"MiniMax-H3 {component_kind} wrapper is missing {path_key}")
     computed = _component_fingerprint(
         _wrapper_release_fingerprint(wrapper),
         component_kind,
@@ -984,7 +990,7 @@ def _wrapper_component_fingerprint(
     declared = wrapper.get(fingerprint_key, wrapper.get("component_fingerprint"))
     if declared is not None and declared != computed:
         raise ValueError(
-            f"MiniMax-H3 {component_kind} component fingerprint 被篡改或已过期"
+            f"MiniMax-H3 {component_kind} component fingerprint was modified or is stale"
         )
     return computed
 
@@ -998,7 +1004,7 @@ def _validate_component_wrapper(
 ) -> dict[str, Any]:
     if not isinstance(wrapper, Mapping) or wrapper.get("schema") not in tuple(schemas):
         raise TypeError(
-            f"{label} 端口 schema 无效；期望 {', '.join(repr(item) for item in schemas)}"
+            f"{label} port schema is invalid; expected {', '.join(repr(item) for item in schemas)}"
         )
     normalized_task = normalize_task(task)
     kind_by_label = {
@@ -1009,7 +1015,7 @@ def _validate_component_wrapper(
     try:
         component_kind = kind_by_label[label]
     except KeyError as exc:
-        raise ValueError(f"未知 MiniMax-H3 component label {label!r}") from exc
+        raise ValueError(f"Unknown MiniMax-H3 component label {label!r}") from exc
     clean = validate_component_for_task(
         wrapper,
         component_kind=component_kind,
@@ -1018,7 +1024,7 @@ def _validate_component_wrapper(
     fingerprint = _wrapper_release_fingerprint(clean)
     declared = clean.get("release_fingerprint")
     if declared is not None and declared != fingerprint:
-        raise ValueError(f"{label}.release_fingerprint 与组件路径/metadata 不一致")
+        raise ValueError(f"{label}.release_fingerprint does not match the component paths/metadata")
     clean["release_fingerprint"] = fingerprint
     return clean
 
@@ -1030,7 +1036,7 @@ def _require_same_release(*components: tuple[str, Mapping[str, Any]]) -> str:
     }
     if len(set(fingerprints.values())) != 1:
         detail = ", ".join(f"{label}={value[:12]}" for label, value in fingerprints.items())
-        raise ValueError(f"MiniMax-H3 组件不是同一 release：{detail}")
+        raise ValueError(f"MiniMax-H3 components are not from the same release: {detail}")
     return next(iter(fingerprints.values()))
 
 
@@ -1063,7 +1069,7 @@ def _resolve_selected_component(
     if prefix != "vae":
         weights = _selector_weight_file(value, prefix, partition)
         if weights is not None:
-            # 扁平根没有 quant_meta.json，文件名就是分区凭证。
+            # Flat roots have no quant_meta.json; the filename is the partition evidence.
             gate = _find_callable(
                 module, ("validate_weight_partition",), "weight partition"
             )
@@ -1120,8 +1126,8 @@ def _runtime_dtype_name(name: str, *, allow_float32: bool = True) -> str:
     if allow_float32:
         allowed.add("float32")
     if normalized not in allowed:
-        supported = "、".join(sorted(allowed))
-        raise ValueError(f"dtype {name!r} 不受支持；可选：auto、{supported}")
+        supported = ", ".join(sorted(allowed))
+        raise ValueError(f"dtype {name!r} is unsupported; choices: auto, {supported}")
     return normalized
 
 
@@ -1152,8 +1158,8 @@ def _require_parameter(function, name: str, label: str) -> None:
         return
     if name not in signature.parameters:
         raise RuntimeError(
-            f"当前 runtime 的 {label} loader 不支持 {name}，无法加载 "
-            "models/MiniMax-H3 下的单文件权重；请更新 custom node 的 runtime 代码"
+            f"The current runtime's {label} loader does not support {name}, so it cannot load "
+            "single-file weights under models/MiniMax-H3; update the custom node runtime code"
         )
 
 
@@ -1181,8 +1187,8 @@ def _find_callable(module: Any, names: tuple[str, ...], component: str):
         if callable(function):
             return function
     raise RuntimeError(
-        f"runtime.{module.__name__.rsplit('.', 1)[-1]} 没有 {component} loader；"
-        f"期望其中一个入口：{', '.join(names)}"
+        f"runtime.{module.__name__.rsplit('.', 1)[-1]} has no {component} loader; "
+        f"expected one of these entry points: {', '.join(names)}"
     )
 
 
@@ -1220,11 +1226,11 @@ def _unwrap_runtime_handle(
     )
     if not isinstance(wrapper, Mapping) or wrapper.get("schema") not in schemas:
         raise TypeError(
-            f"{label} 端口不是 MiniMax-H3 Direct loader 的输出"
+            f"The {label} port is not an output from a MiniMax-H3 Direct loader"
         )
     handle = wrapper.get("handle")
     if handle is None:
-        raise RuntimeError(f"{label} wrapper 缺少 runtime handle")
+        raise RuntimeError(f"The {label} wrapper is missing its runtime handle")
     return handle
 
 
@@ -1237,19 +1243,19 @@ def _normalise_prompt_embeddings(value: Any):
                 break
     if isinstance(value, (tuple, list)):
         if not value:
-            raise RuntimeError("Qwen encoder 返回了空序列")
+            raise RuntimeError("The Qwen encoder returned an empty sequence")
         value = value[0]
     if not isinstance(value, t.Tensor):
         raise TypeError(
-            "Qwen encoder 必须返回 torch.Tensor 或包含 prompt_embeds 的 mapping"
+            "The Qwen encoder must return a torch.Tensor or a mapping containing prompt_embeds"
         )
     if value.ndim == 3:
         if int(value.shape[0]) != 1:
-            raise ValueError("MiniMax-H3 Direct v0 只支持 batch=1")
+            raise ValueError("MiniMax-H3 Direct v0 supports batch=1 only")
         value = value[0]
     if value.ndim != 2:
         raise ValueError(
-            f"Qwen encoder 输出必须为 [L,5120]，实际 shape={tuple(value.shape)}"
+            f"Qwen encoder output must be [L,5120]; got shape={tuple(value.shape)}"
         )
     # The 64 GB text encoder must not remain co-resident with the 62 GB DiT.
     return value.detach().to(device="cpu").contiguous()
@@ -1259,8 +1265,8 @@ def _encode_prompt(handle: Any, prompt: str):
     encode = _wrapper_value(handle, "encode_prompt", "encode_conditioning")
     if not callable(encode):
         raise RuntimeError(
-            "text encoder handle 缺少 encode_prompt(prompt)；"
-            "请更新 minimax_h3_nodes/runtime/qwen_encoder.py"
+            "The text encoder handle is missing encode_prompt(prompt); "
+            "update minimax_h3_nodes/runtime/qwen_encoder.py"
         )
     try:
         try:
@@ -1315,7 +1321,7 @@ def _build_t2va_packed(prompt_embeds: Any, target: Mapping[str, Any]):
         frame_count=int(target["frame_count"]),
     )
     if not isinstance(packed, Mapping):
-        raise TypeError("runtime.packing 必须返回 packed conditioning mapping")
+        raise TypeError("runtime.packing must return a packed conditioning mapping")
     # Some adapters return {"packed": structural_fields}; accept that without
     # weakening the strict structural checks in H3DenoiseBranch.
     nested = packed.get("packed")
@@ -1340,14 +1346,14 @@ def _build_v2_packed(
             require_resolved=True,
         )
         if _target_fingerprint(encoded_target) != _target_fingerprint(clean_target):
-            raise ValueError("conditioning target 与 Empty AV Latent target 不一致")
+            raise ValueError("The conditioning target does not match the Empty AV Latent target")
     declared_fingerprint = clean.get("target_fingerprint")
     actual_fingerprint = _target_fingerprint(clean_target)
     if declared_fingerprint is not None and declared_fingerprint != actual_fingerprint:
-        raise ValueError("conditioning.target_fingerprint 与 target 内容不一致")
+        raise ValueError("conditioning.target_fingerprint does not match the target contents")
     blocks = clean.get("condition_blocks")
     if not isinstance(blocks, Sequence) or isinstance(blocks, (str, bytes)):
-        raise ValueError("FL2VA/Ref2VA conditioning 缺少有序 condition_blocks")
+        raise ValueError("FL2VA/Ref2VA conditioning is missing ordered condition_blocks")
     module = _runtime_module("packing")
     common = {
         "latent_t": int(clean_target["video_latent_t"]),
@@ -1371,9 +1377,9 @@ def _build_v2_packed(
             **common,
         )
     else:
-        raise ValueError(f"v2 packed builder 不支持 task={clean['task']!r}")
+        raise ValueError(f"The v2 packed builder does not support task={clean['task']!r}")
     if not isinstance(packed, Mapping):
-        raise TypeError("runtime.packing v2 builder 必须返回 mapping")
+        raise TypeError("The runtime.packing v2 builder must return a mapping")
     return dict(packed)
 
 
@@ -1423,8 +1429,8 @@ def _resolve_transformer(handle: Any) -> Any:
         candidate = handle
     if not callable(candidate):
         raise RuntimeError(
-            "无法从 model handle 取得 MiniMaxH3DiTModel；"
-            "handle 应暴露 transformer/model，或 load_for_inference()"
+            "Could not obtain MiniMaxH3DiTModel from the model handle; "
+            "the handle must expose transformer/model or load_for_inference()"
         )
 
     # A simple runtime implementation may return an offloaded raw nn.Module.
@@ -1446,7 +1452,7 @@ def _resolve_transformer(handle: Any) -> Any:
 def _activation_hint_from_packed(
     packed: Mapping[str, Any], target: Mapping[str, Any] | None = None
 ) -> dict[str, Any]:
-    """从 packed/target 提取 P0-6 激活预算提示。"""
+    """Extract P0-6 activation-budget hints from packed/target."""
     target = target or {}
     seq_len = int(packed.get("seq_len", 0) or 0)
     update = packed.get("update_mask")
@@ -1482,10 +1488,10 @@ def _transformer_session(
         setter = getattr(handle, "set_activation_hint", None)
         if callable(setter) and activation_hint:
             hint = dict(activation_hint)
-            # 降档提示需要像素宽高
+            # The downgrade hint needs pixel dimensions.
             target_w = hint.get("width"); target_h = hint.get("height")
             if not target_w or not target_h:
-                # 粗估：latent * 16
+                # Rough estimate: latent * 16.
                 lt, lh, lw = hint.get("video_latent_t"), hint.get("video_latent_h"), hint.get("video_latent_w")
                 if lh and lw:
                     hint["width"] = int(lw) * 16; hint["height"] = int(lh) * 16
@@ -1521,8 +1527,9 @@ def _transformer_session(
 def _vae_device_session(adapter: Any, load_device: Any):
     """Keep partial VAE moves inside an unconditional cleanup boundary.
 
-    OPT_VAE_RESIDENCY：offload 到 CPU 后跳过 soft_empty_cache，便于同 Worker
-    连续任务快速回载；仍保证 video/audio 不同时高峰驻留（串行 session）。
+    OPT_VAE_RESIDENCY: after offloading to CPU, skip soft_empty_cache so consecutive
+    tasks on the same worker can reload quickly; serial sessions still prevent video
+    and audio from reaching peak residency simultaneously.
     """
     from ..runtime.h3_settings import OPT_VAE_RESIDENCY
     try:
@@ -1540,7 +1547,7 @@ def _decode_video(adapter: Any, latent: Any, target: Mapping[str, Any]):
     t = _require_torch()
     decode = getattr(adapter, "decode", None)
     if not callable(decode):
-        raise RuntimeError("video VAE adapter 缺少 decode(latents)")
+        raise RuntimeError("The video VAE adapter is missing decode(latents)")
     frames = _call_supported(
         decode,
         normalized_latents=latent,
@@ -1555,14 +1562,14 @@ def _decode_video(adapter: Any, latent: Any, target: Mapping[str, Any]):
     if isinstance(frames, (tuple, list)):
         frames = frames[0] if frames else None
     if not isinstance(frames, t.Tensor):
-        raise TypeError("video VAE decode 必须返回 torch.Tensor")
+        raise TypeError("video VAE decode must return a torch.Tensor")
 
     if frames.ndim == 5:
         if int(frames.shape[1]) in (3, 4):  # [B,C,T,H,W]
             frames = frames.permute(0, 2, 3, 4, 1)
         elif int(frames.shape[-1]) not in (3, 4):  # not [B,T,H,W,C]
             raise ValueError(
-                f"无法识别 video decode shape={tuple(frames.shape)}"
+                f"Unrecognized video decode shape={tuple(frames.shape)}"
             )
         frames = frames.reshape(-1, *frames.shape[-3:])
     elif frames.ndim == 4:
@@ -1572,18 +1579,18 @@ def _decode_video(adapter: Any, latent: Any, target: Mapping[str, Any]):
             frames = frames.permute(0, 2, 3, 1)
         else:
             raise ValueError(
-                f"无法识别 video decode shape={tuple(frames.shape)}"
+                f"Unrecognized video decode shape={tuple(frames.shape)}"
             )
     else:
         raise ValueError(
-            f"video decode 应返回 rank-4/5 tensor，实际 {tuple(frames.shape)}"
+            f"video decode must return a rank-4/5 tensor; got {tuple(frames.shape)}"
         )
     frames = frames[..., :3].to(dtype=t.float32)
     height, width = int(target["height"]), int(target["width"])
     if int(frames.shape[1]) < height or int(frames.shape[2]) < width:
         raise ValueError(
             f"decoded frames={int(frames.shape[2])}x{int(frames.shape[1])} "
-            f"小于 target={width}x{height}"
+            f"is smaller than target={width}x{height}"
         )
     # The native VAE's tile padding is bottom/right; match the source crop.
     return (
@@ -1602,7 +1609,7 @@ def _decode_audio(
     t = _require_torch()
     decode = getattr(adapter, "decode", None)
     if not callable(decode):
-        raise RuntimeError("audio VAE adapter 缺少 decode(latents)")
+        raise RuntimeError("The audio VAE adapter is missing decode(latents)")
     output = _call_supported(
         decode,
         normalized_latents=latent,
@@ -1622,7 +1629,7 @@ def _decode_audio(
         waveform = output[0] if isinstance(output, (tuple, list)) else output
         sample_rate = int(getattr(adapter, "sample_rate", 32000))
     if not isinstance(waveform, t.Tensor):
-        raise TypeError("audio VAE decode 必须返回 waveform tensor")
+        raise TypeError("audio VAE decode must return a waveform tensor")
     if waveform.ndim == 2:  # [C,L]
         waveform = waveform.unsqueeze(0)
     elif waveform.ndim == 3:
@@ -1635,10 +1642,10 @@ def _decode_audio(
             waveform = waveform.permute(1, 0, 2)
     else:
         raise ValueError(
-            f"audio waveform 必须为 [C,L]、[C,1,L] 或 [B,C,L]，实际 {tuple(waveform.shape)}"
+            f"audio waveform must be [C,L], [C,1,L], or [B,C,L]; got {tuple(waveform.shape)}"
         )
     if waveform.ndim != 3:
-        raise ValueError("无法把 audio waveform 转换为 Comfy AUDIO [B,C,L]")
+        raise ValueError("Cannot convert the audio waveform to Comfy AUDIO [B,C,L]")
     return {
         "waveform": waveform.to(device="cpu", dtype=t.float32).contiguous(),
         "sample_rate": sample_rate,
@@ -1648,43 +1655,43 @@ def _decode_audio(
 def _single_image_dimensions(image: Any, label: str) -> tuple[int, int]:
     t = _require_torch()
     if not isinstance(image, t.Tensor) or image.ndim != 4:
-        raise TypeError(f"{label} 必须是 ComfyUI IMAGE [B,H,W,C]")
+        raise TypeError(f"{label} must be a ComfyUI IMAGE [B,H,W,C]")
     if int(image.shape[0]) != 1:
-        raise ValueError(f"{label} 只支持 batch=1，实际为 {int(image.shape[0])}")
+        raise ValueError(f"{label} supports batch=1 only; got {int(image.shape[0])}")
     if int(image.shape[-1]) != 3:
-        raise ValueError(f"{label} 必须是 RGB IMAGE，实际通道数={int(image.shape[-1])}")
+        raise ValueError(f"{label} must be an RGB IMAGE; got channel count={int(image.shape[-1])}")
     height, width = int(image.shape[1]), int(image.shape[2])
     if height <= 0 or width <= 0:
-        raise ValueError(f"{label} 尺寸必须为正数")
+        raise ValueError(f"{label} dimensions must be positive")
     return width, height
 
 
 def _audio_metadata(audio: Any, label: str) -> tuple[Any, int, float]:
     t = _require_torch()
     if not isinstance(audio, Mapping):
-        raise TypeError(f"{label} 必须是 ComfyUI AUDIO mapping")
+        raise TypeError(f"{label} must be a ComfyUI AUDIO mapping")
     waveform = audio.get("waveform")
     sample_rate = audio.get("sample_rate")
     if not isinstance(waveform, t.Tensor) or waveform.ndim != 3:
-        raise ValueError(f"{label}.waveform 必须是 [B,C,L] tensor")
+        raise ValueError(f"{label}.waveform must be a [B,C,L] tensor")
     if int(waveform.shape[0]) != 1:
-        raise ValueError(f"{label} 只支持 batch=1")
+        raise ValueError(f"{label} supports batch=1 only")
     if int(waveform.shape[1]) <= 0 or int(waveform.shape[2]) <= 0:
-        raise ValueError(f"{label}.waveform 不能为空")
+        raise ValueError(f"{label}.waveform cannot be empty")
     if isinstance(sample_rate, bool) or not isinstance(sample_rate, int) or sample_rate <= 0:
-        raise ValueError(f"{label}.sample_rate 必须是正整数")
+        raise ValueError(f"{label}.sample_rate must be a positive integer")
     duration = int(waveform.shape[2]) / int(sample_rate)
     return waveform, int(sample_rate), float(duration)
 
 
 def _downmix_comfy_audio(audio: Mapping[str, Any], label: str = "audio") -> Mapping[str, Any]:
-    """>2ch 无无 layout 的 Comfy AUDIO：均值压成 mono 再扩到 stereo（对齐 ffmpeg -ac 2 兜底）。"""
+    """For Comfy AUDIO with >2 channels and no layout, average to mono then expand to stereo (matching the ffmpeg -ac 2 fallback)."""
     waveform, sample_rate, _ = _audio_metadata(audio, label)
     channels = int(waveform.shape[1])
     if channels <= H3_AUDIO_CHANNELS:
         return audio
     logging.getLogger(__name__).warning(
-        "%s 有 %s 声道且无 channel layout，已均值下混为 stereo", label, channels
+        "%s has %s channels and no channel layout; averaged down to stereo", label, channels
     )
     stereo = waveform.mean(dim=1, keepdim=True).expand(-1, H3_AUDIO_CHANNELS, -1).contiguous()
     out = dict(audio); out["waveform"] = stereo; out["sample_rate"] = sample_rate
@@ -1696,7 +1703,7 @@ def _video_dimensions(video: Any, label: str) -> tuple[int, int]:
     components_getter = getattr(video, "get_components", None)
     if not callable(getter) or not callable(components_getter):
         raise TypeError(
-            f"{label} 必须是 ComfyUI VIDEO（需要 get_dimensions/get_components）"
+            f"{label} must be a ComfyUI VIDEO (requires get_dimensions/get_components)"
         )
     dimensions = getter()
     if (
@@ -1704,10 +1711,10 @@ def _video_dimensions(video: Any, label: str) -> tuple[int, int]:
         or isinstance(dimensions, (str, bytes))
         or len(dimensions) != 2
     ):
-        raise ValueError(f"{label}.get_dimensions() 必须返回 (width,height)")
+        raise ValueError(f"{label}.get_dimensions() must return (width,height)")
     width, height = int(dimensions[0]), int(dimensions[1])
     if width <= 0 or height <= 0:
-        raise ValueError(f"{label} 尺寸必须为正数")
+        raise ValueError(f"{label} dimensions must be positive")
     return width, height
 
 
@@ -1785,16 +1792,16 @@ def _multimodal_qwen_encode(
         encode = getattr(handle, "encode_fl2va_conditioning", None)
         if not callable(encode):
             raise RuntimeError(
-                "Qwen handle 缺少 encode_fl2va_conditioning(prompt, images)"
+                "The Qwen handle is missing encode_fl2va_conditioning(prompt, images)"
             )
     elif task == H3_TASK_REF2VA:
         encode = getattr(handle, "encode_ref2va_conditioning", None)
         if not callable(encode):
             raise RuntimeError(
-                "Qwen handle 缺少 encode_ref2va_conditioning(prompt, labels, images, videos)"
+                "The Qwen handle is missing encode_ref2va_conditioning(prompt, labels, images, videos)"
             )
     else:
-        raise ValueError(f"multimodal Qwen 不支持 task={task!r}")
+        raise ValueError(f"Multimodal Qwen does not support task={task!r}")
     cache_key = visual_cache_key(
         material_fp="|".join(str(p) for p in cache_parts),
         plan=f"{task}|{prompt}|{tuple(condition_labels)}",
@@ -1815,13 +1822,13 @@ def _multimodal_qwen_encode(
                 videos=list(videos),
             )
         if not isinstance(result, Mapping):
-            raise TypeError("Qwen multimodal encoder 必须返回 mapping")
+            raise TypeError("The Qwen multimodal encoder must return a mapping")
         prompt_embeds = _normalise_prompt_embeddings(result)
         tags = result.get("text_token_tags")
         if not isinstance(tags, _require_torch().Tensor) or tags.ndim != 1:
-            raise ValueError("Qwen multimodal encoder 缺少 rank-1 text_token_tags")
+            raise ValueError("The Qwen multimodal encoder is missing rank-1 text_token_tags")
         if int(tags.shape[0]) != int(prompt_embeds.shape[0]):
-            raise ValueError("Qwen prompt_embeds 与 text_token_tags 长度不一致")
+            raise ValueError("Qwen prompt_embeds and text_token_tags lengths do not match")
         # Do not retain the encoder's ``hidden_states`` compatibility alias:
         # it points at the original device tensor and would keep a large Qwen
         # activation resident while the Video VAE is loaded next.  The node
@@ -1844,7 +1851,7 @@ def _vae_bundle_components(wrapper: Mapping[str, Any]) -> tuple[Any, Any]:
     video_vae = _wrapper_value(bundle, "video_vae")
     audio_vae = _wrapper_value(bundle, "audio_vae")
     if video_vae is None or audio_vae is None:
-        raise RuntimeError("VAE bundle 必须包含 video_vae 和 audio_vae")
+        raise RuntimeError("The VAE bundle must contain video_vae and audio_vae")
     return video_vae, audio_vae
 
 
@@ -1854,7 +1861,7 @@ def _video_source_path(video: Any, workdir: Path) -> Path:
     save_to = getattr(video, "save_to", None)
     if float(start) != 0.0 or float(duration) != 0.0:
         if not callable(save_to):
-            raise TypeError("带 trim 的 VIDEO 必须提供 save_to()")
+            raise TypeError("A trimmed VIDEO must provide save_to()")
         path = workdir / "reference_input_trimmed.mp4"
         save_to(str(path))
         return path
@@ -1878,10 +1885,10 @@ def _video_source_path(video: Any, workdir: Path) -> Path:
     if callable(save_to):
         save_to(str(path))
         if not path.is_file() or path.stat().st_size <= 0:
-            raise ValueError("VIDEO.save_to() 没有生成非空视频文件")
+            raise ValueError("VIDEO.save_to() did not produce a non-empty video file")
         return path
     raise TypeError(
-        "VIDEO 必须提供 get_stream_source()（文件路径/BytesIO）或 save_to()"
+        "VIDEO must provide get_stream_source() (file path/BytesIO) or save_to()"
     )
 
 
@@ -1964,10 +1971,10 @@ def _probe_video_display_metadata(path: str | Path, stream: Any) -> tuple[Any, f
         json.JSONDecodeError,
     ) as exc:
         raise RuntimeError(
-            f"reference video 无法通过 ffprobe 解析 DAR/旋转：{path}"
+            f"ffprobe could not resolve the reference video's DAR/rotation: {path}"
         ) from exc
     if not streams or not isinstance(streams[0], Mapping):
-        raise ValueError(f"reference video 的 ffprobe 结果缺少视频流：{path}")
+        raise ValueError(f"The ffprobe result for the reference video has no video stream: {path}")
     probed = streams[0]
     ffprobe_dar = probed.get("display_aspect_ratio")
     if ffprobe_dar not in (None, "", "N/A", "0:1", "0/1"):
@@ -1993,11 +2000,11 @@ def _probe_video_path(path: str | Path):
     _check_interrupted()
     with av.open(str(path), mode="r") as container:
         if not container.streams.video:
-            raise ValueError(f"reference video 没有视频流：{path}")
+            raise ValueError(f"The reference video has no video stream: {path}")
         stream = container.streams.video[0]
         fps_value = stream.average_rate or stream.base_rate
         if fps_value is None:
-            raise ValueError(f"reference video 无法解析 fps：{path}")
+            raise ValueError(f"Could not resolve fps for the reference video: {path}")
         fps = float(fps_value)
         frame_count = int(stream.frames or 0)
         if frame_count <= 0 and stream.duration is not None and stream.time_base is not None:
@@ -2035,7 +2042,7 @@ def _decode_video_file(path: str | Path):
             _check_interrupted()
             frames.append(frame.to_ndarray(format="rgb24"))
     if not frames:
-        raise ValueError(f"prepared reference video 没有可解码帧：{path}")
+        raise ValueError(f"The prepared reference video contains no decodable frames: {path}")
     array = np.stack(frames, axis=0)
     return _require_torch().from_numpy(array).to(dtype=_require_torch().float32).div_(255.0)
 
@@ -2050,7 +2057,7 @@ def _load_pcm_wav(path: str | Path) -> dict[str, Any]:
         frames = int(reader.getnframes())
         raw = reader.readframes(frames)
     if sample_width != 2:
-        raise ValueError(f"reference WAV 必须是 PCM s16，实际 sample_width={sample_width}")
+        raise ValueError(f"The reference WAV must be PCM s16; got sample_width={sample_width}")
     array = np.frombuffer(raw, dtype="<i2").reshape(-1, channels).T.copy()
     waveform = _require_torch().from_numpy(array).to(dtype=_require_torch().float32).div_(32768.0).unsqueeze(0)
     return {"waveform": waveform, "sample_rate": sample_rate}
@@ -2079,19 +2086,19 @@ def _preflight_target_conditions(
         semantic = [int(item["frame_index"]) for item in conditions]
         resolved = [int(item["resolved_frame_index"]) for item in conditions]
         if semantic != list(target.get("keyframe_signature", ())):
-            raise ValueError("FL2VA target.keyframe_signature 与当前 keyframes 不一致")
+            raise ValueError("FL2VA target.keyframe_signature does not match the current keyframes")
         if semantic != list(target.get("semantic_frame_indices", ())):
-            raise ValueError("FL2VA target.semantic_frame_indices 与 keyframes 串线")
+            raise ValueError("FL2VA target.semantic_frame_indices is cross-wired with the keyframes")
         if resolved != list(target.get("pixel_frame_indices", ())):
-            raise ValueError("FL2VA target.pixel_frame_indices 与 keyframes 串线")
+            raise ValueError("FL2VA target.pixel_frame_indices is cross-wired with the keyframes")
         return
 
     if task != H3_TASK_REF2VA:
-        raise ValueError(f"preflight 不支持 task={task!r}")
+        raise ValueError(f"Preflight does not support task={task!r}")
     actual_order = condition_order_fingerprint(task, conditions)
     declared_order = target.get("reference_order_fingerprint")
     if declared_order != actual_order:
-        raise ValueError("Ref2VA target 与当前 ordered references 串线")
+        raise ValueError("The Ref2VA target is cross-wired with the current ordered references")
     source_index = target.get("duration_source_condition_index")
     if source_index is None:
         return
@@ -2100,19 +2107,19 @@ def _preflight_target_conditions(
         or not isinstance(source_index, int)
         or not 0 <= source_index < len(conditions)
     ):
-        raise ValueError("Ref2VA duration_source_condition_index 无效")
+        raise ValueError("Ref2VA duration_source_condition_index is invalid")
     source = conditions[source_index]
     if source.get("type") not in {"audio", "video", "video_audio"}:
-        raise ValueError("Ref2VA 自动时长来源不是 audio-bearing reference")
+        raise ValueError("The Ref2VA automatic duration source is not an audio-bearing reference")
     if source.get("has_audio") is False:
-        raise ValueError("Ref2VA 自动时长来源是静音 reference")
+        raise ValueError("The Ref2VA automatic duration source is a silent reference")
     expected_duration = target.get("audio_reference_duration_seconds")
     source_duration = source.get("audio_duration_seconds")
     if expected_duration is not None and (
         source_duration is None
         or abs(float(expected_duration) - float(source_duration)) > 1e-9
     ):
-        raise ValueError("Ref2VA 自动时长 target 与 reference 音轨时长不一致")
+        raise ValueError("The Ref2VA automatic-duration target does not match the reference audio-track duration")
 
 
 

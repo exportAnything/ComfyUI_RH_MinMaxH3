@@ -1,4 +1,4 @@
-"""AdaLN 调制预计算缓存：采样前算完全部 timestep，推理只查表。"""
+"""AdaLN modulation precomputation cache: compute every timestep before sampling, then use table lookups during inference."""
 from __future__ import annotations
 from typing import Any, Sequence
 import torch
@@ -12,7 +12,7 @@ def enumerate_modulation_timesteps(
     visual_floor: float = H3_IMGVID_COND_TIMESTEP,
     audio_floor: float = H3_AUDIO_REF_COND_TIMESTEP,
 ) -> list[float]:
-    """枚举采样会碰到的全部 DiT timestep（含 cond floor）。"""
+    """Enumerate every DiT timestep reached during sampling, including the conditioning floor."""
     values = {float(visual_floor), float(audio_floor)}
     for sigma_v, sigma_a in zip(video_sigmas[:-1], audio_sigmas[:-1]):
         t_v, t_a = 1.0 - float(sigma_v), 1.0 - float(sigma_a)
@@ -20,14 +20,14 @@ def enumerate_modulation_timesteps(
     return sorted(values)
 
 class H3PrecomputeUnsupported(RuntimeError):
-    """当前驻留模式下不能安全预计算（调用方应跳过而非失败）。"""
+    """Signal that precomputation is unsafe in the current residency mode (caller should skip rather than fail)."""
 
 def _comfy_managed(linear: torch.nn.Module) -> bool:
-    """Comfy ops Linear（INT8/lowvram）由 ModelPatcher 记账，禁止绕过它搬运/释放。"""
+    """Comfy ops Linear (INT8/lowvram) is tracked by ModelPatcher and must not be moved/released behind its back."""
     return hasattr(linear, "comfy_cast_weights") or hasattr(linear, "prev_comfy_cast_weights")
 
 def _empty_linear(linear: torch.nn.Module) -> None:
-    """释放 Linear 权重占位，保留模块壳给 state_dict/layerwise 遍历。"""
+    """Release Linear weight storage while retaining the module shell for state_dict/layerwise traversal."""
     with torch.no_grad():
         for name in ("weight", "bias"):
             param = getattr(linear, name, None)
@@ -36,7 +36,7 @@ def _empty_linear(linear: torch.nn.Module) -> None:
             param.data = torch.empty(0, device="cpu", dtype=param.dtype)
 
 class H3ModulationCache:
-    """blocks: [L,6,M,3,H]；final: [2,M,1,H]；按 unique_timesteps 查表。"""
+    """blocks: [L,6,M,3,H]; final: [2,M,1,H]; table lookup by unique_timesteps."""
 
     def __init__(
         self,
@@ -50,7 +50,7 @@ class H3ModulationCache:
         self.blocks = blocks.detach().contiguous()
         self.final = final.detach().contiguous()
         self.frame_rate = None if frame_rate is None else round(float(frame_rate), 6)
-        # round 防 float32 往返键漂移
+        # round prevents key drift from float32 round trips.
         self.timestep_rows = {
             round(float(t), 6): i for i, t in enumerate(self.timesteps.tolist())
         }
@@ -65,11 +65,11 @@ class H3ModulationCache:
                 for t in unique_timesteps.detach().cpu().tolist()
             ]
         except KeyError as exc:
-            raise RuntimeError(f"AdaLN modulation cache 缺少 timestep {exc.args[0]}") from None
+            raise RuntimeError(f"AdaLN modulation cache is missing timestep {exc.args[0]}") from None
         return torch.tensor(rows, dtype=torch.long, device=self.blocks.device)
 
     def block(self, layer: int, unique_timesteps: torch.Tensor, *, device: torch.device) -> tuple[torch.Tensor, ...]:
-        """返回与 AdalnProj.forward 相同的 6 元组，各 [U*3, H]。"""
+        """Return the same six-tuple as AdalnProj.forward, each [U*3, H]."""
         rows = self._rows(unique_timesteps)
         # [6, U, 3, H] -> 6 × [U*3, H]
         gathered = self.blocks[layer].index_select(1, rows).to(device, non_blocking=True)
@@ -86,7 +86,7 @@ def cache_device_from_setting(compute_device: torch.device) -> torch.device:
         return compute_device
     if loc == "ram":
         return torch.device("cpu")
-    # auto：>40GB 卡放 VRAM，否则 RAM（与 PR 阈值一致）
+    # auto: use VRAM on cards over 40GB, otherwise RAM (matching the PR threshold).
     if compute_device.type == "cuda":
         try:
             total = torch.cuda.get_device_properties(compute_device).total_memory
@@ -105,28 +105,29 @@ def precompute_dit_modulation(
     release_weights: bool = True,
     frame_rate: float | None = None,
 ) -> H3ModulationCache:
-    """流式逐层预计算；可选释放 adaln/time_embedder 权重。"""
+    """Precompute layer by layer as a stream, optionally releasing adaln/time_embedder weights."""
     if not hasattr(model, "blocks"):
-        raise TypeError("precompute_dit_modulation 需要 MiniMaxH3DiTModel")
+        raise TypeError("precompute_dit_modulation requires MiniMaxH3DiTModel")
     if getattr(model, "use_adaln_curves", False) or not hasattr(model, "time_embedder"):
-        # 曲线表 checkpoint 没有 time embedder，adaLN 权重本就是低秩形式
+        # A curve-table checkpoint has no time embedder; its adaLN weights are already low-rank.
         raise H3PrecomputeUnsupported(
-            "曲线表 checkpoint 的 adaLN 权重已是低秩形式，跳过 AdaLN 预计算"
+            "Curve-table checkpoint adaLN weights are already low-rank; skipping AdaLN precomputation"
         )
     ts = torch.as_tensor(list(timesteps) if not isinstance(timesteps, torch.Tensor) else timesteps,
                          dtype=torch.float32)
     ts = torch.unique(ts, sorted=True)
     if ts.numel() == 0:
-        raise ValueError("modulation timesteps 为空")
-    # INT8/lowvram 下 adaln_proj.linear 是 Comfy cast-weights Linear，权重生命周期
-    # 归 ModelPatcher；绕过它 .to()/清空 param.data 会破坏显存记账与 pinned buffer。
+        raise ValueError("modulation timesteps are empty")
+    # Under INT8/lowvram, adaln_proj.linear is a Comfy cast-weights Linear whose
+    # weight lifecycle belongs to ModelPatcher. Calling .to() or clearing param.data
+    # behind it would corrupt VRAM accounting and pinned buffers.
     if any(_comfy_managed(b.adaln_proj.linear) for b in model.blocks):
         raise H3PrecomputeUnsupported(
-            "DiT 由 Comfy ModelPatcher 管理（INT8/lowvram），跳过 AdaLN 预计算"
+            "DiT is managed by Comfy ModelPatcher (INT8/lowvram); skipping AdaLN precomputation"
         )
     device = torch.device(compute_device or next(model.parameters()).device)
     store = torch.device(cache_device) if cache_device is not None else cache_device_from_setting(device)
-    # time embed（fp32 孤岛）；实验性 frame_rate 写入嵌入后再投影
+    # Time embedding (fp32 island); experimental frame_rate modifies the embedding before projection.
     model.time_embedder.to(device)
     with torch.inference_mode():
         t_emb = model.time_embedder(ts.to(device), frame_rate=frame_rate).to(
@@ -153,7 +154,7 @@ def precompute_dit_modulation(
     if release_weights:
         _empty_linear(final_proj.linear)
         final_proj.to("cpu")
-        # time_embedder 也可释放
+        # time_embedder can be released too.
         for mod in (model.time_embedder.proj_in, model.time_embedder.proj_out):
             _empty_linear(mod)
         model.time_embedder.to("cpu")

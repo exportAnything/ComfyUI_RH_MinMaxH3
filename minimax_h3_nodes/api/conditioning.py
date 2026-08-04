@@ -1,4 +1,4 @@
-"""Conditioning 节点。"""
+"""Conditioning nodes."""
 from __future__ import annotations
 from ._shared import *  # noqa: F403
 
@@ -120,7 +120,7 @@ class MiniMaxH3Ref2VAVideoReference:
         try:
             _runtime_module("media_conditioning").ensure_ffmpeg_tools(required=False)
         except Exception as exc:
-            logging.getLogger(__name__).warning("Ref2VA ffmpeg 预检异常: %s", exc)
+            logging.getLogger(__name__).warning("Ref2VA ffmpeg preflight check failed: %s", exc)
         return {
             "required": {
                 "video": ("VIDEO",),
@@ -146,7 +146,7 @@ class MiniMaxH3Ref2VAVideoReference:
         width, height = _video_dimensions(video, "video")
         has_audio, audio_duration = _probe_video_audio(video, "video")
         if reference_type == "video_audio" and not has_audio:
-            raise ValueError("video_audio reference 必须包含音轨")
+            raise ValueError("A video_audio reference must contain an audio track")
         reference = make_ref2va_reference(
             str(reference_type),
             video,
@@ -188,7 +188,7 @@ class MiniMaxH3FL2VAEncode:
         prompt: str,
     ):
         if not isinstance(prompt, str) or not prompt.strip():
-            raise ValueError("prompt 不能为空")
+            raise ValueError("prompt cannot be empty")
         clean_target = validate_target_v2(
             target, expected_task=H3_TASK_FL2VA, require_resolved=True
         )
@@ -330,10 +330,10 @@ class MiniMaxH3FL2VAEncode:
 class MiniMaxH3Ref2VAEncode:
     @classmethod
     def INPUT_TYPES(cls):
-        try:  # object_info 阶段软探测，缺失只 warning 不阻断清单生成
+        try:  # Soft probe during object_info; warn on failure without blocking manifest generation.
             _runtime_module("media_conditioning").ensure_ffmpeg_tools(required=False)
         except Exception as exc:
-            logging.getLogger(__name__).warning("Ref2VA ffmpeg 预检异常: %s", exc)
+            logging.getLogger(__name__).warning("Ref2VA ffmpeg preflight check failed: %s", exc)
         return {
             "required": {
                 "h3_text_encoder": (TEXT_ENCODER_TYPE,),
@@ -351,9 +351,10 @@ class MiniMaxH3Ref2VAEncode:
                     {
                         "default": H3_REFERENCE_IMAGE_SIZE_MATCH,
                         "tooltip": (
-                            "参考图尺寸策略。match：按生成画布的像素面积等比只缩不放；"
-                            "max：参考管线独立的 2048 短边，identity 保真最好。"
-                            "参考 token 每个采样步都参与注意力，max 可能慢数倍。"
+                            "Reference-image sizing policy. match: downscale only, preserving aspect ratio, "
+                            "to match the generated canvas area. max: use the reference pipeline's independent "
+                            "2048-pixel short edge for the best identity fidelity. Reference tokens participate "
+                            "in attention at every sampling step, so max can be several times slower."
                         ),
                     },
                 ),
@@ -375,12 +376,12 @@ class MiniMaxH3Ref2VAEncode:
         ref_image_size: str = H3_REFERENCE_IMAGE_SIZE_MATCH,
     ):
         if not isinstance(prompt, str) or not prompt.strip():
-            raise ValueError("prompt 不能为空")
+            raise ValueError("prompt cannot be empty")
         image_size_mode = str(ref_image_size or "").strip().lower()
         if image_size_mode not in H3_REFERENCE_IMAGE_SIZE_MODES:
             raise ValueError(
-                "ref_image_size 必须是 "
-                f"{list(H3_REFERENCE_IMAGE_SIZE_MODES)} 之一，实际 {ref_image_size!r}"
+                "ref_image_size must be one of "
+                f"{list(H3_REFERENCE_IMAGE_SIZE_MODES)}; got {ref_image_size!r}"
             )
         clean_target = validate_target_v2(
             target, expected_task=H3_TASK_REF2VA, require_resolved=True
@@ -512,7 +513,7 @@ class MiniMaxH3Ref2VAEncode:
                         ordinals["audio"] += 1
                         condition_labels.append(("audio", ordinals["audio"]))
                     elif kind == "video_audio":
-                        raise ValueError("video_audio reference 必须包含音轨")
+                        raise ValueError("A video_audio reference must contain an audio track")
                     ordinals["video"] += 1
                     condition_labels.append(("video", ordinals["video"]))
                 prepared.append(record)
@@ -538,7 +539,8 @@ class MiniMaxH3Ref2VAEncode:
                 images=qwen_images,
                 condition_labels=condition_labels,
                 videos=qwen_videos,
-                # 尺寸策略进缓存键：同素材换 match/max 会送给 Qwen 不同的像素
+                # Include the sizing policy in the cache key: switching match/max for
+                # the same asset sends different pixels to Qwen.
                 cache_parts=tuple(
                     str(r["material_fingerprint"]) for r in prepared
                 ) + (f"refimg={image_size_mode}",),
@@ -673,7 +675,7 @@ class MiniMaxH3T2VATextEncode:
             h3_text_encoder, H3_TEXT_ENCODER_SCHEMA, "h3_text_encoder"
         )
         if not isinstance(prompt, str) or not prompt.strip():
-            raise ValueError("prompt 不能为空")
+            raise ValueError("prompt cannot be empty")
         prompt_embeds = _encode_prompt(handle, prompt)
         return (make_t2va_conditioning(prompt, prompt_embeds),)
 
@@ -705,8 +707,8 @@ class MiniMaxH3UnsupportedConditioning:
             else "MiniMaxH3Ref2VAEncode"
         )
         raise H3TaskNotImplementedError(
-            "MiniMaxH3UnsupportedConditioning 是旧工作流的迁移错误占位节点；"
-            f"请删除它并连接新的 {destination} 节点。"
+            "MiniMaxH3UnsupportedConditioning is a migration-error placeholder from an old workflow; "
+            f"delete it and connect the new {destination} node."
         )
 
 

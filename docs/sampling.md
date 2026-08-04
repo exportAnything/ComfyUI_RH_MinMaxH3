@@ -1,7 +1,5 @@
 # Dual Sigma Sampler — parameters and how to choose
 
-[中文文档](sampling_CN.md)
-
 `RHMiniMaxH3DualSigmaSampler` is the only sampling entry point for H3. It
 advances the video and audio streams together, which is why a standard
 KSampler cannot stand in for it.
@@ -153,7 +151,7 @@ used as a reference.** Default is `off`.
 | `manual-cache-dit` | set rdt / mc / warmup yourself | — | — |
 
 > The speedups and LPIPS above come from upstream calibration on 4×H200 with a
-> workload of **t2va 1344×768 / 124 frames / 50 steps / shift 12·3**. A single
+> workload of **t2va 1344×768 / 124 frames / 50 steps / shift 12/3**. A single
 > GPU reuses the same knobs without the multi-GPU gating, so real speedups are
 > lower than these numbers.
 
@@ -232,7 +230,7 @@ sampler_mode = euler
 sigma_points = 50
 accel        = minimax-h3-velocity-cache-v1
 ```
-Only available at 1344×768 / 124 frames / shift 12·3; other parameters are
+Only available at 1344×768 / 124 frames / shift 12/3; other parameters are
 rejected. LPIPS 0.426 means the difference from the baseline is quite visible.
 
 **Stacking `res_multistep` + accel**: enable
@@ -259,7 +257,7 @@ Use with `Encode Video → AV Latent`.
 
 **Selected a profile tier and got a workload mismatch error?**
 Both profiles were only calibrated at 1344×768 / 124 frames / 50 steps /
-shift 12·3. Use `manual-*`, or move the parameters back onto that contract.
+shift 12/3. Use `manual-*`, or move the parameters back onto that contract.
 
 **Output differs from last time?**
 Check that `seed`, `sampler_mode`, `sigma_points`, both shifts and `accel` are

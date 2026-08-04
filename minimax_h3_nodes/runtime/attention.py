@@ -1,4 +1,4 @@
-"""DiT 注意力/RoPE/QKV 工具（P2 自 dit.py 抽出）。"""
+"""DiT attention/RoPE/QKV utilities (P2 extracted from dit.py)."""
 from __future__ import annotations
 # SPDX-License-Identifier: Apache-2.0
 """Pure PyTorch MiniMax-H3 packed-token DiT.
@@ -32,8 +32,8 @@ The checkpoint QKV matrices are grouped per attention head as
 ``[all_q, all_k, all_v]``.  A streaming loader must call
 :func:`prepare_checkpoint_tensor` for every tensor before assigning it.
 
-可选 ``operations``（Comfy ``mixed_precision_ops`` / ``manual_cast``）注入可量化
-Linear；FP32 层（patch/time/final）始终用原生 ``nn.Linear``。
+Optional ``operations`` (Comfy ``mixed_precision_ops`` / ``manual_cast``) injects
+quantizable Linear layers; FP32 layers (patch/time/final) always use native ``nn.Linear``.
 """
 
 import math
@@ -105,7 +105,8 @@ def prepare_checkpoint_tensor(
 
     The operation is intentionally tensor-at-a-time so a safetensors loader
     does not need to materialize a second 60+ GiB state dict.
-    INT8 ``weight`` / ``weight_scale`` 同行置换（per-row scale 与 QKV 行布局一致）。
+    Permute INT8 ``weight`` / ``weight_scale`` rows together (per-row scales match
+    the QKV row layout).
     """
 
     if not (is_qkv_weight_key(key) or is_qkv_scale_key(key)):
@@ -161,7 +162,7 @@ def _rotate_half(x: torch.Tensor) -> torch.Tensor:
     return torch.cat((-x2, x1), dim=-1)
 
 def _index_runs(indices: torch.Tensor) -> tuple[tuple[int, int, int], ...]:
-    """1D 索引张量 → 连续段 (start, stop, row)；段数通常十几个，DtoH 可忽略。"""
+    """Convert a 1D index tensor to contiguous (start, stop, row) runs; usually only a few dozen, so DtoH cost is negligible."""
     idx = indices.view(-1)
     n = int(idx.numel())
     if n == 0:
@@ -189,9 +190,10 @@ def _modulate_scale_shift(
     scale: torch.Tensor,
     indices_or_segments,
 ) -> torch.Tensor:
-    """对 fresh 的 norm 输出按段 in-place 调制；也接受旧的 per-token indices。"""
-    # 曲线表 checkpoint 的调制是 fp32，先按 x 的 dtype 取行再 in-place（等价于
-    # 原版 checkpoint 的 bf16 调制精度，且避免 in-place 类型提升报错）
+    """Modulate a fresh norm output in place by runs; also accepts legacy per-token indices."""
+    # Curve-table checkpoint modulation is fp32. Gather rows in x's dtype before
+    # the in-place operation (equivalent to the original checkpoint's bf16
+    # modulation precision and avoids in-place type-promotion errors).
     for a, b, row in _as_mod_segments(indices_or_segments):
         x[a:b].mul_(1.0 + scale[row].to(x.dtype)).add_(shift[row].to(x.dtype))
     return x
@@ -202,14 +204,14 @@ def _modulate_gate(
     other: torch.Tensor,
     indices_or_segments,
 ) -> torch.Tensor:
-    """gated residual：对 fresh 的 attn/mlp 输出 in-place 累加。"""
+    """Gated residual: accumulate a fresh attn/mlp output in place."""
     for a, b, row in _as_mod_segments(indices_or_segments):
         other[a:b].mul_(gate[row].to(other.dtype)).add_(x[a:b])
     return other
 
 def _silu_mul(hidden: torch.Tensor) -> torch.Tensor:
     gate, up = hidden.chunk(2, dim=-1)
-    return F.silu(gate).mul_(up)  # gate 为 chunk 视图，silu 出新张量后再 mul_
+    return F.silu(gate).mul_(up)  # gate is a chunk view; silu creates a new tensor before mul_.
 
 def _rope_cos_sin(
     frequencies: torch.Tensor, *, dtype: torch.dtype
@@ -230,10 +232,12 @@ def _rope_cos_sin_cache(
 def _rope_rotation_table(
     cos_sin_cache: torch.Tensor, *, dtype: torch.dtype
 ) -> torch.Tensor:
-    """``[S, rot]`` cos|sin → ``[1, S, 1, rot/2, 2, 2]`` 旋转矩阵表。
+    """Convert ``[S, rot]`` cos|sin to a ``[1, S, 1, rot/2, 2, 2]`` rotation-matrix table.
 
-    这是 comfy-kitchen 融合 RMSNorm+RoPE kernel 的入参形状（与 ComfyUI 上游 H3 支持一致）。
-    直接从既有 cos/sin 缓存构造，保证融合路径与 eager 路径同源、不重算角度。
+    This is the input shape for the comfy-kitchen fused RMSNorm+RoPE kernel
+    (matching upstream ComfyUI H3 support). Build it directly from the existing
+    cos/sin cache so fused and eager paths share the same source without
+    recomputing angles.
     """
     half = cos_sin_cache.shape[-1] // 2
     cos, sin = cos_sin_cache[..., :half], cos_sin_cache[..., half:]
@@ -281,7 +285,7 @@ def _apply_rope_qk(
 def normalize_cu_seqlens_bounds(
     cu_seqlens: Any, *, rows: int | None = None
 ) -> tuple[int, ...]:
-    """一次验证并生成不可变 bounds；热路径禁止再 .tolist()。"""
+    """Validate once and produce immutable bounds; the hot path must not call .tolist() again."""
     if isinstance(cu_seqlens, tuple):
         bounds = tuple(int(x) for x in cu_seqlens)
     else:
@@ -330,7 +334,8 @@ def sdpa_varlen_attention(
         bounds = normalize_cu_seqlens_bounds(bounds, rows=rows)
 
     segments = [(start, stop) for start, stop in zip(bounds[:-1], bounds[1:]) if stop > start]
-    # 单 document（或仅一段非空）快路径：一次 SDPA，无 output 切片回填循环
+    # Fast path for one document (or one non-empty run): one SDPA call with no
+    # output-slice writeback loop.
     if len(segments) == 1 and segments[0] == (0, rows):
         attended = F.scaled_dot_product_attention(
             query.transpose(0, 1).unsqueeze(0),

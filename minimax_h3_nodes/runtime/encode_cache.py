@@ -1,4 +1,4 @@
-"""Qwen/条件编码分层 LRU 缓存；值驻 CPU，按字节上限淘汰。"""
+"""Tiered LRU cache for Qwen/conditioning encodings; values stay on CPU and are evicted by byte limit."""
 from __future__ import annotations
 import hashlib, logging, threading
 from collections import OrderedDict

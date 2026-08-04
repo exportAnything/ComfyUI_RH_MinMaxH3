@@ -25,9 +25,9 @@ def _qwen_causal_lm_class():
         cur, lo, hi = _parse_ver(ver), _parse_ver(TRANSFORMERS_MIN_VERSION), _parse_ver(TRANSFORMERS_MAX_VERSION)
         if cur < lo or cur > hi:
             raise H3ComponentError(
-                f"transformers {ver} 超出支持区间 "
-                f"[{TRANSFORMERS_MIN_VERSION}, {TRANSFORMERS_MAX_VERSION}]；"
-                "请按 requirements.txt 安装"
+                f"transformers {ver} is outside the supported range "
+                f"[{TRANSFORMERS_MIN_VERSION}, {TRANSFORMERS_MAX_VERSION}]; "
+                "install the version specified in requirements.txt"
             )
         from transformers import Qwen3VLForConditionalGeneration
         return Qwen3VLForConditionalGeneration
@@ -269,7 +269,7 @@ def _validate_text_encoder_quant_marker(
             )
 
 def _swap_lang_linears(layers, LinearCls, *, dtype) -> int:
-    """把 language_model.layers 内 nn.Linear 换成 comfy ops.Linear（meta）。"""
+    """Replace nn.Linear inside language_model.layers with comfy ops.Linear (meta)."""
     import torch.nn as nn
 
     n = 0
@@ -358,9 +358,9 @@ def _stream_load_quantized_backbone(
     shards: list[Path] | None = None,
     weight_map: dict[str, str] | None = None,
 ) -> None:
-    """流式写入 int8_convrot + 透传 bf16（visual/embed/norm）。"""
+    """Stream int8_convrot values while passing through bf16 (visual/embed/norm)."""
     from safetensors import safe_open
-    from ..model_loader import _checkpoint_index  # 复用分片索引
+    from ..model_loader import _checkpoint_index  # Reuse the shard index.
 
     # All index and shard paths pass through the same canonical containment
     # gate as the DiT loader.  Never fall back after a malformed/escaping index.
@@ -527,7 +527,7 @@ def _stream_load_quantized_backbone(
         if getattr(t, "device", None) is not None and t.device.type == "meta"
     ]
     if meta_left:
-        raise H3ComponentError(f"int8 text_encoder 仍有 meta 张量: {meta_left[:12]!r}")
+        raise H3ComponentError(f"int8 text_encoder still contains meta tensors: {meta_left[:12]!r}")
 
 def _load_quantized_text_encoder(
     component: Path,
@@ -540,7 +540,7 @@ def _load_quantized_text_encoder(
     shards: list[Path] | None = None,
     weight_map: dict[str, str] | None = None,
 ):
-    """meta 构建 → language Linear 换 comfy ops → 流式装 int8_convrot。"""
+    """Build on meta → replace language Linear with comfy ops → stream int8_convrot."""
     import torch
     from ..model_loader import _require_int8_ops
 
@@ -549,7 +549,7 @@ def _load_quantized_text_encoder(
     try:
         from accelerate import init_empty_weights
     except ImportError as exc:
-        raise H3ComponentError("int8 text_encoder 需要 accelerate（init_empty_weights）") from exc
+        raise H3ComponentError("int8 text_encoder requires accelerate (init_empty_weights)") from exc
 
     with init_empty_weights():
         try:
@@ -635,7 +635,8 @@ def load_h3_text_encoder(
     import torch
     from transformers import AutoConfig, AutoProcessor, AutoTokenizer
 
-    # 扁平单文件权重：文件名即类型凭证；Qwen 组件两个分区共用，不带分区标记。
+    # Flat single-file weights: the filename proves the type; the Qwen component is
+    # shared by both partitions and has no partition marker.
     external_weights = (
         validate_weight_partition(
             text_encoder_weights, partition or "fl2va", kind="text_encoder"
@@ -647,11 +648,11 @@ def load_h3_text_encoder(
         raise H3ComponentError(
             f"MiniMax-H3 text_encoder weight file not found: {external_weights}"
         )
-    if not text_encoder_path:  # 未显式指定时自动优先 int8 量化目录（26GB vs BF16 62GB）
+    if not text_encoder_path:  # Prefer the int8 quantized directory when unspecified (26GB vs BF16 62GB).
         auto = model_root_path(model_root) / INT8_TE_DIRNAME
         if auto.is_dir() and (auto / "config.json").is_file():
             text_encoder_path = str(auto)
-            LOGGER.info("text_encoder_path 未指定，自动选用量化目录 %s", INT8_TE_DIRNAME)
+            LOGGER.info("text_encoder_path not specified; automatically selected quantized directory %s", INT8_TE_DIRNAME)
     component = resolve_component(
         model_root,
         ("text_encoder", "qwen3vl", "qwen"),
@@ -735,7 +736,8 @@ def load_h3_text_encoder(
                 raise H3ComponentError(
                     f"AutoProcessor at {processor_component} has no image_processor"
                 )
-            # 上游 size/mean 契约：挡掉通用 Qwen3-VL 或实验分支硬编码的错误值
+            # Upstream size/mean contract: reject incorrect hard-coded values from
+            # generic Qwen3-VL or experimental branches.
             validate_h3_processor_contract(
                 processor_component,
                 require_video=bool(require_multimodal_processor),
@@ -779,7 +781,7 @@ def load_h3_text_encoder(
     if external_weights is not None:
         checkpoint_shards, checkpoint_weight_map = [external_weights], None
         LOGGER.info(
-            "text_encoder 权重取自扁平单文件 %s，结构/配置仍来自 %s",
+            "text_encoder weights come from flat single file %s; structure/configuration still come from %s",
             external_weights.name,
             component,
         )
@@ -791,15 +793,16 @@ def load_h3_text_encoder(
         weight_map=checkpoint_weight_map,
     )
     if quantized:
-        # 扁平单文件权重没有 quant_meta.json，用转换契约作为逐 Linear
-        # marker 的比对基准；分区无关（Qwen 组件两个分区共用）。
+        # Flat single-file weights have no quant_meta.json; use the conversion contract
+        # as the comparison baseline for each Linear marker. It is partition-independent
+        # because the Qwen component is shared by both partitions.
         quant_metadata = (
             {"format": INT8_FORMAT, "convrot": True}
             if external_weights is not None
             else _validate_text_encoder_quant_metadata(component, partition=partition)
         )
         if not ALLOW_PARTIAL_OFFLOAD_INT8:
-            raise H3ComponentError("int8 text_encoder 需要 ALLOW_PARTIAL_OFFLOAD_INT8")
+            raise H3ComponentError("int8 text_encoder requires ALLOW_PARTIAL_OFFLOAD_INT8")
         model = _load_quantized_text_encoder(
             component, config=config, model_dtype=model_dtype,
             offload_device=target_offload_device, attention_backend=attention_backend,
@@ -809,8 +812,8 @@ def load_h3_text_encoder(
         )
     elif external_weights is not None:
         raise H3ComponentError(
-            f"{external_weights.name} 不是量化 checkpoint；BF16 文本编码器请选择 "
-            "release 里的分片组件，Transformers 需要完整组件目录才能加载"
+            f"{external_weights.name} is not a quantized checkpoint; for a BF16 text encoder, select "
+            "the sharded component from the release because Transformers requires the complete component directory"
         )
     else:
         stale_quant_meta = component / "quant_meta.json"

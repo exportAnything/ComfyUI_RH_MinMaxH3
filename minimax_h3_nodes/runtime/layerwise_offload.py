@@ -1,4 +1,4 @@
-"""BF16 DiT 按层 CPU↔GPU offload（对齐上游 LayerwiseOffloadManager 合同，单卡精简版）。"""
+"""Layerwise BF16 DiT CPU↔GPU offload (single-GPU implementation aligned with the upstream LayerwiseOffloadManager contract)."""
 from __future__ import annotations
 import logging
 from typing import Any
@@ -6,12 +6,12 @@ from .h3_settings import DIT_LAYERWISE_PIN_MEMORY, DIT_LAYERWISE_PREFETCH
 LOGGER = logging.getLogger(__name__)
 _ATTR = "_h3_layerwise"
 
-class H3LayerwiseOffload:  # blocks 常驻 pinned CPU，推理时按层预取到 GPU
+class H3LayerwiseOffload:  # Blocks remain in pinned CPU memory and are prefetched to GPU layer by layer during inference.
     def __init__(self, model: Any, *, device: Any, layers_attr: str = "blocks", prefetch: int | None = None, pin_memory: bool | None = None):
         import torch
         layers = getattr(model, layers_attr, None)
         if not isinstance(layers, (torch.nn.ModuleList, torch.nn.Sequential)) or not len(layers):
-            raise RuntimeError(f"DiT 缺少可 offload 的 {layers_attr}")
+            raise RuntimeError(f"DiT is missing offloadable {layers_attr}")
         self.model, self.layers_attr, self.layers = model, layers_attr, layers
         self.device = torch.device(device)
         self.num_layers = len(layers)
@@ -59,7 +59,7 @@ class H3LayerwiseOffload:  # blocks 常驻 pinned CPU，推理时按层预取到
             if name != self.layers_attr: child.to(self.device)
         if self.device.type == "cuda": self._stream = torch.cuda.Stream(device=self.device)
         self._register_hooks(); self.prepare(non_blocking=False); self._enabled = True
-        LOGGER.info("DiT layerwise offload 已启用：layers=%s prefetch=%s device=%s", self.num_layers, self.prefetch, self.device)
+        LOGGER.info("DiT layerwise offload enabled: layers=%s prefetch=%s device=%s", self.num_layers, self.prefetch, self.device)
 
     def disable(self) -> None:
         if not self._enabled: return

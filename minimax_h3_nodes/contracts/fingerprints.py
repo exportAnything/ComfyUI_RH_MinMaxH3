@@ -1,4 +1,4 @@
-"""contracts.fingerprints facade（实现见 _impl）。"""
+"""contracts.fingerprints facade (implementation lives in _impl)."""
 from __future__ import annotations
 from ._impl import (
     component_compatibility_fingerprint,

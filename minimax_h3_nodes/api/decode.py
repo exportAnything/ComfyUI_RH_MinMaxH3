@@ -1,4 +1,4 @@
-"""Decode 节点。"""
+"""Decode nodes."""
 from __future__ import annotations
 from ._shared import *  # noqa: F403
 
@@ -39,7 +39,7 @@ class MiniMaxH3DecodeAV:
             expected_release = latent.get("release_fingerprint")
             actual_release = _wrapper_release_fingerprint(vae_wrapper)
             if expected_release != actual_release:
-                raise ValueError("sampled latent 与 Decode VAE 不属于同一 release")
+                raise ValueError("The sampled latent and Decode VAE do not belong to the same release")
             expected_vae = latent.get("vae_fingerprint")
             actual_vae = _wrapper_component_fingerprint(
                 vae_wrapper,
@@ -48,27 +48,27 @@ class MiniMaxH3DecodeAV:
                 fingerprint_key="vae_fingerprint",
             )
             if not expected_vae or expected_vae != actual_vae:
-                raise ValueError("sampled latent 与 Decode VAE 的 component fingerprint 不一致")
+                raise ValueError("The sampled latent and Decode VAE component fingerprints do not match")
         else:
             if (
                 not isinstance(h3_vae_bundle, Mapping)
                 or h3_vae_bundle.get("schema") != H3_VAE_SCHEMA
             ):
                 raise TypeError(
-                    "h3_vae_bundle 端口不是 RunningHub MiniMax H3 Dual VAE Loader 的输出"
+                    "The h3_vae_bundle port is not an output from the RunningHub MiniMax H3 Dual VAE Loader"
                 )
             vae_wrapper = h3_vae_bundle
             latent = validate_av_latent(sampled_av_latent)
         if not latent.get("sampled", False):
             raise ValueError(
-                "输入仍是空 latent；请先连接 MiniMax H3 Dual Sigma Sampler"
+                "The input is still an empty latent; connect the MiniMax H3 Dual Sigma Sampler first"
             )
         bundle = vae_wrapper.get("bundle")
         video_vae = _wrapper_value(bundle, "video_vae")
         audio_vae = _wrapper_value(bundle, "audio_vae")
         if video_vae is None or audio_vae is None:
             raise RuntimeError(
-                "VAE bundle 必须同时包含 video_vae 和 audio_vae"
+                "The VAE bundle must contain both video_vae and audio_vae"
             )
         _require_comfy()
         # Decode components sequentially.  Keeping either the 62 GB DiT or
@@ -106,7 +106,7 @@ class MiniMaxH3DecodeAV:
             )
             write_h3_sidecar(meta)
         except Exception as exc:
-            logging.getLogger(__name__).warning("H3 sidecar 写入失败: %s", exc)
+            logging.getLogger(__name__).warning("Failed to write the H3 sidecar: %s", exc)
         return (frames, audio)
 
 

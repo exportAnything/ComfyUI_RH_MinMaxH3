@@ -1,4 +1,4 @@
-"""Target 节点。"""
+"""Target nodes."""
 from __future__ import annotations
 from ._shared import *  # noqa: F403
 
@@ -18,7 +18,7 @@ class MiniMaxH3T2VATarget:
                         "min": 4.0,
                         "max": 15.0,
                         "step": 0.1,
-                        "tooltip": "时长秒数，必须在 4.0–15.0（执行期再次校验）。",
+                        "tooltip": "Duration in seconds; must be 4.0–15.0 (validated again at execution time).",
                     },
                 ),
             },
@@ -30,7 +30,7 @@ class MiniMaxH3T2VATarget:
                         "min": 0,
                         "max": 4096,
                         "step": 32,
-                        "tooltip": "显式输出宽度；0 表示按 aspect_ratio 自动计算。需与 height 同时填写并按 32 对齐。",
+                        "tooltip": "Explicit output width; 0 derives it from aspect_ratio. Set it together with height and align both to 32.",
                     },
                 ),
                 "height": (
@@ -40,7 +40,7 @@ class MiniMaxH3T2VATarget:
                         "min": 0,
                         "max": 4096,
                         "step": 32,
-                        "tooltip": "显式输出高度；0 表示按 aspect_ratio 自动计算。需与 width 同时填写并按 32 对齐。",
+                        "tooltip": "Explicit output height; 0 derives it from aspect_ratio. Set it together with width and align both to 32.",
                     },
                 ),
             },
@@ -55,7 +55,7 @@ class MiniMaxH3T2VATarget:
     def VALIDATE_INPUTS(
         cls, duration_seconds=5.0, width=0, height=0, **kwargs
     ):
-        # 连接外部节点时可能绕过 UI min/max，这里先拦一层
+        # External node connections can bypass UI min/max constraints, so guard here.
         if duration_seconds is None:
             return True
         try:
@@ -69,7 +69,8 @@ class MiniMaxH3T2VATarget:
                 f"Invalid duration_seconds: {value}. "
                 f"Allowed: [{H3_MIN_DURATION_SECONDS}, {H3_MAX_DURATION_SECONDS}]"
             )
-        # 显式尺寸同样在提交期拦截；动态连接无法静态取值时留给执行期合同校验。
+        # Validate explicit dimensions at submission time too; if a dynamic connection
+        # prevents static inspection, defer to the runtime contract validation.
         if width is None or height is None:
             return True
         try:
@@ -172,7 +173,7 @@ class MiniMaxH3Ref2VATarget:
                         "min": 0.0,
                         "max": 15.0,
                         "step": 0.1,
-                        "tooltip": "0 表示从唯一的实际音频 reference 推导时长。",
+                        "tooltip": "0 derives the duration from the single actual audio reference.",
                     },
                 ),
             },
@@ -184,7 +185,7 @@ class MiniMaxH3Ref2VATarget:
                         "min": 0,
                         "max": 4096,
                         "step": 32,
-                        "tooltip": "与 height 同时设为 0 时按 aspect_ratio；否则使用手动输出宽度。",
+                        "tooltip": "Set both width and height to 0 to use aspect_ratio; otherwise this is the manual output width.",
                     },
                 ),
                 "height": (
@@ -194,7 +195,7 @@ class MiniMaxH3Ref2VATarget:
                         "min": 0,
                         "max": 4096,
                         "step": 32,
-                        "tooltip": "与 width 同时设为 0 时按 aspect_ratio；否则使用手动输出高度。",
+                        "tooltip": "Set both width and height to 0 to use aspect_ratio; otherwise this is the manual output height.",
                     },
                 ),
             },

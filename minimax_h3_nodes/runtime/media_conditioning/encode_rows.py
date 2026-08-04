@@ -1,4 +1,4 @@
-"""media_conditioning.encode_rows facade。"""
+"""media_conditioning.encode_rows facade."""
 from __future__ import annotations
 from ._impl import (
     patchify_video_condition_rows,

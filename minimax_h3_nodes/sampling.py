@@ -1,4 +1,4 @@
-"""采样 facade：实现见 runtime.sampler_core。"""
+"""Sampling facade; implementation lives in runtime.sampler_core."""
 from __future__ import annotations
 from .runtime.sampler_core import *  # noqa: F403
 from .runtime import sampler_core as _sampler_core

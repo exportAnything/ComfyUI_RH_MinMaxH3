@@ -1,4 +1,4 @@
-"""components.roots facade。"""
+"""components.roots facade."""
 from __future__ import annotations
 from ._impl import (
     list_h3_model_root_paths,

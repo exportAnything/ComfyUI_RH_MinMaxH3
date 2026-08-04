@@ -118,9 +118,11 @@ def _config_architecture(raw: dict) -> dict:
 def _validate_transformer_config(raw: dict, path: Path) -> None:
     """Validate the concrete Diffusers-style config shipped with H3.
 
-    这一阶段在 checkpoint 发现之前跑（廉价、无分配）。``time_embed_dim`` 是唯一
-    延后的字段：曲线表变体的 adaLN 输入宽度是基的秩而非上游 2688，只有读过
-    checkpoint 才知道该按哪个值判——见 :func:`_validate_adaln_curve_contract`。
+    This stage runs before checkpoint discovery (cheap and allocation-free).
+    ``time_embed_dim`` is the only deferred field: in the curve-table variant,
+    adaLN input width is the basis rank rather than upstream 2688, and the correct
+    value is known only after reading the checkpoint. See
+    :func:`_validate_adaln_curve_contract`.
     """
 
     class_name = raw.get("_class_name")
@@ -138,8 +140,9 @@ def _validate_transformer_config(raw: dict, path: Path) -> None:
         if field != "time_embed_dim"
     }
     if architecture.get("adaln_curve_grid") is not None:
-        # 这两个字段只描述已被采样表取代的 time embedder：曲线表 config 可以省略，
-        # 但写了就仍按上游值校验（防止指错目录）。
+        # These fields describe only the time embedder replaced by the sample table.
+        # A curve-table config may omit them, but if present they are still validated
+        # against upstream values to catch a wrong directory.
         for optional in ("timestep_input_dim", "time_embed_hidden_size"):
             required.discard(optional)
             if optional not in architecture:
@@ -183,9 +186,9 @@ def _validate_transformer_config(raw: dict, path: Path) -> None:
 def _validate_adaln_curve_contract(
     raw: dict, path: Path, curve: tuple[int, int] | None
 ) -> None:
-    """交叉校验 config 的 adaLN 宽度与 checkpoint 的实际形态。
+    """Cross-check the config's adaLN width against the checkpoint's actual form.
 
-    ``curve`` 为 checkpoint 实测的 ``(grid, rank)``，None 表示原版 monolithic。
+    ``curve`` is the measured checkpoint ``(grid, rank)``; None means the original monolithic form.
     """
 
     architecture = _config_architecture(raw)
@@ -196,8 +199,8 @@ def _validate_adaln_curve_contract(
     if curve is None:
         if declared_grid is not None:
             raise H3ComponentError(
-                f"{path} 声明了 adaln_curve_grid，但 checkpoint 里没有 "
-                f"{ADALN_CURVE_TABLE_KEY}；请确认权重与 config 配套"
+                f"{path} declares adaln_curve_grid, but the checkpoint has no "
+                f"{ADALN_CURVE_TABLE_KEY}; confirm that the weights and config belong together"
             )
         if type(declared_dim) is not int or declared_dim != official_dim:
             raise H3ComponentError(
@@ -210,13 +213,13 @@ def _validate_adaln_curve_contract(
     grid, rank = curve
     if declared_grid is not None and int(declared_grid) != grid:
         raise H3ComponentError(
-            f"{path}.adaln_curve_grid={declared_grid!r} 与 checkpoint 的 "
-            f"{ADALN_CURVE_TABLE_KEY} 行数 {grid} 不一致"
+            f"{path}.adaln_curve_grid={declared_grid!r} does not match checkpoint "
+            f"{ADALN_CURVE_TABLE_KEY} row count {grid}"
         )
     if type(declared_dim) is not int or declared_dim != rank:
         raise H3ComponentError(
-            f"{path}.time_embed_dim={declared_dim!r} 与曲线表 checkpoint 的秩 "
-            f"{rank} 不一致（曲线表变体的 adaLN 输入宽度就是基的秩）"
+            f"{path}.time_embed_dim={declared_dim!r} does not match curve-table checkpoint rank "
+            f"{rank} (the curve-table variant's adaLN input width is the basis rank)"
         )
 
 
@@ -311,7 +314,7 @@ def _devices(device: str, offload_device: str):
 
 
 def _checkpoint_index(component: Path) -> tuple[list[Path], dict[str, str] | None]:
-    """返回 (分片路径列表, weight_map 或 None)。"""
+    """Return (list of shard paths, weight_map or None)."""
 
     component = component.resolve()
 
@@ -388,10 +391,11 @@ def _checkpoint_index(component: Path) -> tuple[list[Path], dict[str, str] | Non
 def _detect_adaln_curve(
     weight_map: dict[str, str] | None, shards: list[Path]
 ) -> tuple[int, int] | None:
-    """探测曲线表 checkpoint：返回 ``(grid, rank)``，原版 checkpoint 返回 None。
+    """Detect a curve-table checkpoint: return ``(grid, rank)`` or None for the original checkpoint.
 
-    必须在建图之前判定——曲线表模式没有 ``time_embedder``，多了
-    ``adaln_t_table`` buffer，两种形态的 state_dict 键集合不同。
+    This must be decided before model construction: curve-table mode has no
+    ``time_embedder`` and adds an ``adaln_t_table`` buffer, so the two forms have
+    different state_dict key sets.
     """
 
     from safetensors import safe_open
@@ -406,7 +410,7 @@ def _detect_adaln_curve(
                 shard = next((s for s in shards if s.name == shard_name), None)
                 if shard is None:
                     raise H3ComponentError(
-                        f"weight_map 把 {key} 指向未知分片 {shard_name!r}"
+                        f"weight_map points {key} to unknown shard {shard_name!r}"
                     )
                 candidates.append((shard, key))
     else:
@@ -419,7 +423,7 @@ def _detect_adaln_curve(
         return None
     if len(candidates) > 1:
         raise H3ComponentError(
-            f"checkpoint 含多个 {ADALN_CURVE_TABLE_KEY}: "
+            f"checkpoint contains multiple {ADALN_CURVE_TABLE_KEY} entries: "
             f"{[k for _, k in candidates]!r}"
         )
     shard, key = candidates[0]
@@ -427,12 +431,12 @@ def _detect_adaln_curve(
         shape = tuple(reader.get_slice(key).get_shape())
     if len(shape) != 2:
         raise H3ComponentError(
-            f"{ADALN_CURVE_TABLE_KEY} 必须是 [grid, rank]，实际 {shape}"
+            f"{ADALN_CURVE_TABLE_KEY} must be [grid, rank]; got {shape}"
         )
     grid, rank = int(shape[0]), int(shape[1])
     if grid < 2 or rank < 1:
         raise H3ComponentError(
-            f"{ADALN_CURVE_TABLE_KEY} 形状非法: grid={grid}, rank={rank}"
+            f"{ADALN_CURVE_TABLE_KEY} has invalid shape: grid={grid}, rank={rank}"
         )
     return grid, rank
 
@@ -460,7 +464,7 @@ def _comfy_version_label() -> str:
 
 
 def _int8_ops_supported(cops) -> bool:
-    """优先查 QUANT_ALGOS；没有再回退源码嗅探（兼容旧 Comfy）。"""
+    """Check QUANT_ALGOS first, then fall back to source probing for older Comfy versions."""
     import inspect
     for mod_name in ("comfy.quant_ops", "comfy.ops"):
         try:
@@ -476,18 +480,18 @@ def _int8_ops_supported(cops) -> bool:
 
 
 def _require_int8_ops(compute_dtype):
-    """构建 mixed_precision_ops；不支持时提示改用 BF16（无静默假加载）。"""
+    """Build mixed_precision_ops; when unsupported, instruct the user to use BF16 rather than silently pretending to load."""
     try:
         import comfy.ops as cops
     except ImportError as exc:
         raise H3ComponentError(
-            "INT8/convrot checkpoint 需要 ComfyUI（comfy.ops）；也可改用 BF16 DiT"
+            "INT8/convrot checkpoints require ComfyUI (comfy.ops); alternatively use BF16 DiT"
         ) from exc
     if not _int8_ops_supported(cops):
         ver = _comfy_version_label()
         raise H3ComponentError(
-            f"当前 ComfyUI{f' {ver}' if ver else ''} 不支持 {INT8_FORMAT}/convrot。"
-            "请升级 ComfyUI，或改用 BF16 transformer（layerwise auto）。"
+            f"Current ComfyUI{f' {ver}' if ver else ''} does not support {INT8_FORMAT}/convrot. "
+            "Upgrade ComfyUI or use the BF16 transformer (automatic layerwise offload)."
         )
     return cops.mixed_precision_ops({}, compute_dtype=compute_dtype)
 
@@ -515,7 +519,7 @@ def _model_nbytes(model) -> int:
     return sum(_tensor_nbytes(t) for t in model.state_dict().values())
 
 
-def _device_free_bytes(device) -> int | None:  # Comfy 优先；失败则 torch；再失败 None
+def _device_free_bytes(device) -> int | None:  # Prefer Comfy, then torch, then None.
     try:
         import comfy.model_management as mm
         return int(mm.get_free_memory(device))
@@ -744,7 +748,8 @@ def _flush_linear(module, prefix: str, bag: dict[str, Any], device) -> bool:
     missing: list[str] = []
     unexpected: list[str] = []
     errors: list[str] = []
-    # meta 模块必须 assign，否则 copy_ 静默 no-op（comfy.ops 认 assign_to_params_buffers）
+    # Meta modules require assign; otherwise copy_ is a silent no-op
+    # (comfy.ops recognizes assign_to_params_buffers).
     meta = {"assign_to_params_buffers": True}
     kwargs = {}
     if "assign" in inspect.signature(module._load_from_state_dict).parameters:
@@ -759,7 +764,7 @@ def _flush_linear(module, prefix: str, bag: dict[str, Any], device) -> bool:
     if quant_config is not None:
         _validate_quantized_linear(module, prefix, bag)
         return True
-    for leaf, tensor in bag.items():  # 兜底：仍 meta 的 bias/weight 强制替换
+    for leaf, tensor in bag.items():  # Fallback: forcibly replace any bias/weight still on meta.
         if leaf not in {"weight", "bias"}:
             continue
         cur = getattr(module, leaf, None)
@@ -915,7 +920,7 @@ class H3ModelHandle:
     metadata: dict
     checkpoint_files: tuple[Path, ...]
     quantized: bool = False
-    activation_hint: dict | None = None  # P0-6 画布/序列提示
+    activation_hint: dict | None = None  # P0-6 canvas/sequence hint.
     residency_mode: str = "unknown"  # full | layerwise | partial | reject
 
     @property
@@ -944,7 +949,7 @@ class H3ModelHandle:
             dtype="int8" if self.quantized else "bf16",
         )
 
-    def _full_reside_budget_bytes(self) -> int:  # 整模驻留所需：权重 + 激活预留
+    def _full_reside_budget_bytes(self) -> int:  # Full-model residency requirement: weights + activation reserve.
         return int(_model_nbytes(self.model)) + int(self._activation_reserve_bytes())
 
     def _decide_residency(self) -> str:
@@ -976,17 +981,17 @@ class H3ModelHandle:
             hint = self.activation_hint or {}
             w = int(hint.get("width", 1344) or 1344); h = int(hint.get("height", 768) or 768)
             raise RuntimeError(
-                "显存不足以运行 BF16 DiT layerwise（单层+激活）；"
-                f"请降低画布（建议 {format_downscale_hint(w, h)}）或改用 INT8"
+                "Insufficient VRAM for layerwise BF16 DiT (one layer plus activations); "
+                f"reduce the canvas (suggested {format_downscale_hint(w, h)}) or use INT8"
             )
-        return tier != "full"  # 整模放得下则自动关闭
+        return tier != "full"  # Disable automatically when the full model fits.
 
     def park_after_inference(self) -> str:
-        """P1-1 软驻留：layerwise→layerwise-warm；整模→gpu-resident。"""
+        """P1-1 soft residency: layerwise→layerwise-warm; full model→gpu-resident."""
         from ..layerwise_offload import get_layerwise_offload
         mgr = get_layerwise_offload(self.model)
         if mgr is not None and getattr(mgr, "_enabled", False):
-            mgr.disable()  # blocks 留 pinned CPU
+            mgr.disable()  # Leave blocks in pinned CPU memory.
             self.residency_mode = "layerwise-warm"
             object.__setattr__(self.model, "_h3_residency_mode", "layerwise-warm")
             _clear_compute_device_marker(self.model)
@@ -1009,12 +1014,12 @@ class H3ModelHandle:
                 LOGGER.info("DiT residency warm hit: gpu-resident")
                 return self.model
 
-            if self._use_layerwise():  # BF16：按层预取，避免整模 force_full_load
+            if self._use_layerwise():  # BF16: prefetch by layer to avoid full-model force_full_load.
                 if self.model_patcher is not None:
                     try:
                         _unload_model_patcher(self.model_patcher)
                     except Exception as exc:
-                        LOGGER.warning("layerwise 启用前卸载 ModelPatcher 失败: %s", exc)
+                        LOGGER.warning("Failed to unload ModelPatcher before enabling layerwise mode: %s", exc)
                 from ..layerwise_offload import attach_layerwise_offload
 
                 attach_layerwise_offload(self.model, device=self.load_device).enable()
@@ -1043,7 +1048,7 @@ class H3ModelHandle:
                             force_full_load=True,
                         )
                         self.residency_mode = "full"
-                    else:  # int8 partial：给采样激活及不可流式层留 reserve
+                    else:  # INT8 partial: reserve space for sampling activations and nonstreamable layers.
                         act = self._activation_reserve_bytes()
                         reserve = act + nonstreamable_bytes
                         try:
@@ -1051,9 +1056,9 @@ class H3ModelHandle:
                                 [self.model_patcher],
                                 memory_required=reserve,
                             )
-                        except torch.OutOfMemoryError:  # 先清无关模型，再以动态 2x 激活重试
+                        except torch.OutOfMemoryError:  # Clear unrelated models, then retry with 2× dynamic activation reserve.
                             LOGGER.warning(
-                                "DiT partial load OOM，清卡后以 2x activation_reserve 重试"
+                                "DiT partial load OOM; cleared the device and retrying with 2× activation_reserve"
                             )
                             mm.unload_all_models()
                             mm.soft_empty_cache()
@@ -1221,9 +1226,11 @@ def load_h3_model(
 ) -> H3ModelHandle:
     """Construct on meta and stream H3 DiT shards to the offload device.
 
-    自动识别 BF16 与 int8_convrot（``.comfy_quant`` / ``.weight_scale``）checkpoint。
-    ``transformer_weights`` 指向 ``models/MiniMax-H3`` 下的扁平单文件权重：结构与
-    配置仍从 ``transformer_path`` 组件目录读取，只有张量来自该文件。
+    Automatically detect BF16 and int8_convrot (``.comfy_quant`` /
+    ``.weight_scale``) checkpoints. ``transformer_weights`` points to flat
+    single-file weights under ``models/MiniMax-H3``; structure and configuration
+    still come from the ``transformer_path`` component directory, while only
+    tensors come from that file.
     """
 
     normalized_partition = str(partition).strip().lower()
@@ -1235,11 +1242,11 @@ def load_h3_model(
     root = resolve_partition_root(model_root, normalized_partition)
     metadata = release_metadata(root)
     validate_task_partition(metadata, task, normalized_partition)
-    if not transformer_path:  # 未显式指定时自动优先 int8 量化目录，避免 BF16 整模上卡 OOM
+    if not transformer_path:  # Prefer the int8 directory when unspecified to avoid moving the full BF16 model to GPU and OOM.
         auto = root / INT8_DIT_DIRNAME
         if auto.is_dir() and (auto / "config.json").is_file():
             transformer_path = str(auto)
-            LOGGER.info("transformer_path 未指定，自动选用量化目录 %s", INT8_DIT_DIRNAME)
+            LOGGER.info("transformer_path not specified; automatically selected quantized directory %s", INT8_DIT_DIRNAME)
     component = resolve_component(
         root,
         ("transformer", "dit"),
@@ -1253,8 +1260,9 @@ def load_h3_model(
     config_raw = read_json(config_path)
     _validate_transformer_config(config_raw, config_path)
 
-    # 曲线表探测必须在建图之前：该变体没有 time_embedder、多一个 adaln_t_table
-    # buffer，两种形态的 state_dict 键集不同。分片发现同样廉价、无分配。
+    # Curve-table detection must happen before model construction: this variant has
+    # no time_embedder and adds an adaln_t_table buffer, so the two forms have
+    # different state_dict key sets. Shard discovery is likewise cheap and allocation-free.
     external_weights = (
         validate_weight_partition(
             transformer_weights, normalized_partition, kind="transformer"
@@ -1269,7 +1277,7 @@ def load_h3_model(
             )
         shards, weight_map = [external_weights], None
         LOGGER.info(
-            "DiT 权重取自扁平单文件 %s，结构/配置仍来自 %s",
+            "DiT weights come from flat single file %s; structure/configuration still come from %s",
             external_weights.name,
             component,
         )
@@ -1294,15 +1302,15 @@ def load_h3_model(
         grid, rank = curve
         config = replace(config, adaln_curve_grid=grid, time_embed_dim=rank)
         LOGGER.info(
-            "H3 DiT 曲线表 checkpoint：adaLN 输入 %d 维（grid=%d），无 time embedder",
+            "H3 DiT curve-table checkpoint: %d-dimensional adaLN input (grid=%d), no time embedder",
             rank, grid,
         )
     model_dtype = _dtype(dtype)
     load_device, target_offload = _devices(device, offload_device)
     quantized = _is_quantized_map(weight_map, shards)
     if quantized:
-        # 扁平单文件权重不带 quant_meta.json；分区凭证是文件名，已在
-        # validate_weight_partition 里逐字校验过。
+        # Flat single-file weights have no quant_meta.json; the filename is the
+        # partition evidence and was already checked exactly in validate_weight_partition.
         if not quant_metadata and external_weights is None:
             quant_metadata = _validate_quant_meta_partition(
                 component,

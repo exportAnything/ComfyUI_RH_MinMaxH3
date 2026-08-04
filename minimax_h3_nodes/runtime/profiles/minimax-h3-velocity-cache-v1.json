@@ -3,7 +3,7 @@
   "profile_id": "minimax-h3-velocity-cache-v1",
   "status": "validated",
   "technique": "velocity-cache",
-  "notes": "面向单卡 Comfy：整步 velocity 复用 + 一阶 Taylor。旋钮对齐上游验证合同；上游约 3.2× 测于 4×H200，单卡只复用相同调度（降 DiT 次数），不做多卡/Ulysses 门禁。",
+  "notes": "For single-GPU Comfy: whole-step velocity reuse plus first-order Taylor extrapolation. Controls match the upstream validation contract; the upstream ~3.2× result was measured on 4×H200. Single-GPU mode reuses only the same schedule (fewer DiT calls) without multi-GPU/Ulysses gating.",
   "workloads": [
     {
       "task": "t2va",

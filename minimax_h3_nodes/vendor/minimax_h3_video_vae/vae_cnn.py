@@ -25,7 +25,8 @@ from .norm import get_group_norm_3d
 
 
 def norm_silu(x, norm, cond=None):
-    # norm 输出是新张量，就地激活省一份 [B,C,T,H,W] 大小的中间结果
+    # norm output is a new tensor; in-place activation saves one [B,C,T,H,W]
+    # intermediate.
     if cond is None:
         return F.silu(norm(x), inplace=True)
     else:

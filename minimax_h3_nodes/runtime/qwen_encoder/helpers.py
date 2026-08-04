@@ -65,7 +65,7 @@ _VISION_CONFIG_CONTRACT = {
     "in_channels": 3,
 }
 _VISION_DEEPSTACK_INDEXES = (8, 16, 24)
-# MiniMax-H3 processor 实测契约；防指错目录静默降级
+# Measured MiniMax-H3 processor contract; prevents silent degradation from a wrong directory.
 _PROCESSOR_IMAGE_CONTRACT = {
     "shortest_edge": 65536, "longest_edge": 16777216,
     "patch_size": 16, "temporal_patch_size": 2, "merge_size": 2,
@@ -79,7 +79,7 @@ _PROCESSOR_VIDEO_CONTRACT = {
 _LINEAR_LEAVES = frozenset(
     {"weight", "bias", "weight_scale", "weight_scale_2", "comfy_quant", "input_scale"}
 )
-_STRIP_PREFIXES = ("model.",)  # checkpoint 相对 causal_lm.model 的键
+_STRIP_PREFIXES = ("model.",)  # Checkpoint keys relative to causal_lm.model.
 
 def _norm_mean_std(value: Any) -> tuple[float, ...] | None:
     try:
@@ -88,7 +88,7 @@ def _norm_mean_std(value: Any) -> tuple[float, ...] | None:
         return None
 
 def _size_edges(size: Any) -> tuple[int | None, int | None]:
-    """兼容 size={shortest_edge,longest_edge} 或旧 min_pixels/max_pixels。"""
+    """Support size={shortest_edge,longest_edge} or legacy min_pixels/max_pixels."""
     if not isinstance(size, dict):
         return None, None
     short = size.get("shortest_edge", size.get("min_pixels"))
@@ -100,13 +100,13 @@ def _size_edges(size: Any) -> tuple[int | None, int | None]:
         return None, None
 
 def _validate_processor_json(path: Path, contract: dict[str, Any], *, label: str) -> list[str]:
-    """校验 preprocessor JSON；缺文件返回空（由调用方决定是否强制）。"""
+    """Validate preprocessor JSON; return empty for a missing file (caller decides whether it is required)."""
     if not path.is_file():
         return []
     try:
         data = read_json(path)
     except Exception as exc:
-        return [f"{label}: 无法读取 {path.name}: {exc}"]
+        return [f"{label}: could not read {path.name}: {exc}"]
     bad: list[str] = []
     short, long = _size_edges(data.get("size") or data)
     if short != contract["shortest_edge"] or long != contract["longest_edge"]:
@@ -129,7 +129,7 @@ def _validate_processor_json(path: Path, contract: dict[str, Any], *, label: str
     return bad
 
 def validate_h3_processor_contract(processor_dir: Path | str, *, require_video: bool = True) -> None:
-    """校验 image/video preprocessor；失败 fail-closed。"""
+    """Validate the image/video preprocessor and fail closed."""
     root = Path(processor_dir)
     bad = _validate_processor_json(
         root / "preprocessor_config.json", _PROCESSOR_IMAGE_CONTRACT, label="image",
@@ -137,15 +137,15 @@ def validate_h3_processor_contract(processor_dir: Path | str, *, require_video: 
     video_path = root / "video_preprocessor_config.json"
     if require_video or video_path.is_file():
         if not video_path.is_file():
-            bad.append("缺少 video_preprocessor_config.json")
+            bad.append("missing video_preprocessor_config.json")
         else:
             bad.extend(_validate_processor_json(
                 video_path, _PROCESSOR_VIDEO_CONTRACT, label="video",
             ))
     if bad:
         raise H3ComponentError(
-            "H3 processor 与 MiniMax-H3 发布配置不一致（勿混用通用 Qwen3-VL "
-            "processor）：" + "; ".join(bad)
+            "The H3 processor does not match the MiniMax-H3 release configuration "
+            "(do not mix in a generic Qwen3-VL processor): " + "; ".join(bad)
         )
 
 @contextmanager

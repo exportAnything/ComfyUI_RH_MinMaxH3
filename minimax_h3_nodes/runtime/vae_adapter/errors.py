@@ -1,4 +1,4 @@
-"""vae_adapter.errors facade。"""
+"""vae_adapter.errors facade."""
 from __future__ import annotations
 from ._impl import (
     H3VAEError,

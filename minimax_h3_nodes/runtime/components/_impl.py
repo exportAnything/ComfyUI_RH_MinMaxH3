@@ -122,7 +122,8 @@ def list_h3_weight_files(
             file_kind, file_partition = classified
             if wanted_kind is not None and file_kind != wanted_kind:
                 continue
-            # partition=None 的权重（TE / VAE）两个分区共用，不做分区过滤。
+            # Weights with partition=None (TE/VAE) are shared by both partitions;
+            # do not filter them by partition.
             if (
                 wanted_partition is not None
                 and file_partition is not None
@@ -202,23 +203,23 @@ def validate_weight_partition(
 
 
 def _looks_like_h3_root(path: Path) -> bool:
-    """轻量目录特征判断：只检查路径存在，不读取模型文件内容。
+    """Lightweight directory signature check: inspect path existence only, without reading model contents.
 
-    不能仅凭 ``model_index.json`` 判定——``models/diffusers`` 下大量无关
-    模型也有该文件。
+    ``model_index.json`` alone is insufficient because many unrelated models under
+    ``models/diffusers`` also contain that file.
     """
 
     if not path.is_dir():
         return False
-    # 正式 release：父目录下挂 FL2VA / Ref2VA
+    # Full release: FL2VA / Ref2VA live under the parent directory.
     if (path / "FL2VA").is_dir() or (path / "Ref2VA").is_dir():
         return True
-    # 单分区根：同时具备 DiT + Qwen + 至少一种 VAE 目录
+    # Single-partition root: contains DiT + Qwen + at least one VAE directory.
     has_core = (path / "transformer").is_dir() and (path / "text_encoder").is_dir()
     has_vae = (path / "video_vae").is_dir() or (path / "audio_vae").is_dir()
     if has_core and has_vae:
         return True
-    # 名称兜底（目录尚未下全时仍希望出现在 COMBO）
+    # Name fallback so an incompletely downloaded directory still appears in COMBO.
     lowered = path.name.lower().replace("_", "-")
     return "minimax" in lowered and "h3" in lowered
 
@@ -365,14 +366,15 @@ def list_h3_model_root_paths() -> list[Path]:
 
 
 def list_h3_model_roots() -> list[str]:
-    """枚举 loader COMBO 用的根目录名，沿用 ComfyUI 目录型模型的约定。
+    """Enumerate root directory names for loader COMBOs using ComfyUI's directory-model convention.
 
-    与 ``DiffusersLoader`` 一致：列出相对各搜索路径的**相对名**，而不是绝对路径。
-    同一份 release 被多处挂载（本机 models 目录 + 全局 NFS）时，相对名相同因而
-    天然合并成一项；解析回绝对路径由 :func:`model_root_path` 按搜索路径顺序取
-    首个命中，语义与 ``folder_paths.get_full_path`` 相同。
+    Like ``DiffusersLoader``, list names **relative** to each search path rather than
+    absolute paths. If the same release is mounted in multiple places (local models
+    directory plus global NFS), identical relative names naturally collapse into one
+    entry. :func:`model_root_path` resolves it back to the first absolute path in search
+    order, matching ``folder_paths.get_full_path`` semantics.
 
-    只看目录名，不解析 JSON、不打开 safetensors，避免 manifest 阶段读模型内容。
+    Inspect directory names only; do not parse JSON or open safetensors during manifest generation.
     """
 
     fallback = ["MiniMax-H3"]
@@ -383,7 +385,7 @@ def list_h3_model_roots() -> list[str]:
         name = root.name
         if not name or name.startswith("."):
             continue
-        # 相对最靠前的、包含它的搜索路径
+        # Use the earliest search path that contains it.
         relative = next(
             (
                 root.relative_to(base).as_posix()
@@ -415,13 +417,13 @@ def model_root_path(
 ) -> Path:
     """Resolve an explicit path or a folder under ComfyUI ``models/``.
 
-    相对名搜索顺序（命中第一个存在的目录即返回）：
+    Relative-name search order (return the first existing directory):
     1. ``models/<value>``
-    2. ``models/diffusers/<value>``（RH 常见布局）
+    2. ``models/diffusers/<value>`` (common RunningHub layout)
     3. ``models/minimax_h3/<value>``
-    4. 当 ``value`` 为 MiniMax-H3 别名时，再试 ``models/diffusers/MiniMax-H3``
-    5. ``models/diffusers/MiniMax-H3/<value>``（可直接填 ``FL2VA``）
-    6. 当前工作目录下的 ``<value>``
+    4. When ``value`` is a MiniMax-H3 alias, also try ``models/diffusers/MiniMax-H3``
+    5. ``models/diffusers/MiniMax-H3/<value>`` (allows ``FL2VA`` directly)
+    6. ``<value>`` under the current working directory
     """
 
     raw_text = str(value or "").strip()
@@ -682,11 +684,12 @@ def _select_hinted_model_root(
     best_score = max(score for score, _candidate in viable)
     winners = [candidate for score, candidate in viable if score == best_score]
     if len(winners) > 1:
-        # 候选顺序即 ComfyUI 的搜索路径顺序（folder_paths.get_folder_paths ->
-        # models_dir -> 全局挂载），与 folder_paths.get_full_path 的取首个命中
-        # 语义一致：同一个相对名在多处存在时，靠前的搜索路径优先。
+        # Candidate order follows ComfyUI search-path order
+        # (folder_paths.get_folder_paths -> models_dir -> global mounts), matching
+        # folder_paths.get_full_path's first-hit semantics: when the same relative
+        # name exists in multiple places, the earlier search path wins.
         LOGGER.info(
-            "MiniMax-H3 根 %r 在多个搜索路径下同分，按 ComfyUI 顺序选用 %s（其余：%s）",
+            "MiniMax-H3 root %r tied across multiple search paths; selected %s by ComfyUI order (others: %s)",
             value, winners[0], ", ".join(str(c) for c in winners[1:]),
         )
     return winners[0]

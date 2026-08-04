@@ -1,4 +1,4 @@
-"""上游 H3 whole-step velocity cache：周期刷新 + Taylor 外推 + dense tail。"""
+"""Upstream H3 whole-step velocity cache: periodic refresh, Taylor extrapolation, and dense tail."""
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
@@ -9,12 +9,12 @@ class VelocityCacheConfig:
     tail_dense_steps: int = 1; tail_rebalance: bool = False; final_refresh: bool = True
     profile_id: str | None = None
     def __post_init__(self):
-        if self.stride < 1: raise ValueError("velocity_cache stride 必须 >= 1")
-        if self.tail_dense_steps < 1: raise ValueError("velocity_cache tail_dense_steps 必须 >= 1")
-        if self.taylorseer_order not in (1, 2): raise ValueError("taylorseer_order 必须是 1 或 2")
+        if self.stride < 1: raise ValueError("velocity_cache stride must be >= 1")
+        if self.tail_dense_steps < 1: raise ValueError("velocity_cache tail_dense_steps must be >= 1")
+        if self.taylorseer_order not in (1, 2): raise ValueError("taylorseer_order must be 1 or 2")
 
 def should_refresh_velocity(step: int, num_steps: int, cfg: VelocityCacheConfig) -> bool:
-    """与上游 denoise_loop 刷新判定 bit-exact 对齐（0-based step）。"""
+    """Bit-exact alignment with the upstream denoise_loop refresh decision (zero-based step)."""
     if cfg.stride == 1 or step < 2: return True
     final_step = step == num_steps - 1
     tail_start = num_steps - cfg.tail_dense_steps

@@ -1,4 +1,4 @@
-"""DiT 激活显存估算与 EWMA 校正（P0-6；24GB 基准）。"""
+"""DiT activation VRAM estimation and EWMA correction (P0-6; 24GB baseline)."""
 from __future__ import annotations
 import logging
 from typing import Any
@@ -12,7 +12,7 @@ from .h3_settings import (
 )
 
 LOGGER = logging.getLogger(__name__)
-_EWMA: dict[str, float] = {}  # fingerprint → 校正后激活字节
+_EWMA: dict[str, float] = {}  # fingerprint → corrected activation bytes.
 
 
 def shape_fingerprint(
@@ -31,17 +31,18 @@ def estimate_dit_activation_bytes(
     video_latent_w: int = 0, ref_rows: int = 0, hidden_size: int = 3072,
     num_layers: int = 50, bytes_per_elem: int = 2,
 ) -> int:
-    """粗估单步激活：token 主导 + 参考行加成；无 shape 时回退固定 reserve。"""
+    """Estimate one-step activations: token-dominated plus reference-row overhead; use a fixed reserve when shape is absent."""
     if seq_len <= 0 and video_latent_t > 0 and video_latent_h > 0 and video_latent_w > 0:
         seq_len = int(video_latent_t) * int(video_latent_h) * int(video_latent_w) + int(ref_rows)
     if seq_len <= 0:
         return int(DIT_INFERENCE_RESERVE)
-    # 注意力/FFN 工作区近似：每 token × hidden × 层系数；外加安全余量在 resolve 里加
+    # Approximate attention/FFN workspace: tokens × hidden × layer factor;
+    # resolve adds the safety margin.
     per_token = int(DIT_ACTIVATION_BYTES_PER_TOKEN) or (
         int(hidden_size) * int(bytes_per_elem) * 8
     )
     raw = int(seq_len) * per_token + int(ref_rows) * per_token // 2
-    # 层数归一（相对 50）：更深略增
+    # Normalize layer count relative to 50; deeper models add a small increment.
     raw = int(raw * max(1.0, float(num_layers) / 50.0))
     return max(int(DIT_ACTIVATION_FLOOR), min(int(DIT_ACTIVATION_CEIL), raw))
 
@@ -51,7 +52,7 @@ def resolve_activation_reserve(
     video_latent_w: int = 0, ref_rows: int = 0, task: str = "",
     dtype: str = "bf16", observed_peak: int | None = None,
 ) -> int:
-    """返回 activation_reserve（含安全余量）；可选 EWMA 用实测峰值校正。"""
+    """Return activation_reserve including a safety margin; optional EWMA corrects it from measured peaks."""
     fp = shape_fingerprint(
         task=task, seq_len=seq_len, video_latent_t=video_latent_t,
         video_latent_h=video_latent_h, video_latent_w=video_latent_w,
@@ -76,7 +77,7 @@ def resolve_activation_reserve(
 
 
 def note_observed_activation(hint: dict[str, Any] | None, *, observed_peak: int) -> int:
-    """采样后把实测激活峰值写回 EWMA，供下次 resolve。"""
+    """Write the measured activation peak to the EWMA after sampling for the next resolve."""
     h = hint or {}
     return resolve_activation_reserve(
         seq_len=int(h.get("seq_len", 0) or 0),
@@ -91,13 +92,13 @@ def note_observed_activation(hint: dict[str, Any] | None, *, observed_peak: int)
 
 
 def residency_tier(*, free_bytes: int | None, weight_bytes: int, activation_bytes: int) -> str:
-    """full | layerwise | reject — 按可用显存分档。"""
+    """full | layerwise | reject — tier by available VRAM."""
     if free_bytes is None:
-        return "layerwise"  # 探测失败：24GB 基线保守
+        return "layerwise"  # Probe failed: use the conservative 24GB baseline.
     need_full = int(weight_bytes) + int(activation_bytes)
     if free_bytes >= need_full:
         return "full"
-    # layerwise：至少放下单层粗估（权重/层数）+ 激活
+    # layerwise: must fit at least one estimated layer (weights/layer count) plus activations.
     layer = max(1, int(weight_bytes) // 50) + int(activation_bytes)
     if free_bytes >= layer:
         return "layerwise"

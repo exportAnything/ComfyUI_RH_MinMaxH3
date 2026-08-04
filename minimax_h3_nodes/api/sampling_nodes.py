@@ -1,8 +1,8 @@
-"""采样节点。"""
+"""Sampling nodes."""
 from __future__ import annotations
 from ._shared import *  # noqa: F403
 
-class MiniMaxH3FrameRate:  # 实验性：帧率进 adaLN / 可选时序 RoPE（实验性；非上游契约）
+class MiniMaxH3FrameRate:  # Experimental: inject frame rate into adaLN / optional temporal RoPE; not an upstream contract.
     @classmethod
     def INPUT_TYPES(cls):
         from ..runtime.h3_settings import (
@@ -20,21 +20,21 @@ class MiniMaxH3FrameRate:  # 实验性：帧率进 adaLN / 可选时序 RoPE（�
                         "min": 1.0,
                         "max": 120.0,
                         "step": 0.01,
-                        "tooltip": "实验性。不改 target 24fps 时序格；仅调制嵌入/RoPE。",
+                        "tooltip": "Experimental. Does not change the target's 24 fps time grid; modulates embeddings/RoPE only.",
                     },
                 ),
                 "adaln": (
                     "BOOLEAN",
                     {
                         "default": True,
-                        "tooltip": "把 fps sinusoidal 加到 TimeEmbedder（即使 24 也非 no-op）。",
+                        "tooltip": "Add the fps sinusoid to TimeEmbedder (not a no-op even at 24 fps).",
                     },
                 ),
                 "temporal_rope": (
                     "BOOLEAN",
                     {
                         "default": False,
-                        "tooltip": "按 24/fps 缩放视频行时序 RoPE 低频；24fps 时无效。",
+                        "tooltip": "Scale low-frequency temporal RoPE for video rows by 24/fps; no effect at 24 fps.",
                     },
                 ),
             },
@@ -81,7 +81,7 @@ class MiniMaxH3FrameRate:  # 实验性：帧率进 adaLN / 可选时序 RoPE（�
     ):
         from ..runtime.frame_rate import validate_frame_rate_options
         if not isinstance(h3_model, Mapping):
-            raise TypeError("h3_model 必须是 MiniMax H3 Model Loader 输出")
+            raise TypeError("h3_model must be an output from a MiniMax H3 Model Loader")
         opts = validate_frame_rate_options(
             frame_rate=frame_rate,
             adaln=adaln,
@@ -181,7 +181,7 @@ class MiniMaxH3DualSigmaSampler:
                         "min": 2,
                         "max": 1000,
                         "tooltip": (
-                            "遵循原仓库语义：50 个 sigma 点产生 49 次 DiT forward。"
+                            "Uses the original repository semantics: 50 sigma points produce 49 DiT forwards."
                         ),
                     },
                 ),
@@ -208,10 +208,11 @@ class MiniMaxH3DualSigmaSampler:
                     {
                         "default": ACCEL_OFF,
                         "tooltip": (
-                            "单卡近似加速。off=关闭；auto=优先 velocity-cache profile，"
-                            "否则 Cache-DiT；minimax-h3-velocity-cache-v1≈少 DiT 次数（推荐单卡）；"
-                            "minimax-h3-cache-v1=Cache-DiT（需 cache-dit）；manual-* 手调。"
-                            "仅验证 1344×768/124f/50steps/shift12·3。不可作 GT。"
+                            "Approximate single-GPU acceleration. off=disabled; auto prefers the velocity-cache "
+                            "profile, then Cache-DiT; minimax-h3-velocity-cache-v1 reduces DiT calls "
+                            "(recommended for one GPU); minimax-h3-cache-v1 uses Cache-DiT (requires cache-dit); "
+                            "manual-* exposes manual controls. Validated only at 1344×768/124f/50 steps/shift 12/3. "
+                            "Do not use as ground truth."
                         ),
                     },
                 ),
@@ -220,9 +221,9 @@ class MiniMaxH3DualSigmaSampler:
                     {
                         "default": True,
                         "tooltip": (
-                            "False=V2A：av_latent.video 作干净视觉条件（timestep floor），"
-                            "只去噪音频。要求 T2VA 布局且 video 非 Empty 全零；"
-                            "可用 Encode Video→AV Latent 或 Combine AV Latent 填入视频。"
+                            "False=V2A: use av_latent.video as a clean visual condition (timestep floor) and "
+                            "denoise audio only. Requires a T2VA layout with a non-empty, nonzero video latent; "
+                            "fill it with Encode Video→AV Latent or Combine AV Latent."
                         ),
                     },
                 ),
@@ -235,7 +236,7 @@ class MiniMaxH3DualSigmaSampler:
                         "min": 0.0,
                         "max": 1.0,
                         "step": 0.01,
-                        "tooltip": "仅 accel=manual-cache-dit：残差阈值，越大越快越糙。",
+                        "tooltip": "Only for accel=manual-cache-dit: residual threshold; higher is faster and rougher.",
                     },
                 ),
                 "cache_dit_mc": (
@@ -244,7 +245,7 @@ class MiniMaxH3DualSigmaSampler:
                         "default": CACHE_DIT_MC,
                         "min": 1,
                         "max": 32,
-                        "tooltip": "仅 accel=manual-cache-dit：最大连续缓存步数。",
+                        "tooltip": "Only for accel=manual-cache-dit: maximum consecutive cached steps.",
                     },
                 ),
                 "cache_dit_warmup": (
@@ -253,7 +254,7 @@ class MiniMaxH3DualSigmaSampler:
                         "default": CACHE_DIT_WARMUP,
                         "min": 0,
                         "max": 64,
-                        "tooltip": "仅 accel=manual-cache-dit：warmup 步数。",
+                        "tooltip": "Only for accel=manual-cache-dit: number of warmup steps.",
                     },
                 ),
                 "velocity_stride": (
@@ -262,21 +263,21 @@ class MiniMaxH3DualSigmaSampler:
                         "default": VELOCITY_STRIDE,
                         "min": 1,
                         "max": 32,
-                        "tooltip": "仅 accel=manual-velocity：DiT 刷新步距；1=精确无缓存。",
+                        "tooltip": "Only for accel=manual-velocity: DiT refresh stride; 1 is exact with no caching.",
                     },
                 ),
-                # 追加在 optional 末尾：旧工作流的 widgets_values 是本列表前缀，
-                # 位置序列化不错位
+                # Append to the end of optional: old workflows serialize widgets_values
+                # as a prefix of this list, preserving positional alignment.
                 "sampler_mode": (
                     list(SAMPLER_MODE_CHOICES),
                     {
                         "default": SAMPLER_MODE_EULER,
                         "tooltip": (
-                            "euler=上游一阶（sigma_points=50）。"
-                            "res_multistep=二阶多步指数积分器（ComfyUI 上游 H3 "
-                            "模板同款），建议 sigma_points=21（20 次 DiT）"
-                            "≈ euler-50 质量、快约 2.5×；该模式暂强制 accel=off"
-                            "（profile 按 euler-50 标定）。"
+                            "euler=upstream first-order mode (sigma_points=50). "
+                            "res_multistep=second-order multistep exponential integrator (matching the upstream "
+                            "ComfyUI H3 template); sigma_points=21 (20 DiT calls) is recommended for roughly "
+                            "euler-50 quality at about 2.5× the speed. This mode currently forces accel=off "
+                            "because profiles were calibrated for euler-50."
                         ),
                     },
                 ),
@@ -285,9 +286,9 @@ class MiniMaxH3DualSigmaSampler:
                     {
                         "default": False,
                         "tooltip": (
-                            "允许 res_multistep 叠加 accel（默认关闭）。该组合未标定："
-                            "sigma_points=21 时叠加会明显劣化；需同时调高步数才可用，"
-                            "且同等画质下并不比 euler+velocity 省。"
+                            "Allow res_multistep to be combined with accel (disabled by default). This combination "
+                            "is not calibrated: it degrades noticeably at sigma_points=21, requires more steps to "
+                            "be usable, and is not cheaper than euler+velocity at equal quality."
                         ),
                     },
                 ),
@@ -348,7 +349,7 @@ class MiniMaxH3DualSigmaSampler:
             encoded_release = clean_conditioning.get("release_fingerprint")
             if encoded_release != release_fingerprint:
                 raise ValueError(
-                    "conditioning 的 TE/VAE release 与 sampler DiT release 不一致"
+                    "The conditioning TE/VAE release does not match the sampler DiT release"
                 )
             _check_interrupted()
             packed = _build_v2_packed(
@@ -382,7 +383,7 @@ class MiniMaxH3DualSigmaSampler:
         from ..runtime.vram_budget import note_observed_activation
         tel = H3Telemetry()
         with ExitStack() as stack:
-            with tel.stage("dit_load"):  # 仅覆盖上卡/驻留决策，不含 denoise
+            with tel.stage("dit_load"):  # Covers device transfer/residency decisions only, not denoising.
                 transformer, handle = stack.enter_context(
                     _transformer_session(model_wrapper, activation_hint=hint)
                 )
@@ -394,7 +395,7 @@ class MiniMaxH3DualSigmaSampler:
                 raw_fr = model_wrapper.get("frame_rate_options")
                 if isinstance(raw_fr, Mapping):
                     fr_opts = dict(raw_fr)
-            output = sample_h3(  # v1/v2 统一入口
+            output = sample_h3(  # Unified v1/v2 entry point.
                 transformer=transformer,
                 conditioning=clean_conditioning,
                 av_latent=clean_latent,
@@ -424,7 +425,7 @@ class MiniMaxH3DualSigmaSampler:
         sample_tel["residency_mode"] = residency
         sample_tel["accel"] = str(accel)
         output["telemetry"] = sample_tel
-        try:  # 峰值 − 权重 ≈ 激活，写回 EWMA
+        try:  # Peak minus weights approximates activation use; write it back to the EWMA.
             peak = int((sample_tel.get("peak_vram") or {}).get("allocated") or 0)
             weights = int(getattr(handle, "_last_weight_bytes", 0) or 0)
             if not weights:
@@ -449,7 +450,7 @@ class MiniMaxH3DualSigmaSampler:
 
 
 def _av_shell(base: Mapping[str, Any], *, video, audio, sampled: bool = False) -> dict[str, Any]:
-    """从已有 av_latent 复制元数据并替换模态张量。"""
+    """Copy metadata from an existing av_latent and replace its modality tensors."""
     out = {
         "schema": base["schema"],
         "task": str(base["task"]),
@@ -464,7 +465,7 @@ def _av_shell(base: Mapping[str, Any], *, video, audio, sampled: bool = False) -
     return out
 
 
-class MiniMaxH3SeparateAVLatent:  # 拆成「仅视频 / 仅音频」壳，便于 V2A 重组合
+class MiniMaxH3SeparateAVLatent:  # Split into video-only/audio-only shells for V2A recombination.
     @classmethod
     def INPUT_TYPES(cls):
         return {"required": {"av_latent": (AV_LATENT_TYPE,)}}
@@ -486,7 +487,7 @@ class MiniMaxH3SeparateAVLatent:  # 拆成「仅视频 / 仅音频」壳，便�
         )
 
 
-class MiniMaxH3CombineAVLatent:  # 合并视频/音频壳；形状必须同 target
+class MiniMaxH3CombineAVLatent:  # Combine video/audio shells; shapes must match the target.
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -517,15 +518,15 @@ class MiniMaxH3CombineAVLatent:  # 合并视频/音频壳；形状必须同 targ
             else validate_av_latent(audio_av_latent)
         )
         if str(audio_clean["task"]) != str(video_clean["task"]):
-            raise ValueError("Combine AV：video/audio 壳 task 不一致")
+            raise ValueError("Combine AV: the video and audio shell tasks do not match")
         vt, at = video_clean["target"], audio_clean["target"]
         for key in (
             "video_latent_t", "video_latent_h", "video_latent_w", "audio_latent_t",
         ):
             if int(vt[key]) != int(at[key]):
-                raise ValueError(f"Combine AV：target.{key} 不一致")
+                raise ValueError(f"Combine AV: target.{key} does not match")
         if float(video_clean["video"].detach().abs().max()) <= 0.0:
-            raise ValueError("Combine AV：video 壳不能是全零（请先 Encode Video→AV）")
+            raise ValueError("Combine AV: the video shell cannot be all zeros (run Encode Video→AV first)")
         return (
             _av_shell(
                 video_clean,
@@ -536,7 +537,7 @@ class MiniMaxH3CombineAVLatent:  # 合并视频/音频壳；形状必须同 targ
         )
 
 
-class MiniMaxH3EncodeVideoAVLatent:  # IMAGE→video latent 写入 Empty AV 壳（V2A 入口）
+class MiniMaxH3EncodeVideoAVLatent:  # Write IMAGE→video latent into an Empty AV shell (V2A entry point).
     @classmethod
     def INPUT_TYPES(cls):
         return {
@@ -574,12 +575,12 @@ class MiniMaxH3EncodeVideoAVLatent:  # IMAGE→video latent 写入 Empty AV 壳�
         else:
             if not isinstance(h3_vae_bundle, Mapping) or h3_vae_bundle.get("schema") != H3_VAE_SCHEMA:
                 raise TypeError(
-                    "h3_vae_bundle 端口不是 RunningHub MiniMax H3 Dual VAE Loader 的输出"
+                    "The h3_vae_bundle port is not an output from the RunningHub MiniMax H3 Dual VAE Loader"
                 )
             vae_wrapper, clean = h3_vae_bundle, validate_av_latent(av_latent)
         video_vae = _wrapper_value(vae_wrapper.get("bundle"), "video_vae")
         if video_vae is None:
-            raise RuntimeError("VAE bundle 缺少 video_vae")
+            raise RuntimeError("The VAE bundle is missing video_vae")
         _require_comfy()
         model_management.unload_all_models()
         load_device = model_management.get_torch_device()
@@ -594,7 +595,7 @@ class MiniMaxH3EncodeVideoAVLatent:  # IMAGE→video latent 写入 Empty AV 壳�
         with _vae_device_session(video_vae, load_device):
             encoded = video_vae.encode(pixels, process_image=False, seed=int(seed))
         if not isinstance(encoded, t.Tensor):
-            raise TypeError("video VAE encode 必须返回 tensor")
+            raise TypeError("video VAE encode must return a tensor")
         expect = (
             1, 24,
             int(target["video_latent_t"]),
@@ -602,7 +603,7 @@ class MiniMaxH3EncodeVideoAVLatent:  # IMAGE→video latent 写入 Empty AV 壳�
             int(target["video_latent_w"]),
         )
         if tuple(int(x) for x in encoded.shape) != expect:
-            raise ValueError(f"编码 video latent shape={tuple(encoded.shape)}，期望 {expect}")
+            raise ValueError(f"Encoded video latent shape={tuple(encoded.shape)}; expected {expect}")
         out = _av_shell(
             clean,
             video=encoded.detach().to(device="cpu", dtype=t.float32).contiguous(),

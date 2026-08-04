@@ -1,4 +1,4 @@
-"""Worker 级模型驻留租约：gpu-resident / layerwise-warm / cold。"""
+"""Worker-level model residency leases: gpu-resident / layerwise-warm / cold."""
 from __future__ import annotations
 import logging, threading, time
 from typing import Any
@@ -44,7 +44,7 @@ class H3ResidencyManager:
                 LOGGER.info("residency release cold key=%s", key); return "cold"
             park = getattr(handle, "park_after_inference", None)
             state = park() if callable(park) else self._cold(handle) or "cold"
-            # balanced：显存紧张时降为 cold
+            # balanced: downgrade to cold when VRAM is tight.
             if policy == "balanced" and state == "gpu-resident" and self._vram_tight(handle):
                 self._cold(handle); state = "cold"; self._leases.pop(key, None)
                 LOGGER.info("residency balanced demote to cold key=%s", key); return state
@@ -56,7 +56,7 @@ class H3ResidencyManager:
         with _LOCK:
             for key in list(self._leases):
                 ent = self._leases.pop(key); self._cold(ent.get("handle"))
-            LOGGER.info("residency free_memory：已清空全部租约")
+            LOGGER.info("residency free_memory: cleared all leases")
 
     def expire(self) -> None:
         now = time.monotonic()

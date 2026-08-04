@@ -1,4 +1,4 @@
-"""contracts.components facade（实现见 _impl）。"""
+"""contracts.components facade (implementation lives in _impl)."""
 from __future__ import annotations
 from ._impl import (
     validate_component_compatibility,

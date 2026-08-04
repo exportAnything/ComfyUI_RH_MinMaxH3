@@ -1,7 +1,7 @@
 # ComfyUI-RH-MiniMax-H3
 
 <p align="center">
-  <img src="assets/runninghub-minimax-banner.png" alt="RunningHub × MiniMax 联合出品" width="760">
+  <img src="assets/runninghub-minimax-banner.png" alt="Created jointly by RunningHub and MiniMax" width="760">
 </p>
 
 <p align="center">
@@ -9,8 +9,6 @@
   <a href="https://www.runninghub.ai/?inviteCode=rh-v1367"><img alt="RunningHub International" src="https://img.shields.io/badge/RunningHub-International%20Online%20Platform-2f80ed?labelColor=333333"></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/License-Apache%202.0-green"></a>
 </p>
-
-[中文文档](README_CN.md)
 
 **MiniMax-H3** generates video and audio in the same diffusion process — not a
 render followed by a dubbing pass, but two streams denoised across one shared
@@ -55,7 +53,7 @@ partner; this plugin is developed and maintained by RunningHub.
 
 ```bash
 cd ComfyUI/custom_nodes
-git clone https://github.com/HM-RunningHub/ComfyUI_RH_MinMaxH3.git
+git clone https://github.com/exportAnything/ComfyUI_RH_MinMaxH3.git
 pip install -r ComfyUI_RH_MinMaxH3/requirements.txt
 ```
 
@@ -126,7 +124,7 @@ modelscope download --model Gluttony10/MiniMax-H3-INT8-CONVROT --local_dir Comfy
 
 | Model | Link | Description |
 |-------|------|-------------|
-| INT8-CONVROT weights | [HuggingFace](https://huggingface.co/Gluttony10/MiniMax-H3-INT8-CONVROT) · [ModelScope](https://modelscope.cn/models/Gluttony10/MiniMax-H3-INT8-CONVROT) | Converted single-file DiT / text-encoder / VAE weights → `models/MiniMax-H3/` |
+| INT8-CONVROT weights | [HuggingFace](https://huggingface.co/Gluttony10/MiniMax-H3-INT8-CONVROT) \| [ModelScope](https://modelscope.cn/models/Gluttony10/MiniMax-H3-INT8-CONVROT) | Converted single-file DiT / text-encoder / VAE weights → `models/MiniMax-H3/` |
 | MiniMax-H3 release | obtain from MiniMax | Sharded components and their configs → `models/diffusers/MiniMax-H3/` |
 
 > The upstream release supplies `config.json`, `source/config.json`, the

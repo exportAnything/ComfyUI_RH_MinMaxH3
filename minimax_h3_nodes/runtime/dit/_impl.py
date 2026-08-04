@@ -30,8 +30,8 @@ The checkpoint QKV matrices are grouped per attention head as
 ``[all_q, all_k, all_v]``.  A streaming loader must call
 :func:`prepare_checkpoint_tensor` for every tensor before assigning it.
 
-可选 ``operations``（Comfy ``mixed_precision_ops`` / ``manual_cast``）注入可量化
-Linear；FP32 层（patch/time/final）始终用原生 ``nn.Linear``。
+Optional ``operations`` (Comfy ``mixed_precision_ops`` / ``manual_cast``) injects
+quantizable Linear layers; FP32 layers (patch/time/final) always use native ``nn.Linear``.
 """
 
 from __future__ import annotations
@@ -85,23 +85,24 @@ LOGGER = logging.getLogger(__name__)
 
 
 def _linear_cls(operations: Any | None):
-    return operations.Linear if operations is not None else nn.Linear  # Comfy ops 或原生
+    return operations.Linear if operations is not None else nn.Linear  # Comfy ops or native.
 
 
-_FUSED_SWIGLU_PROBE: list[Any] = []  # 空=未探测；[None]=不可用；[fn]=可用
+_FUSED_SWIGLU_PROBE: list[Any] = []  # Empty=not probed; [None]=unavailable; [fn]=available.
 
 
 def _reset_fused_swiglu_probe() -> None:
-    """清空探测缓存（切换 flag / 测试注入后调用）。"""
+    """Clear the probe cache after changing a flag or injecting a test implementation."""
     _FUSED_SWIGLU_PROBE.clear()
 
 
 def _fused_swiglu_fn() -> Any | None:
-    """探测 ``comfy.ops.linear_input_act``。
+    """Probe ``comfy.ops.linear_input_act``.
 
-    INT8 Linear 本来就要量化输入，把 swiglu 折进那个 kernel 就省掉一次
-    ``[seq, ffn]`` 中间张量的写回+读取（37k 行时约 1 GB/层/步）。旧版 Comfy 没有
-    这个函数，探测失败即回退到现有 eager 路径。
+    INT8 Linear already quantizes its input. Folding swiglu into that kernel avoids
+    one write and read of the ``[seq, ffn]`` intermediate (about 1GB/layer/step at
+    37k rows). Older Comfy versions lack this function; a failed probe falls back to
+    the existing eager path.
     """
 
     if not _FUSED_SWIGLU_PROBE:
@@ -112,46 +113,49 @@ def _fused_swiglu_fn() -> Any | None:
 
                 candidate = getattr(comfy_ops, "linear_input_act", None)
                 resolved = candidate if callable(candidate) else None
-            except Exception:  # 没装 Comfy / 导入期异常都按不可用处理
+            except Exception:  # Treat missing Comfy or import-time failures as unavailable.
                 resolved = None
             LOGGER.info(
-                "INT8 融合 swiglu（comfy.ops.linear_input_act）：%s",
-                "启用" if resolved is not None else "不可用，回退 eager",
+                "INT8 fused swiglu (comfy.ops.linear_input_act): %s",
+                "enabled" if resolved is not None else "unavailable; falling back to eager",
             )
         _FUSED_SWIGLU_PROBE.append(resolved)
     return _FUSED_SWIGLU_PROBE[0]
 
 
-_FUSED_QK_ROPE_PROBE: list[Any] = []  # 空=未探测；[None]=不可用；[(fn, in_place)]=可用
+_FUSED_QK_ROPE_PROBE: list[Any] = []  # Empty=not probed; [None]=unavailable; [(fn, in_place)]=available.
 
 
 def _reset_fused_qk_rope_probe() -> None:
-    """清空探测缓存（切换 flag / 测试注入后调用）。"""
+    """Clear the probe cache after changing a flag or injecting a test implementation."""
     _FUSED_QK_ROPE_PROBE.clear()
 
 
 def _disable_fused_qk_rope(reason: BaseException) -> None:
-    """调用期发现融合 kernel 不兼容，永久停用并回退 torch 实现。"""
+    """Permanently disable an incompatible fused kernel discovered at call time and fall back to torch."""
 
     if _FUSED_QK_ROPE_PROBE:
         _FUSED_QK_ROPE_PROBE[0] = None
     else:
         _FUSED_QK_ROPE_PROBE.append(None)
     LOGGER.warning(
-        "融合 RMSNorm+RoPE kernel 调用失败（%s），本进程后续一律走 torch 实现",
+        "Fused RMSNorm+RoPE kernel call failed (%s); this process will use the torch implementation from now on",
         reason,
     )
 
 
 def _fused_kernel_accepts_rot_dim(candidate: Any, name: str) -> bool:
-    """融合 kernel 必须支持 ``rot_dim``，否则它只会做整头旋转。
+    """The fused kernel must support ``rot_dim`` or it will rotate the entire head.
 
-    H3 是部分旋转（``rotary_dim = 6 * rope_inv_freq_len`` = 96，head_dim = 128，
-    余下 32 维直通）。早期 comfy-kitchen 的 ``rms_rope_split_half`` 没有
-    ``rot_dim``，会把整个 head_dim 拆成对去套旋转表——形状对不上时直接抛错，
-    对得上时结果是错的。光判断"函数存在"会放行这种版本，所以这里必须验签名。
+    H3 uses partial rotation (``rotary_dim = 6 * rope_inv_freq_len`` = 96,
+    head_dim = 128, leaving 32 dimensions untouched). Early comfy-kitchen
+    ``rms_rope_split_half`` implementations lacked ``rot_dim`` and split the entire
+    head_dim into pairs for the rotation table. They raise on a shape mismatch and
+    produce incorrect output when shapes happen to match. Checking only whether the
+    function exists would accept those versions, so the signature must be validated.
 
-    无法内省的实现（C 扩展等）按可用处理，调用点还有 TypeError 兜底。
+    Treat implementations that cannot be introspected (such as C extensions) as
+    available; the call site still has a TypeError fallback.
     """
 
     import inspect
@@ -169,8 +173,8 @@ def _fused_kernel_accepts_rot_dim(candidate: Any, name: str) -> bool:
     if "rot_dim" in parameters:
         return True
     LOGGER.info(
-        "comfy-kitchen 的 %s 没有 rot_dim 参数（签名：%s），无法表达 H3 的部分旋转，"
-        "改用 torch 实现",
+        "comfy-kitchen %s has no rot_dim parameter (signature: %s), so it cannot express H3 partial rotation; "
+        "using the torch implementation",
         name,
         signature,
     )
@@ -178,10 +182,12 @@ def _fused_kernel_accepts_rot_dim(candidate: Any, name: str) -> bool:
 
 
 def _fused_qk_rope_fn() -> tuple[Any, bool] | None:
-    """探测 comfy-kitchen 的融合 per-head RMSNorm + split-half RoPE kernel。
+    """Probe comfy-kitchen's fused per-head RMSNorm + split-half RoPE kernel.
 
-    返回 ``(fn, in_place)``：就地版直接在 qkv 缓冲上改写 q/k（省一次 ``[S, inner]``
-    分配与两趟读写），非就地版返回新的 q/k。两者都不可用时回退现有 torch 实现。
+    Return ``(fn, in_place)``. The in-place version rewrites q/k directly in the qkv
+    buffer (saving one ``[S, inner]`` allocation and two memory passes); the
+    out-of-place version returns new q/k tensors. If neither is available, fall back
+    to the existing torch implementation.
     """
 
     if not _FUSED_QK_ROPE_PROBE:
@@ -201,27 +207,27 @@ def _fused_qk_rope_fn() -> tuple[Any, bool] | None:
                     ):
                         resolved = (candidate, in_place)
                         break
-            except Exception:  # 没装 Comfy/comfy-kitchen，或导入期异常
+            except Exception:  # Missing Comfy/comfy-kitchen or import-time failure.
                 resolved = None
             LOGGER.info(
-                "融合 RMSNorm+RoPE kernel（comfy.quant_ops.ck）：%s",
-                f"启用 {'in-place' if resolved[1] else 'out-of-place'}"
+                "Fused RMSNorm+RoPE kernel (comfy.quant_ops.ck): %s",
+                f"enabled {'in-place' if resolved[1] else 'out-of-place'}"
                 if resolved is not None
-                else "不可用，回退 torch 实现",
+                else "unavailable; falling back to torch",
             )
         _FUSED_QK_ROPE_PROBE.append(resolved)
     return _FUSED_QK_ROPE_PROBE[0]
 
 
 def fused_qk_rope_available(reference: torch.Tensor) -> bool:
-    """本次前向是否该走融合 kernel（comfy-kitchen 只提供 CUDA 实现）。"""
+    """Return whether this forward pass should use the fused kernel (comfy-kitchen provides CUDA only)."""
     if OPT_FUSED_QK_ROPE_CUDA_ONLY and reference.device.type != "cuda":
         return False
     return _fused_qk_rope_fn() is not None
 
 
 def _activation_dtype(module: nn.Module, fallback: torch.dtype) -> torch.dtype:
-    """Linear 输入 dtype：QuantizedTensor 用 compute/factory dtype，禁止读 int8 weight.dtype。"""
+    """Linear input dtype: use compute/factory dtype for QuantizedTensor; never read int8 weight.dtype."""
     fk = getattr(module, "factory_kwargs", None) or {}
     if fk.get("dtype") is not None:
         return fk["dtype"]
@@ -232,7 +238,7 @@ def _activation_dtype(module: nn.Module, fallback: torch.dtype) -> torch.dtype:
 
 
 def _adaln_dtype(config: "MiniMaxH3DiTConfig", fallback: torch.dtype) -> torch.dtype:
-    """曲线表模式的 adaLN 权重存 fp32（宽度只有 k，代价可忽略，与采样表同精度）。"""
+    """Store adaLN weights in fp32 for curve-table mode (width is only k, so cost is negligible and matches table precision)."""
     return ADALN_CURVE_DTYPE if config.use_adaln_curves else fallback
 
 
@@ -292,8 +298,9 @@ class MiniMaxH3DiTConfig:
     norm_eps: float = 1e-5
     qk_norm_eps: float = 1e-5
     final_norm_eps: float = 1e-5
-    # 曲线表 checkpoint：非 None 时 time embedder 被 [grid, k] 采样表
-    # 取代，``time_embed_dim`` 变成曲线基的秩 k。见 runtime/adaln_curve.py。
+    # Curve-table checkpoint: when non-None, a [grid, k] sample table replaces the
+    # time embedder and ``time_embed_dim`` becomes curve-basis rank k. See
+    # runtime/adaln_curve.py.
     adaln_curve_grid: int | None = None
 
     @property
@@ -346,7 +353,7 @@ class MiniMaxH3DiTConfig:
                     f"{self.adaln_curve_grid}"
                 )
             if self.time_embed_dim > self.adaln_curve_grid:
-                # 秩不可能超过采样点数，超出说明 config 与 checkpoint 不匹配
+                # Rank cannot exceed the sample count; otherwise config and checkpoint do not match.
                 raise ValueError(
                     "adaln curve rank (time_embed_dim) must not exceed "
                     f"adaln_curve_grid: {self.time_embed_dim} > "
@@ -435,11 +442,11 @@ FORWARD_SUPPORTED_KWARGS = frozenset(
         "img_pos_for_infer_output_info",
         "packed_seq_params",
         "refiner_packed_seq_params",
-        "cu_seqlens_bounds",  # P0-1 预计算 bounds
+        "cu_seqlens_bounds",  # P0-1 precomputed bounds.
         "prepared_rope_cache",  # P0-2 session RoPE
-        "structure_validated",  # P0-3 一次校验标记
-        "frame_rate_options",  # 实验性帧率条件
-        "video_timestep",  # temporal_rope 用
+        "structure_validated",  # P0-3 one-time validation marker.
+        "frame_rate_options",  # Experimental frame-rate conditioning.
+        "video_timestep",  # Used by temporal_rope.
         "video_sigma",
     }
 )
@@ -593,13 +600,13 @@ class MiniMaxH3TimeEmbedder(nn.Module):
         embedding = torch.cat(
             (torch.cos(arguments), torch.sin(arguments)), dim=-1
         )
-        if frame_rate is not None:  # 实验：fps sinusoidal 加到 t 嵌入
+        if frame_rate is not None:  # Experimental: add the fps sinusoid to the t embedding.
             fr = torch.as_tensor(frame_rate, dtype=torch.float32, device=t.device).flatten()
             if int(fr.numel()) == 1:
                 fr = fr.expand(t.shape[0])
             elif int(fr.numel()) != int(t.numel()):
                 raise ValueError(
-                    f"frame_rate 长度 {int(fr.numel())} 与 timestep {int(t.numel())} 不一致"
+                    f"frame_rate length {int(fr.numel())} does not match timestep length {int(t.numel())}"
                 )
             fps_args = fr[:, None] * frequencies[None]
             embedding = embedding + torch.cat(
@@ -668,18 +675,19 @@ class MiniMaxH3Attention(nn.Module):
         qkv = self.qkv_proj(hidden_states)
         query, key, value = qkv.chunk(3, dim=-1)
         value = value.view(rows, self.num_heads, self.head_dim)
-        # rope_cache = (cos|sin 缓存, 融合 kernel 的旋转矩阵表或 None)
+        # rope_cache = (cos|sin cache, rotation-matrix table for fused kernel or None).
         rotation_table = (
             rope_cache[1] if rope_cache is not None and len(rope_cache) > 1 else None
         )
         fused = _fused_qk_rope_fn() if rotation_table is not None else None
         if fused is not None and fused[1] and query.requires_grad:
-            # 就地版改写的是 chunk 出来的 autograd 视图，带梯度时 PyTorch 直接拒绝。
-            # 推理路径（requires_grad_(False) / no_grad）不受影响。
+            # The in-place version rewrites an autograd view produced by chunk, which
+            # PyTorch rejects when gradients are enabled. Inference paths
+            # (requires_grad_(False) / no_grad) are unaffected.
             fused = None
         if fused is not None:
-            # 融合 kernel 同时做 per-head RMSNorm 与 split-half RoPE，直接在 qkv
-            # 缓冲的 q/k 视图上就地完成（v 段不被触碰）
+            # The fused kernel performs per-head RMSNorm and split-half RoPE together,
+            # directly in the q/k views of the qkv buffer (the v segment is untouched).
             fused_fn, in_place = fused
             query = query.view(1, rows, self.num_heads, self.head_dim)
             key = key.view(1, rows, self.num_heads, self.head_dim)
@@ -692,8 +700,9 @@ class MiniMaxH3Attention(nn.Module):
                 else:
                     query, key = fused_fn(*args, **kwargs)
             except TypeError as exc:
-                # 无法内省签名的实现（C 扩展等）在这里才暴露不兼容；永久停用融合
-                # 路径并回退，而不是让整次采样失败。
+                # Non-introspectable implementations (for example C extensions) reveal
+                # incompatibility only here. Permanently disable the fused path and fall
+                # back instead of failing the entire sampling run.
                 _disable_fused_qk_rope(exc)
                 fused = None
             else:
@@ -745,8 +754,9 @@ class MiniMaxH3MLP(nn.Module):
             device=device,
             dtype=dtype,
         )
-        # 只有走 Comfy ops（量化/lowvram）时才有可折叠的激活量化 kernel；
-        # 原生 nn.Linear 用融合入口只会绕一圈再回到同样的 eager 实现。
+        # Only Comfy ops (quantized/lowvram) provides an activation-quantization kernel
+        # that can absorb this operation. Native nn.Linear would route through the
+        # fused entry point only to return to the same eager implementation.
         self.fused_swiglu = _fused_swiglu_fn() if operations is not None else None
 
     def forward(self, hidden_states: torch.Tensor) -> torch.Tensor:
@@ -777,7 +787,7 @@ class MiniMaxH3AdalnProj(nn.Module):
         self.modality_count = modality_count
         self.hidden_size = config.hidden_size
         self.compute_dtype = dtype
-        # 曲线表 checkpoint 把 silu 烤进了采样表，这里必须不再重复施加
+        # Curve-table checkpoints bake silu into the sample table; do not apply it again here.
         self.apply_silu = bool(apply_silu)
         Linear = _linear_cls(operations)
         self.linear = Linear(
@@ -789,7 +799,7 @@ class MiniMaxH3AdalnProj(nn.Module):
         )
 
     def project(self, timestep_embedding: torch.Tensor) -> torch.Tensor:
-        """[M,t_dim] -> [M, modalities, expand, hidden]，供预计算缓存。"""
+        """[M,t_dim] -> [M, modalities, expand, hidden] for the precomputation cache."""
         act_dtype = _activation_dtype(self.linear, self.compute_dtype)
         activated = (
             F.silu(timestep_embedding) if self.apply_silu else timestep_embedding
@@ -951,7 +961,7 @@ class MiniMaxH3DiTBlock(nn.Module):
         hidden_states: torch.Tensor,
         *,
         timestep_embedding: torch.Tensor | None,
-        combined_indices: Any,  # Tensor 或 _index_runs 段表
+        combined_indices: Any,  # Tensor or _index_runs table.
         rope_cache: tuple[torch.Tensor, torch.Tensor],
         cu_seqlens: torch.Tensor,
         max_seqlen: int,
@@ -960,7 +970,7 @@ class MiniMaxH3DiTBlock(nn.Module):
     ) -> torch.Tensor:
         if modulation is None:
             if timestep_embedding is None:
-                raise RuntimeError("AdaLN 需要 timestep_embedding 或预计算 modulation")
+                raise RuntimeError("AdaLN requires timestep_embedding or precomputed modulation")
             mod_values = self.adaln_proj(timestep_embedding)
         else:
             mod_values = modulation
@@ -1013,7 +1023,7 @@ class MiniMaxH3FinalLayer(nn.Module):
             operations=operations,
             apply_silu=not config.use_adaln_curves,
         )
-        self.video_out = nn.Linear(  # FP32 固定原生 Linear
+        self.video_out = nn.Linear(  # FP32 always uses native Linear.
             config.hidden_size,
             config.video_patch_dim,
             bias=True,
@@ -1033,12 +1043,12 @@ class MiniMaxH3FinalLayer(nn.Module):
         hidden_states: torch.Tensor,
         *,
         timestep_embedding: torch.Tensor | None,
-        inverse_indices: Any,  # Tensor 或 _index_runs 段表
+        inverse_indices: Any,  # Tensor or _index_runs table.
         modulation: tuple[torch.Tensor, ...] | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         if modulation is None:
             if timestep_embedding is None:
-                raise RuntimeError("FinalLayer AdaLN 需要 timestep_embedding 或预计算 modulation")
+                raise RuntimeError("FinalLayer AdaLN requires timestep_embedding or precomputed modulation")
             shift, scale = self.adaln_proj(timestep_embedding)
         else:
             shift, scale = modulation
@@ -1078,7 +1088,7 @@ class MiniMaxH3DiTModel(nn.Module):
         self.attention_backend = attention_backend
         Linear = _linear_cls(operations)
 
-        self.video_patch_proj = nn.Linear(  # FP32 固定原生 Linear
+        self.video_patch_proj = nn.Linear(  # FP32 always uses native Linear.
             config.video_patch_dim,
             config.hidden_size,
             bias=True,
@@ -1101,7 +1111,7 @@ class MiniMaxH3DiTModel(nn.Module):
         )
         self.use_adaln_curves = config.use_adaln_curves
         if self.use_adaln_curves:
-            # 曲线表 checkpoint：time embedder 已烤进 [grid, k] 采样表
+            # Curve-table checkpoint: the time embedder is baked into the [grid, k] sample table.
             self.register_buffer(
                 ADALN_CURVE_TABLE_KEY,
                 torch.empty(
@@ -1243,10 +1253,11 @@ class MiniMaxH3DiTModel(nn.Module):
     def _rope_cache(
         self, frequencies: torch.Tensor
     ) -> tuple[torch.Tensor, torch.Tensor | None]:
-        """``(cos|sin 缓存, 融合 kernel 旋转矩阵表或 None)``。
+        """``(cos|sin cache, fused-kernel rotation-matrix table or None)``.
 
-        旋转矩阵表只在融合 kernel 真能用上时才构造——它比 cos/sin 缓存大一倍，
-        而回退路径根本不读它。两者同源于同一份角度，不存在两套数值。
+        Build the rotation-matrix table only when the fused kernel can actually use
+        it. The table is twice as large as the cos/sin cache, and fallback paths never
+        read it. Both derive from the same angles, so there are not two numerical sources.
         """
         cos_sin = _rope_cos_sin_cache(frequencies, dtype=self.model_dtype)
         table = (
@@ -1264,11 +1275,11 @@ class MiniMaxH3DiTModel(nn.Module):
         token_tags: torch.Tensor,
         seq_len: int,
     ) -> dict[str, Any]:
-        """采样循环前一次构造 RoPE/bounds；供 H3DenoiseBranch 注入 static_kwargs。"""
+        """Build RoPE/bounds once before the sampling loop for H3DenoiseBranch to inject into static_kwargs."""
         bounds = normalize_cu_seqlens_bounds(cu_seqlens, rows=int(seq_len))
         tags = token_tags.view(-1).to(torch.long)
         if int(tags.numel()) != int(seq_len):
-            raise ValueError(f"token_tags length={int(tags.numel())}，应为 {seq_len}")
+            raise ValueError(f"token_tags length={int(tags.numel())}; expected {seq_len}")
         tmin = int(tags.min().item()); tmax = int(tags.max().item())
         if tmin < -1 or tmax > 2:
             raise ValueError("token_tags values must be -1, 0, 1, or 2")
@@ -1354,7 +1365,7 @@ class MiniMaxH3DiTModel(nn.Module):
         if cache is not None:
             return embeddings, None  # type: ignore[return-value]
         if self._adaln_weights_released:
-            raise RuntimeError("AdaLN 权重已释放且无 modulation cache")
+            raise RuntimeError("AdaLN weights were released and no modulation cache is available")
         return embeddings, self.timestep_embedding(
             unique_timesteps, frame_rate=frame_rate
         )
@@ -1365,21 +1376,22 @@ class MiniMaxH3DiTModel(nn.Module):
         *,
         frame_rate: float | None = None,
     ) -> torch.Tensor:
-        """``[M]`` timestep → adaLN 输入 ``[M, time_embed_dim]``。
+        """Map ``[M]`` timestep to adaLN input ``[M, time_embed_dim]``.
 
-        曲线表 checkpoint 走采样表插值（silu 已烤进表）；原版走 time embedder。
+        Curve-table checkpoints interpolate the sample table (with silu baked in);
+        original checkpoints use the time embedder.
         """
         if not self.use_adaln_curves:
             return self.time_embedder(timesteps, frame_rate=frame_rate)
         if frame_rate is not None:
             raise RuntimeError(
-                "曲线表 checkpoint 没有 time embedder，无法施加实验性帧率条件；"
-                "请关闭 Frame Rate 节点的 adaln 选项（temporal_rope 不受影响），"
-                "或改用原版 DiT 权重"
+                "Curve-table checkpoints have no time embedder, so experimental frame-rate conditioning "
+                "cannot be applied. Disable the Frame Rate node's adaln option (temporal_rope is unaffected), "
+                "or use the original DiT weights"
             )
         table = getattr(self, ADALN_CURVE_TABLE_KEY)
         if table.device != timesteps.device:
-            # INT8/layerwise 下这张小表可能仍在 offload 设备上
+            # Under INT8/layerwise, this small table may still be on the offload device.
             table = table.to(timesteps.device)
         return interpolate_curve_table(table, timesteps)
 
@@ -1392,12 +1404,13 @@ class MiniMaxH3DiTModel(nn.Module):
         release_weights: bool = True,
         frame_rate: float | None = None,
     ) -> H3ModulationCache:
-        """采样前预计算全部 timestep 的 adaLN；见 runtime/modulation_cache.py。"""
+        """Precompute adaLN for every timestep before sampling; see runtime/modulation_cache.py."""
         if self.use_adaln_curves:
-            # 曲线表已经把 adaLN 权重压到 [out, k]，预计算既无收益也没有 time
-            # embedder 可跑；sampler_core 捕获此异常后照常采样。
+            # The curve table already compresses adaLN weights to [out, k], so
+            # precomputation offers no benefit and there is no time embedder to run.
+            # sampler_core catches this exception and samples normally.
             raise H3PrecomputeUnsupported(
-                "曲线表 checkpoint 的 adaLN 权重已是低秩形式，跳过 AdaLN 预计算"
+                "Curve-table checkpoint adaLN weights are already low-rank; skipping AdaLN precomputation"
             )
         fr_key = None if frame_rate is None else round(float(frame_rate), 6)
         if self._adaln_weights_released and self._modulation_cache is not None:
@@ -1408,7 +1421,7 @@ class MiniMaxH3DiTModel(nn.Module):
             cached_fr = getattr(self._modulation_cache, "frame_rate", None)
             if not needed.issubset(self._modulation_cache.timestep_rows) or cached_fr != fr_key:
                 raise RuntimeError(
-                    "AdaLN 权重已释放，无法为新的 timestep/frame_rate 重新预计算；请重新加载 DiT"
+                    "AdaLN weights were released, so modulation cannot be recomputed for new timestep/frame_rate values; reload DiT"
                 )
             return self._modulation_cache
         return precompute_dit_modulation(
@@ -1519,7 +1532,7 @@ class MiniMaxH3DiTModel(nn.Module):
             )
 
         device = x.device
-        # prepared structure 路径：branch 已把结构张量放到 compute device
+        # Prepared-structure path: the branch already moved structural tensors to the compute device.
         if image_positions.device != device:
             image_positions = image_positions.to(device)
         if audio_positions.device != device:
@@ -1601,7 +1614,8 @@ class MiniMaxH3DiTModel(nn.Module):
             if token_tags.min().item() < -1 or token_tags.max().item() > 2:
                 raise ValueError("token_tags values must be -1, 0, 1, or 2")
 
-        # 每步一次 RLE；block/final 按段广播，避免 6×index_select 物化 [S,H]
+        # One RLE per step; block/final broadcast by runs to avoid six index_select
+        # operations materializing [S,H].
         if OPT_ADALN_SEGMENT_BROADCAST:
             mod_segments = _index_runs(combined_indices)
             inv_segments = _index_runs(inverse_indices)
@@ -1668,7 +1682,7 @@ class MiniMaxH3DiTModel(nn.Module):
 
         fp32_names = self.fp32_param_names()
         for name, parameter in self.named_parameters():
-            if not parameter.is_floating_point():  # INT8 QuantizedTensor 跳过
+            if not parameter.is_floating_point():  # Skip INT8 QuantizedTensor.
                 continue
             expected = torch.float32 if name in fp32_names else self.model_dtype
             if parameter.dtype != expected:
@@ -1684,10 +1698,10 @@ class MiniMaxH3DiTModel(nn.Module):
                 )
 
     def fp32_param_names(self) -> frozenset[str]:
-        """本 checkpoint 形态下必须保持 fp32 的参数名。"""
+        """Return parameter names that must remain fp32 for this checkpoint form."""
         if not self.use_adaln_curves:
             return FP32_PARAM_NAMES
-        # 曲线表模式：没有 time embedder，adaLN 低秩权重整体走 fp32
+        # Curve-table mode: no time embedder; all low-rank adaLN weights use fp32.
         base = {name for name in FP32_PARAM_NAMES if not name.startswith("time_embedder.")}
         base.update(
             name for name, _ in self.named_parameters() if ".adaln_proj.linear." in name

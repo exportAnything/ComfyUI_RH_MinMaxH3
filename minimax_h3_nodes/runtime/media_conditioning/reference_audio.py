@@ -1,4 +1,4 @@
-"""media_conditioning.reference_audio facade。"""
+"""media_conditioning.reference_audio facade."""
 from __future__ import annotations
 from ._impl import (
     ReferenceAudioPlan,

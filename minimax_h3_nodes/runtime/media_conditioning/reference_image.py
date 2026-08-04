@@ -1,4 +1,4 @@
-"""media_conditioning.reference_image facade。"""
+"""media_conditioning.reference_image facade."""
 from __future__ import annotations
 from ._impl import (
     H3_REFERENCE_IMAGE_SIZE_MATCH,

@@ -1,4 +1,4 @@
-"""采样核心（P2 自 sampling.py 迁入）。"""
+"""Sampling core (P2 moved from sampling.py)."""
 from __future__ import annotations
 import logging
 import math
@@ -37,7 +37,7 @@ LOGGER = logging.getLogger("MiniMaxH3.sampling")
 def _require_torch():
     if torch is None:
         raise RuntimeError(
-            "MiniMax-H3 Direct 需要 ComfyUI 自带的 PyTorch；当前 Python 环境未安装 torch"
+            "MiniMax-H3 Direct requires the PyTorch bundled with ComfyUI; torch is not installed in this Python environment"
         )
     return torch
 
@@ -73,17 +73,17 @@ def patchify_video_latent(latent: Any) -> Any:
 
     t = _require_torch()
     if not isinstance(latent, t.Tensor) or latent.ndim != 5:
-        raise ValueError("video latent 必须是 rank-5 tensor [B,24,T,H,W]")
+        raise ValueError("video latent must be a rank-5 tensor [B,24,T,H,W]")
     batch, channels, full_t, full_h, full_w = (int(x) for x in latent.shape)
     if channels != H3_VIDEO_CHANNELS:
         raise ValueError(
-            f"video latent channels 必须为 {H3_VIDEO_CHANNELS}，实际为 {channels}"
+            f"video latent channels must be {H3_VIDEO_CHANNELS}; got {channels}"
         )
     pt, ph, pw = H3_VIDEO_PATCH_SIZE
     if full_t % pt or full_h % ph or full_w % pw:
         raise ValueError(
-            "video latent T/H/W 必须可被 patch_size "
-            f"{H3_VIDEO_PATCH_SIZE} 整除，实际 shape={list(latent.shape)}"
+            "video latent T/H/W must be divisible by patch_size "
+            f"{H3_VIDEO_PATCH_SIZE}; got shape={list(latent.shape)}"
         )
     out_t, out_h, out_w = full_t // pt, full_h // ph, full_w // pw
     packed = latent.reshape(
@@ -107,19 +107,19 @@ def unpatchify_video_rows(
 
     t = _require_torch()
     if not isinstance(rows, t.Tensor) or rows.ndim != 2:
-        raise ValueError("video rows 必须是 rank-2 tensor")
+        raise ValueError("video rows must be a rank-2 tensor")
     pt, ph, pw = H3_VIDEO_PATCH_SIZE
     token_t = int(latent_t) // pt
     token_h = int(latent_h) // ph
     token_w = int(latent_w) // pw
     if int(rows.shape[1]) != H3_VIDEO_ROW_WIDTH:
         raise ValueError(
-            f"video row width 必须为 {H3_VIDEO_ROW_WIDTH}，实际为 {int(rows.shape[1])}"
+            f"video row width must be {H3_VIDEO_ROW_WIDTH}; got {int(rows.shape[1])}"
         )
     rows_per_sample = token_t * token_h * token_w
     if rows_per_sample <= 0 or int(rows.shape[0]) % rows_per_sample:
         raise ValueError(
-            f"video rows={int(rows.shape[0])} 与 latent geometry 不匹配"
+            f"video rows={int(rows.shape[0])} does not match latent geometry"
         )
     packed = rows.reshape(
         -1,
@@ -151,12 +151,12 @@ def unpack_audio_rows(
 
     t = _require_torch()
     if not isinstance(rows, t.Tensor) or rows.ndim != 2:
-        raise ValueError("audio rows 必须是 rank-2 tensor")
+        raise ValueError("audio rows must be a rank-2 tensor")
     expected_rows = int(audio_channels) * int(audio_t)
     if tuple(int(x) for x in rows.shape) != (expected_rows, H3_AUDIO_ROW_WIDTH):
         raise ValueError(
-            "audio rows shape 必须为 "
-            f"({expected_rows},{H3_AUDIO_ROW_WIDTH})，实际为 {tuple(rows.shape)}"
+            "audio rows shape must be "
+            f"({expected_rows},{H3_AUDIO_ROW_WIDTH}); got {tuple(rows.shape)}"
         )
     native = rows.reshape(
         int(audio_channels), int(audio_t), H3_AUDIO_ROW_WIDTH
@@ -168,7 +168,7 @@ def rf_velocity_to_x0(state: Any, velocity: Any, timestep: Any) -> Any:
     t = _require_torch()
     if state.shape != velocity.shape:
         raise ValueError(
-            f"state/velocity shape 不一致：{tuple(state.shape)} vs {tuple(velocity.shape)}"
+            f"state/velocity shape mismatch: {tuple(state.shape)} vs {tuple(velocity.shape)}"
         )
     cond_t = t.as_tensor(timestep, device=state.device, dtype=state.dtype)
     while cond_t.ndim < state.ndim:
@@ -185,12 +185,12 @@ def euler_eta0_step(
     sigma_ratio: Any | None = None,
 ) -> Any:
     if state.shape != denoised.shape:
-        raise ValueError("Euler state/denoised shape 不一致")
+        raise ValueError("Euler state/denoised shape mismatch")
     if sigma_curr < 0.0 or sigma_next < 0.0:
-        raise ValueError("sigma 不能为负数")
+        raise ValueError("sigma cannot be negative")
     if sigma_curr == 0.0:
         if sigma_next != 0.0:
-            raise ValueError("sigma_curr=0 时 sigma_next 也必须为 0")
+            raise ValueError("When sigma_curr=0, sigma_next must also be 0")
         return state
     t = _require_torch()
     compute_dtype = (
@@ -214,21 +214,22 @@ def res_multistep_coeffs(
 ) -> list[tuple[float, float] | None]:
     """Per-step second-order coefficients for the eta=0 ``res_multistep`` sampler.
 
-    对每个去噪步返回 ``(h*b1, h*b2)``；返回 ``None`` 表示该步只能走一阶
-    Euler（首步没有历史，或终步 sigma_next=0）。系数在主机侧按 float64 预
-    计算，循环内不产生任何设备同步。
+    Return ``(h*b1, h*b2)`` for each denoising step. ``None`` means the step can use
+    first-order Euler only (the first step has no history, or the final step has
+    sigma_next=0). Coefficients are precomputed on the host in float64, with no
+    device synchronization inside the loop.
 
-    数学形式（指数积分器，https://arxiv.org/pdf/2308.02157）：在
-    ``t = -log(sigma)`` 空间里
-    ``x' = ratio*x + h*(b1*denoised + b2*old_denoised)``，其中
-    ``ratio = sigma_next/sigma_curr = exp(-h)``。恒有
-    ``h*b1 + h*b2 == 1 - ratio``，因此当 ``old_denoised == denoised`` 时
-    严格退化为 :func:`euler_eta0_step`。
+    Mathematical form (exponential integrator,
+    https://arxiv.org/pdf/2308.02157): in ``t = -log(sigma)`` space,
+    ``x' = ratio*x + h*(b1*denoised + b2*old_denoised)``, where
+    ``ratio = sigma_next/sigma_curr = exp(-h)``. It always satisfies
+    ``h*b1 + h*b2 == 1 - ratio``, so when ``old_denoised == denoised`` it reduces
+    exactly to :func:`euler_eta0_step`.
     """
 
     values = [float(s) for s in sigmas]
     if any(v < 0.0 for v in values):
-        raise ValueError("sigma 不能为负数")
+        raise ValueError("sigma cannot be negative")
     coeffs: list[tuple[float, float] | None] = []
     for i in range(len(values) - 1):
         s_curr, s_next = values[i], values[i + 1]
@@ -237,7 +238,7 @@ def res_multistep_coeffs(
             continue
         s_prev = values[i - 1]
         h = math.log(s_curr / s_next)
-        c2 = math.log(s_curr / s_prev) / h  # (t_prev - t_curr)/h，严格递减时 < 0
+        c2 = math.log(s_curr / s_prev) / h  # (t_prev - t_curr)/h, < 0 when strictly decreasing.
         if h <= 0.0 or c2 == 0.0 or not math.isfinite(c2):
             coeffs.append(None)
             continue
@@ -262,15 +263,16 @@ def res_multistep_eta0_step(
 ) -> Any:
     """Second-order multistep update on one stream's own sigma schedule.
 
-    与 :func:`euler_eta0_step` 同构：``ratio*x`` 之外把 ``(1-ratio)`` 的
-    denoised 权重按指数积分器拆成本步与上一步两份。两条流（video/audio）
-    各自在自己的 shift 调度上独立积分，无需 ComfyUI 的 slope 折叠。
+    Isomorphic to :func:`euler_eta0_step`: beyond ``ratio*x``, split the
+    ``(1-ratio)`` denoised weight between the current and previous steps according
+    to the exponential integrator. The video and audio streams integrate independently
+    on their own shift schedules without ComfyUI slope folding.
     """
 
     if state.shape != denoised.shape or state.shape != old_denoised.shape:
-        raise ValueError("res_multistep state/denoised shape 不一致")
+        raise ValueError("res_multistep state/denoised shape mismatch")
     if sigma_curr <= 0.0 or sigma_next <= 0.0:
-        raise ValueError("res_multistep 步进要求 sigma_curr/sigma_next 均为正")
+        raise ValueError("res_multistep requires positive sigma_curr and sigma_next")
     t = _require_torch()
     compute_dtype = (
         t.float32 if state.dtype in (t.float16, t.bfloat16) else state.dtype
@@ -291,10 +293,10 @@ def _condition_noise_level(value: Any, name: str) -> float:
     """Validate a rectified-flow condition timestep/noise mixture."""
 
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise ValueError(f"{name} 必须是 0 到 1 之间的数字")
+        raise ValueError(f"{name} must be numeric between 0 and 1")
     out = float(value)
     if not 0.0 <= out <= 1.0:
-        raise ValueError(f"{name} 必须在 [0,1]，实际为 {out!r}")
+        raise ValueError(f"{name} must be in [0,1]; got {out!r}")
     return out
 
 
@@ -317,30 +319,30 @@ def noise_visual_condition_rows(
     t = _require_torch()
     level = _condition_noise_level(noise_level, "visual condition noise")
     if not isinstance(clean_rows, t.Tensor):
-        raise TypeError("visual condition rows 必须是 torch.Tensor")
+        raise TypeError("visual condition rows must be a torch.Tensor")
     if clean_rows.ndim != 2 or int(clean_rows.shape[1]) != H3_VIDEO_ROW_WIDTH:
         raise ValueError(
-            "visual condition rows 必须是 [N,96]，实际为 "
+            "visual condition rows must be [N,96]; got "
             f"{tuple(int(x) for x in clean_rows.shape)}"
         )
     if isinstance(target_latent_t, bool) or int(target_latent_t) <= 0:
-        raise ValueError("target_latent_t 必须是正整数")
+        raise ValueError("target_latent_t must be a positive integer")
 
     parsed: list[tuple[int, int, int]] = []
     expected_rows = 0
     for index, raw_shape in enumerate(condition_shapes):
         if len(raw_shape) != 3:
             raise ValueError(
-                f"visual_condition_shapes[{index}] 必须是 (T,H,W)"
+                f"visual_condition_shapes[{index}] must be (T,H,W)"
             )
         latent_t, latent_h, latent_w = (int(value) for value in raw_shape)
         if latent_t <= 0 or latent_h <= 0 or latent_w <= 0:
             raise ValueError(
-                f"visual_condition_shapes[{index}] 必须全部为正数"
+                f"visual_condition_shapes[{index}] values must all be positive"
             )
         if latent_h % H3_VIDEO_PATCH_SIZE[1] or latent_w % H3_VIDEO_PATCH_SIZE[2]:
             raise ValueError(
-                f"visual_condition_shapes[{index}] 的 H/W 必须可被 2 整除"
+                f"visual_condition_shapes[{index}] H/W must be divisible by 2"
             )
         parsed.append((latent_t, latent_h, latent_w))
         expected_rows += (
@@ -350,12 +352,12 @@ def noise_visual_condition_rows(
         )
     if not parsed:
         if int(clean_rows.shape[0]) != 0:
-            raise ValueError("有 visual condition rows 时必须提供 shape 元数据")
+            raise ValueError("shape metadata is required when visual condition rows are present")
         return clean_rows.detach().clone().to(dtype=t.float32).contiguous()
     if int(clean_rows.shape[0]) != expected_rows:
         raise ValueError(
-            f"visual condition rows={int(clean_rows.shape[0])}，"
-            f"但 shape 元数据推导为 {expected_rows}"
+            f"visual condition rows={int(clean_rows.shape[0])}, "
+            f"but shape metadata implies {expected_rows}"
         )
 
     # The 1.0 path still clones: callers may pin/reset the returned anchors in
@@ -370,7 +372,7 @@ def noise_visual_condition_rows(
     for index, (latent_t, latent_h, latent_w) in enumerate(parsed):
         if full_t < latent_t:
             raise ValueError(
-                f"visual condition {index} latent_t={latent_t} 超过 "
+                f"visual condition {index} latent_t={latent_t} exceeds "
                 f"noise draw temporal length={full_t}"
             )
         generator = t.Generator(device="cpu").manual_seed(int(seed))
@@ -408,24 +410,24 @@ def noise_audio_reference_rows(
     t = _require_torch()
     level = _condition_noise_level(noise_level, "audio reference noise")
     if not isinstance(clean_rows, t.Tensor):
-        raise TypeError("audio reference rows 必须是 torch.Tensor")
+        raise TypeError("audio reference rows must be a torch.Tensor")
     if clean_rows.ndim != 2 or int(clean_rows.shape[1]) != H3_AUDIO_ROW_WIDTH:
         raise ValueError(
-            "audio reference rows 必须是 [N,32]，实际为 "
+            "audio reference rows must be [N,32]; got "
             f"{tuple(int(x) for x in clean_rows.shape)}"
         )
     parsed = [int(value) for value in reference_audio_t]
     if any(value <= 0 for value in parsed):
-        raise ValueError("audio_reference_t 中每个值都必须是正整数")
+        raise ValueError("Every value in audio_reference_t must be a positive integer")
     expected_rows = 2 * sum(parsed)
     if int(clean_rows.shape[0]) != expected_rows:
         raise ValueError(
-            f"audio reference rows={int(clean_rows.shape[0])}，"
-            f"但 audio_reference_t 推导为 {expected_rows}"
+            f"audio reference rows={int(clean_rows.shape[0])}, "
+            f"but audio_reference_t implies {expected_rows}"
         )
     if not parsed:
         if int(clean_rows.shape[0]) != 0:
-            raise ValueError("有 audio reference rows 时必须提供长度元数据")
+            raise ValueError("Length metadata is required when audio reference rows are present")
         return clean_rows.detach().clone().to(dtype=t.float32).contiguous()
     if level == 1.0:
         return clean_rows.detach().clone().to(dtype=t.float32).contiguous()
@@ -469,12 +471,12 @@ def _require_finite_step_tensor(
     if not isinstance(value, t.Tensor):
         raise TypeError(
             f"MiniMax-H3 task={task} step={step} modality={modality} "
-            f"{phase} 不是 tensor"
+            f"{phase} is not a tensor"
         )
     if not bool(t.isfinite(value).all()):
         raise FloatingPointError(
             f"MiniMax-H3 task={task} step={step} modality={modality} "
-            f"{phase} 出现 NaN/Inf，已停止解码"
+            f"{phase} contains NaN/Inf; decoding was stopped"
         )
 
 
@@ -504,7 +506,7 @@ class H3DenoiseBranch:
         missing = [key for key in self.REQUIRED_PACKED_KEYS if key not in packed]
         if missing:
             raise ValueError(
-                "runtime.packing 返回值缺少字段：" + ", ".join(missing)
+                "runtime.packing output is missing fields: " + ", ".join(missing)
             )
         seq_len = int(packed["seq_len"])
         self.seq_len = seq_len
@@ -520,30 +522,30 @@ class H3DenoiseBranch:
             self.audio_update_mask = self.audio_update_mask.view(-1).to(t.bool)
         if int(self.update_mask.numel()) != int(self.img_pos.numel()):
             raise ValueError(
-                "update_mask length 必须等于 img_pos rows："
+                "update_mask length must equal img_pos rows: "
                 f"{int(self.update_mask.numel())} != {int(self.img_pos.numel())}"
             )
         if int(self.audio_update_mask.numel()) != int(self.audio_pos.numel()):
             raise ValueError(
-                "audio_update_mask length 必须等于 audio_pos rows："
+                "audio_update_mask length must equal audio_pos rows: "
                 f"{int(self.audio_update_mask.numel())} != "
                 f"{int(self.audio_pos.numel())}"
             )
 
         if prompt_embeds.ndim == 3:
             if int(prompt_embeds.shape[0]) != 1:
-                raise ValueError("MiniMax-H3 Direct v0 只支持 batch=1")
+                raise ValueError("MiniMax-H3 Direct v0 supports batch=1 only")
             prompt_embeds = prompt_embeds[0]
         text_len = int(packed["text_pos"].view(-1).shape[0])
         if int(prompt_embeds.shape[0]) != text_len:
             raise ValueError(
-                f"prompt rows={int(prompt_embeds.shape[0])} 与 packed "
-                f"text_len={text_len} 不一致"
+                f"prompt rows={int(prompt_embeds.shape[0])} does not match packed "
+                f"text_len={text_len}"
             )
         token_tags = packed["token_tags"].view(-1).to(t.long)
         if int(token_tags.shape[0]) != seq_len:
             raise ValueError(
-                f"token_tags length={int(token_tags.shape[0])}，应为 {seq_len}"
+                f"token_tags length={int(token_tags.shape[0])}; expected {seq_len}"
             )
 
         self.img_pos_dev = self.img_pos.to(device)
@@ -602,7 +604,7 @@ class H3DenoiseBranch:
                     selected_embeds = refine(
                         prompt_embeds, refiner_cu, device=device, text_length=text_len,
                     )
-                except TypeError:  # 兼容无 text_length 形参的 mock/旧签名
+                except TypeError:  # Compatibility with mocks/legacy signatures that lack text_length.
                     selected_embeds = refine(prompt_embeds, refiner_cu, device=device)
             refined_length = text_len
 
@@ -630,7 +632,7 @@ class H3DenoiseBranch:
                 "cu_seqlens_q": refiner_cu,
                 "max_seqlen_q": text_len,
             },
-            "structure_validated": True,  # token_tags 等在 prepare 一次校验
+            "structure_validated": True,  # Validate token_tags and related structure once during prepare.
         }
         if refined_length is not None:
             self.static_kwargs["refined_prompt_embeds_length"] = refined_length
@@ -759,8 +761,8 @@ def _model_device(model: Any) -> Any:
         except (TypeError, RuntimeError):
             pass
     raise RuntimeError(
-        "无法确定 H3 DiT 所在设备；model loader 必须先把 transformer "
-        "交给 ComfyUI model management 加载"
+        "Could not determine the H3 DiT device; the model loader must first hand the "
+        "transformer to ComfyUI model management for loading"
     )
 
 
@@ -774,11 +776,11 @@ def _validate_generic_sampler_inputs(
 
     t = _require_torch()
     if not isinstance(conditioning, Mapping):
-        raise TypeError("conditioning 必须是 mapping")
+        raise TypeError("conditioning must be a mapping")
     if not isinstance(av_latent, Mapping):
-        raise TypeError("av_latent 必须是 mapping")
+        raise TypeError("av_latent must be a mapping")
     if not isinstance(packed, Mapping):
-        raise TypeError("packed conditioning 必须是 mapping")
+        raise TypeError("packed conditioning must be a mapping")
 
     raw_target = av_latent.get("target")
     target_task = raw_target.get("task") if isinstance(raw_target, Mapping) else None
@@ -794,7 +796,7 @@ def _validate_generic_sampler_inputs(
     }
     if len(task_values) > 1:
         raise ValueError(
-            "conditioning/target/latent/packed task 不一致："
+            "conditioning/target/latent/packed task mismatch: "
             + ", ".join(sorted(task_values))
         )
     task = next(iter(task_values), None)
@@ -814,7 +816,7 @@ def _validate_generic_sampler_inputs(
     }
     if len(partition_values) > 1:
         raise ValueError(
-            "conditioning/target/latent/packed partition 不一致："
+            "conditioning/target/latent/packed partition mismatch: "
             + ", ".join(sorted(partition_values))
         )
     if task is not None and partition_values:
@@ -827,7 +829,7 @@ def _validate_generic_sampler_inputs(
         and latent_schema == H3_AV_LATENT_SCHEMA_V2
     ):
         if task is None:
-            raise ValueError("V2 conditioning 缺少 task")
+            raise ValueError("V2 conditioning is missing task")
         clean_conditioning = validate_conditioning_v2(
             conditioning, expected_task=task
         )
@@ -840,41 +842,41 @@ def _validate_generic_sampler_inputs(
         # conditional task must never fall back to structural duck typing.
         if task != H3_TASK_T2VA:
             raise ValueError(
-                "FL2VA/Ref2VA 只接受 conditioning/av_latent v2 schema；"
-                f"实际 task={task!r}"
+                "FL2VA/Ref2VA accepts conditioning/av_latent v2 schema only; "
+                f"got task={task!r}"
             )
         clean_conditioning = validate_conditioning(conditioning)
         clean_latent = validate_av_latent(av_latent)
     else:
         raise ValueError(
-            "conditioning/av_latent schema 必须同时为 MiniMax-H3 v2，"
-            "或同时为原 T2VA v1；实际为 "
+            "conditioning/av_latent schemas must both be MiniMax-H3 v2 or both be "
+            "the original T2VA v1; got "
             f"{conditioning_schema!r} / {latent_schema!r}"
         )
 
     prompt_embeds = clean_conditioning.get("prompt_embeds")
     if not isinstance(prompt_embeds, t.Tensor):
-        raise TypeError("conditioning 缺少 prompt_embeds tensor")
+        raise TypeError("conditioning is missing the prompt_embeds tensor")
     if prompt_embeds.ndim == 3:
         if int(prompt_embeds.shape[0]) != 1:
-            raise ValueError("MiniMax-H3 sampler 只支持 batch=1")
+            raise ValueError("MiniMax-H3 sampler supports batch=1 only")
     elif prompt_embeds.ndim != 2:
-        raise ValueError("prompt_embeds 必须是 [L,D] 或 [1,L,D]")
+        raise ValueError("prompt_embeds must be [L,D] or [1,L,D]")
 
     video = clean_latent.get("video")
     audio = clean_latent.get("audio")
     if not isinstance(video, t.Tensor) or video.ndim != 5:
-        raise ValueError("av_latent.video 必须是 [1,24,T,H,W] tensor")
+        raise ValueError("av_latent.video must be a [1,24,T,H,W] tensor")
     if tuple(int(x) for x in video.shape[:2]) != (1, H3_VIDEO_CHANNELS):
         raise ValueError(
-            "av_latent.video 前两维必须是 [1,24]，实际为 "
+            "The first two dimensions of av_latent.video must be [1,24]; got "
             f"{tuple(int(x) for x in video.shape[:2])}"
         )
     if not isinstance(audio, t.Tensor) or audio.ndim != 3:
-        raise ValueError("av_latent.audio 必须是 [2,32,T] tensor")
+        raise ValueError("av_latent.audio must be a [2,32,T] tensor")
     if tuple(int(x) for x in audio.shape[:2]) != (2, H3_AUDIO_ROW_WIDTH):
         raise ValueError(
-            "av_latent.audio 前两维必须是 [2,32]，实际为 "
+            "The first two dimensions of av_latent.audio must be [2,32]; got "
             f"{tuple(int(x) for x in audio.shape[:2])}"
         )
 
@@ -885,16 +887,16 @@ def _validate_generic_sampler_inputs(
         or latent_w % H3_VIDEO_PATCH_SIZE[2]
     ):
         raise ValueError(
-            "target video latent T/H/W 必须可被 patch size "
-            f"{H3_VIDEO_PATCH_SIZE} 整除"
+            "target video latent T/H/W must be divisible by patch size "
+            f"{H3_VIDEO_PATCH_SIZE}"
         )
     audio_t = int(audio.shape[2])
     if audio_t <= 0:
-        raise ValueError("target audio latent T 必须是正整数")
+        raise ValueError("target audio latent T must be a positive integer")
 
     target = clean_latent.get("target")
     if not isinstance(target, Mapping):
-        raise ValueError("av_latent 缺少 target mapping")
+        raise ValueError("av_latent is missing the target mapping")
     for key, actual in (
         ("video_latent_t", latent_t),
         ("video_latent_h", latent_h),
@@ -904,7 +906,7 @@ def _validate_generic_sampler_inputs(
         declared = target.get(key)
         if declared is not None and int(declared) != actual:
             raise ValueError(
-                f"target.{key}={declared} 与 latent tensor={actual} 不一致"
+                f"target.{key}={declared} does not match latent tensor={actual}"
             )
 
     packed_latent_shape = packed.get("latent_shape")
@@ -912,16 +914,16 @@ def _validate_generic_sampler_inputs(
         expected = (latent_t, latent_h, latent_w, H3_VIDEO_CHANNELS)
         if tuple(int(x) for x in packed_latent_shape) != expected:
             raise ValueError(
-                f"packed latent_shape 必须为 {expected}，"
-                f"实际为 {tuple(packed_latent_shape)}"
+                f"packed latent_shape must be {expected}; "
+                f"got {tuple(packed_latent_shape)}"
             )
     packed_audio_shape = packed.get("audio_shape")
     if packed_audio_shape is not None:
         expected_audio = (2, H3_AUDIO_ROW_WIDTH, audio_t)
         if tuple(int(x) for x in packed_audio_shape) != expected_audio:
             raise ValueError(
-                f"packed audio_shape 必须为 {expected_audio}，"
-                f"实际为 {tuple(packed_audio_shape)}"
+                f"packed audio_shape must be {expected_audio}; "
+                f"got {tuple(packed_audio_shape)}"
             )
 
     return clean_conditioning, clean_latent, video, audio
@@ -935,32 +937,32 @@ def _validate_conditional_layout(
     t = _require_torch()
     if int(branch.update_mask.numel()) != int(branch.img_pos.numel()):
         raise ValueError(
-            "update_mask length 必须等于 img_pos rows："
+            "update_mask length must equal img_pos rows: "
             f"{int(branch.update_mask.numel())} != {int(branch.img_pos.numel())}"
         )
     if int(branch.audio_update_mask.numel()) != int(branch.audio_pos.numel()):
         raise ValueError(
-            "audio_update_mask length 必须等于 audio_pos rows："
+            "audio_update_mask length must equal audio_pos rows: "
             f"{int(branch.audio_update_mask.numel())} != "
             f"{int(branch.audio_pos.numel())}"
         )
     if not bool(branch.update_mask.any()) and not allow_frozen_video:
-        raise ValueError("packed layout 至少需要一个 target video row")
+        raise ValueError("packed layout requires at least one target video row")
     if not bool(branch.audio_update_mask.any()):
-        raise ValueError("packed layout 至少需要一个 target audio row")
+        raise ValueError("packed layout requires at least one target audio row")
 
     for name, positions in (
         ("img_pos", branch.img_pos),
         ("audio_pos", branch.audio_pos),
     ):
         if positions.numel() == 0:
-            raise ValueError(f"{name} 不能为空")
+            raise ValueError(f"{name} cannot be empty")
         if bool((positions < 0).any()) or bool((positions >= branch.seq_len).any()):
-            raise ValueError(f"{name} 包含 seq_len 范围外的位置")
+            raise ValueError(f"{name} contains a position outside seq_len")
         if positions.numel() > 1 and not bool((positions[1:] > positions[:-1]).all()):
-            raise ValueError(f"{name} 必须严格递增且不能重复")
+            raise ValueError(f"{name} must be strictly increasing with no duplicates")
     if bool(t.isin(branch.img_pos, branch.audio_pos).any()):
-        raise ValueError("img_pos 与 audio_pos 不能重叠")
+        raise ValueError("img_pos and audio_pos cannot overlap")
 
     # Official FL2VA/Ref2VA layouts concatenate condition rows before target
     # rows inside each modality.  Enforcing this catches anchor-order drift
@@ -970,13 +972,13 @@ def _validate_conditional_layout(
         ("audio_update_mask", branch.audio_update_mask),
     ):
         target_indices = t.nonzero(mask).view(-1)
-        if target_indices.numel() == 0:  # V2A：视频全冻结
+        if target_indices.numel() == 0:  # V2A: video is fully frozen.
             if name == "update_mask" and allow_frozen_video:
                 continue
-            raise ValueError(f"{name} 至少需要一个 target row")
+            raise ValueError(f"{name} requires at least one target row")
         first_target = int(target_indices[0])
         if bool(mask[:first_target].any()) or not bool(mask[first_target:].all()):
-            raise ValueError(f"{name} 必须按 [condition rows | target rows] 排列")
+            raise ValueError(f"{name} must be ordered as [condition rows | target rows]")
 
 
 def _validate_condition_block_metadata(
@@ -998,7 +1000,7 @@ def _validate_condition_block_metadata(
     if raw_blocks is None and task == H3_TASK_T2VA:
         raw_blocks = ()
     if not isinstance(raw_blocks, Sequence) or isinstance(raw_blocks, (str, bytes)):
-        raise ValueError("packed.condition_blocks 必须是有序列表")
+        raise ValueError("packed.condition_blocks must be an ordered list")
     blocks = list(raw_blocks)
 
     raw_conditions = conditioning.get("conditions", [])
@@ -1007,18 +1009,18 @@ def _validate_condition_block_metadata(
     if not isinstance(raw_conditions, Sequence) or isinstance(
         raw_conditions, (str, bytes)
     ):
-        raise ValueError("conditioning.conditions 必须是有序列表")
+        raise ValueError("conditioning.conditions must be an ordered list")
     conditions = list(raw_conditions)
 
     if task == H3_TASK_T2VA:
         if blocks or conditions:
-            raise ValueError("T2VA 不允许 condition_blocks")
+            raise ValueError("T2VA does not allow condition_blocks")
     else:
         if not blocks:
-            raise ValueError(f"{task.upper()} packed.condition_blocks 不能为空")
+            raise ValueError(f"{task.upper()} packed.condition_blocks cannot be empty")
         if len(blocks) != len(conditions):
             raise ValueError(
-                "packed.condition_blocks 与 conditioning.conditions 数量不一致："
+                "packed.condition_blocks and conditioning.conditions counts do not match: "
                 f"{len(blocks)} != {len(conditions)}"
             )
 
@@ -1029,11 +1031,11 @@ def _validate_condition_block_metadata(
         allow_zero: bool = False,
     ) -> int:
         if isinstance(value, bool) or not isinstance(value, int):
-            raise ValueError(f"{path} 必须是整数")
+            raise ValueError(f"{path} must be an integer")
         invalid = value < 0 if allow_zero else value <= 0
         if invalid:
-            qualifier = "非负" if allow_zero else "正"
-            raise ValueError(f"{path} 必须是{qualifier}整数")
+            qualifier = "non-negative" if allow_zero else "positive"
+            raise ValueError(f"{path} must be a {qualifier} integer")
         return int(value)
 
     derived_visual_shapes: list[tuple[int, int, int]] = []
@@ -1043,7 +1045,7 @@ def _validate_condition_block_metadata(
     for index, raw_block in enumerate(blocks):
         path = f"packed.condition_blocks[{index}]"
         if not isinstance(raw_block, Mapping):
-            raise ValueError(f"{path} 必须是对象")
+            raise ValueError(f"{path} must be an object")
         condition_index = raw_block.get("condition_index")
         if (
             isinstance(condition_index, bool)
@@ -1051,14 +1053,14 @@ def _validate_condition_block_metadata(
             or condition_index != index
         ):
             raise ValueError(
-                f"{path}.condition_index 必须按请求顺序连续排列，"
-                f"期望 {index}，实际为 {condition_index!r}"
+                f"{path}.condition_index must be contiguous in request order; "
+                f"expected {index}, got {condition_index!r}"
             )
         kind = raw_block.get("kind")
         if not isinstance(kind, str):
-            raise ValueError(f"{path}.kind 必须是字符串")
+            raise ValueError(f"{path}.kind must be a string")
         if index >= len(conditions) or not isinstance(conditions[index], Mapping):
-            raise ValueError(f"conditioning.conditions[{index}] 必须是对象")
+            raise ValueError(f"conditioning.conditions[{index}] must be an object")
         if task == "fl2va":
             expected_kind = "keyframe"
         elif task == "ref2va":
@@ -1067,13 +1069,13 @@ def _validate_condition_block_metadata(
             expected_kind = None
         if kind != expected_kind:
             raise ValueError(
-                f"{path}.kind 顺序不匹配：期望 {expected_kind!r}，实际为 {kind!r}"
+                f"{path}.kind order mismatch: expected {expected_kind!r}, got {kind!r}"
             )
         expected_condition_index = conditions[index].get("condition_index")
         if expected_condition_index != condition_index:
             raise ValueError(
-                f"{path}.condition_index 与 conditioning.conditions[{index}] "
-                f"不一致：{condition_index!r} != {expected_condition_index!r}"
+                f"{path}.condition_index does not match conditioning.conditions[{index}]: "
+                f"{condition_index!r} != {expected_condition_index!r}"
             )
 
         visual_count = 0
@@ -1083,7 +1085,7 @@ def _validate_condition_block_metadata(
                 if declared_latent_t is not None and metadata_int(
                     declared_latent_t, f"{path}.latent_t"
                 ) != 1:
-                    raise ValueError(f"{path}.latent_t 必须为 1")
+                    raise ValueError(f"{path}.latent_t must be 1")
                 latent_t = 1
             else:
                 latent_t = metadata_int(
@@ -1092,7 +1094,7 @@ def _validate_condition_block_metadata(
             latent_h = metadata_int(raw_block.get("latent_h"), f"{path}.latent_h")
             latent_w = metadata_int(raw_block.get("latent_w"), f"{path}.latent_w")
             if latent_h % H3_VIDEO_PATCH_SIZE[1] or latent_w % H3_VIDEO_PATCH_SIZE[2]:
-                raise ValueError(f"{path} visual latent H/W 必须可被 2 整除")
+                raise ValueError(f"{path} visual latent H/W must be divisible by 2")
             visual_count = (
                 latent_t
                 * (latent_h // H3_VIDEO_PATCH_SIZE[1])
@@ -1105,7 +1107,7 @@ def _validate_condition_block_metadata(
             f"{path}.visual_rows_count",
             allow_zero=True,
         ) != visual_count:
-            raise ValueError(f"{path}.visual_rows_count 与 latent shape 不一致")
+            raise ValueError(f"{path}.visual_rows_count does not match the latent shape")
         visual_rows_per_block.append(visual_count)
 
         audio_count = 0
@@ -1119,27 +1121,27 @@ def _validate_condition_block_metadata(
                 derived_audio_t.append(ref_t)
                 audio_count = 2 * ref_t
         elif raw_block.get("ref_audio_t") not in (None, 0):
-            raise ValueError(f"{path} 不允许 ref_audio_t")
+            raise ValueError(f"{path} does not allow ref_audio_t")
         declared_audio_count = raw_block.get("audio_rows_count")
         if declared_audio_count is not None and metadata_int(
             declared_audio_count,
             f"{path}.audio_rows_count",
             allow_zero=True,
         ) != audio_count:
-            raise ValueError(f"{path}.audio_rows_count 与 ref_audio_t 不一致")
+            raise ValueError(f"{path}.audio_rows_count does not match ref_audio_t")
         audio_rows_per_block.append(audio_count)
 
     def strict_shapes(raw: Any) -> list[tuple[int, int, int]]:
         if raw is None:
             return []
         if not isinstance(raw, Sequence) or isinstance(raw, (str, bytes)):
-            raise ValueError("visual_condition_shapes 必须是有序列表")
+            raise ValueError("visual_condition_shapes must be an ordered list")
         output: list[tuple[int, int, int]] = []
         for index, shape in enumerate(raw):
             if not isinstance(shape, Sequence) or isinstance(shape, (str, bytes)):
-                raise ValueError(f"visual_condition_shapes[{index}] 必须是 (T,H,W)")
+                raise ValueError(f"visual_condition_shapes[{index}] must be (T,H,W)")
             if len(shape) != 3:
-                raise ValueError(f"visual_condition_shapes[{index}] 必须是 (T,H,W)")
+                raise ValueError(f"visual_condition_shapes[{index}] must be (T,H,W)")
             output.append(
                 tuple(
                     metadata_int(value, f"visual_condition_shapes[{index}][{axis}]")
@@ -1149,9 +1151,9 @@ def _validate_condition_block_metadata(
         return output
 
     supplied_shapes = strict_shapes(visual_condition_shapes)
-    if v2a:  # visual 来自 target 整段冻结，不经 condition_blocks
+    if v2a:  # Visual rows come from the fully frozen target segment, not condition_blocks.
         if derived_visual_shapes:
-            raise ValueError("V2A 要求 packed 无既有 visual condition_blocks")
+            raise ValueError("V2A requires packed data with no existing visual condition_blocks")
         expected_visual_rows = int((~branch.update_mask).sum())
         shape_rows = sum(
             lt * (lh // H3_VIDEO_PATCH_SIZE[1]) * (lw // H3_VIDEO_PATCH_SIZE[2])
@@ -1159,13 +1161,13 @@ def _validate_condition_block_metadata(
         )
         if shape_rows != expected_visual_rows:
             raise ValueError(
-                f"V2A visual_condition_shapes 推导 rows={shape_rows}，"
-                f"与 update_mask false rows={expected_visual_rows} 不一致"
+                f"V2A visual_condition_shapes imply rows={shape_rows}, which does not match "
+                f"update_mask false rows={expected_visual_rows}"
             )
     else:
         if supplied_shapes != derived_visual_shapes:
             raise ValueError(
-                "visual_condition_shapes 与 condition_blocks 的 visual 顺序/shape 不一致："
+                "visual_condition_shapes do not match the visual order/shape in condition_blocks: "
                 f"{supplied_shapes!r} != {derived_visual_shapes!r}"
             )
         expected_visual_rows = sum(visual_rows_per_block)
@@ -1179,10 +1181,10 @@ def _validate_condition_block_metadata(
             for index, value in enumerate(audio_reference_t)
         ]
     else:
-        raise ValueError("audio_reference_t 必须是有序列表")
+        raise ValueError("audio_reference_t must be an ordered list")
     if supplied_audio_t != derived_audio_t:
         raise ValueError(
-            "audio_reference_t 与 condition_blocks 的 audio 顺序/长度不一致："
+            "audio_reference_t does not match the audio order/length in condition_blocks: "
             f"{supplied_audio_t!r} != {derived_audio_t!r}"
         )
 
@@ -1194,17 +1196,17 @@ def _validate_condition_block_metadata(
         if expected == 0 and rows is None:
             continue
         if not isinstance(rows, t.Tensor) or rows.ndim != 2:
-            raise ValueError(f"{name} 必须是 rank-2 tensor")
+            raise ValueError(f"{name} must be a rank-2 tensor")
         if tuple(int(value) for value in rows.shape) != (expected, width):
             raise ValueError(
-                f"{name} shape={tuple(rows.shape)} 与 condition_blocks 推导的 "
-                f"{(expected, width)} 不一致"
+                f"{name} shape={tuple(rows.shape)} does not match condition_blocks-derived "
+                f"{(expected, width)}"
             )
     if expected_visual_rows != int((~branch.update_mask).sum()):
-        raise ValueError("condition_blocks visual rows 与 update_mask false rows 不一致")
+        raise ValueError("condition_blocks visual rows do not match update_mask false rows")
     if expected_audio_rows != int((~branch.audio_update_mask).sum()):
         raise ValueError(
-            "condition_blocks audio rows 与 audio_update_mask false rows 不一致"
+            "condition_blocks audio rows do not match audio_update_mask false rows"
         )
 
 
@@ -1213,8 +1215,8 @@ def _require_accelerated_sampler_device(device: Any) -> None:
 
     if device.type == "cpu":
         raise RuntimeError(
-            "MiniMax-H3 DiT 仍在 CPU。请使用 model loader 的 auto/cuda "
-            "模式并确认 ComfyUI 已成功装载模型；该 33B DiT 不支持 CPU 推理。"
+            "MiniMax-H3 DiT is still on CPU. Use the model loader's auto/cuda mode and "
+            "confirm that ComfyUI loaded the model successfully; this 33B DiT does not support CPU inference."
         )
 
 
@@ -1233,7 +1235,7 @@ def _prepare_accel_for_sample(
     cache_dit_warmup: int | None = None,
     velocity_stride: int | None = None,
 ):
-    """单卡加速：velocity-cache→runtime；cache-dit→挂接；off→None。无多卡门禁。"""
+    """Single-GPU acceleration: velocity-cache→runtime; cache-dit→attach; off→None. No multi-GPU gating."""
     from .h3_settings import ACCEL_OFF
     from .quality_profiles import resolve_accel_request
     from .cache_dit_integration import prepare_transformer_cache_dit
@@ -1263,16 +1265,16 @@ def _prepare_cache_dit_for_sample(transformer: Any, *, cache_dit: str | None, **
 
 
 def _log_accel_step_stats(velocity_rt: Any | None, *, total: int, dit_calls: int) -> None:
-    """采样结束后报告实际/理论 DiT 次数（accel 质量守护）。"""
+    """Report actual/theoretical DiT calls after sampling (acceleration quality guard)."""
     if velocity_rt is not None and hasattr(velocity_rt, "stats"):
         st = velocity_rt.stats()
         LOGGER.info(
-            "accel velocity-cache 完成：DiT %s/%s（cache_hits=%s taylor=%s stride=%s）近似非 GT",
+            "accel velocity-cache complete: DiT %s/%s (cache_hits=%s taylor=%s stride=%s), approximate and not ground truth",
             st.get("dit_calls", dit_calls), total, st.get("cache_hits", 0),
             st.get("taylorseer_steps", 0), st.get("stride", "?"),
         )
         return
-    LOGGER.info("采样完成：DiT forwards=%s/%s", dit_calls, total)
+    LOGGER.info("Sampling complete: DiT forwards=%s/%s", dit_calls, total)
 
 
 def _dit_velocity_for_step(
@@ -1288,7 +1290,7 @@ def _dit_velocity_for_step(
     step: int,
     dit_counter: list[int] | None = None,
 ):
-    """单步 velocity：可选 whole-step cache（只缓存 update rows，对齐上游）。"""
+    """Compute one velocity step with optional whole-step cache (update rows only, aligned with upstream)."""
     t = _require_torch()
     if velocity_rt is not None and not velocity_rt.refresh(step):
         mv, ma = velocity_rt.on_hit(step)
@@ -1300,12 +1302,12 @@ def _dit_velocity_for_step(
         velocity_video, velocity_audio = transformer(**kwargs)
     if tuple(velocity_video.shape) != tuple(video_rows.shape):
         raise ValueError(
-            "DiT video velocity shape 不匹配："
+            "DiT video velocity shape mismatch: "
             f"{tuple(velocity_video.shape)} vs {tuple(video_rows.shape)}"
         )
     if tuple(velocity_audio.shape) != tuple(audio_rows.shape):
         raise ValueError(
-            "DiT audio velocity shape 不匹配："
+            "DiT audio velocity shape mismatch: "
             f"{tuple(velocity_audio.shape)} vs {tuple(audio_rows.shape)}"
         )
     _require_finite_step_tensor(
@@ -1325,25 +1327,25 @@ def _dit_velocity_for_step(
 
 
 def _prepare_v2a_packed(packed: Mapping[str, Any], target_video: Any) -> dict[str, Any]:
-    """将 target 视频整段冻结为 visual cond（仅支持无既有 visual cond 的 layout）。"""
+    """Freeze the entire target video segment as visual conditioning (layouts with no existing visual conditioning only)."""
     t = _require_torch()
     out = dict(packed)
     mask = out["update_mask"].view(-1).to(t.bool)
     if bool((~mask).any()):
         raise ValueError(
-            "V2A（denoise_video=False）要求 packed 无既有 visual condition；"
-            "请使用 T2VA 布局或先分离条件"
+            "V2A (denoise_video=False) requires packed data with no existing visual condition; "
+            "use a T2VA layout or separate the conditions first"
         )
     if not bool(mask.any()):
-        raise ValueError("V2A 需要非空 video rows")
+        raise ValueError("V2A requires non-empty video rows")
     rows = patchify_video_latent(target_video.detach().to(dtype=t.float32).cpu())
     if int(rows.shape[0]) != int(mask.numel()):
         raise ValueError(
-            f"V2A clean video rows={int(rows.shape[0])} 与 update_mask={int(mask.numel())} 不一致"
+            f"V2A clean video rows={int(rows.shape[0])} does not match update_mask={int(mask.numel())}"
         )
-    # 非空视频：拒绝 Empty AV Latent 全零占位
+    # Non-empty video: reject the all-zero Empty AV Latent placeholder.
     if float(target_video.detach().abs().max()) <= 0.0:
-        raise ValueError("V2A 需要已编码的非空视频 latent（不能是 Empty AV Latent 零张量）")
+        raise ValueError("V2A requires an encoded, non-empty video latent (not an Empty AV Latent zero tensor)")
     out["update_mask"] = t.zeros_like(mask)
     out["visual_cond_rows"] = rows.contiguous()
     out["visual_condition_shapes"] = [(
@@ -1392,7 +1394,8 @@ def sample_h3(
     rows and shape metadata are used by default, but may be supplied explicitly
     for callers that keep VAE condition caches outside the packed structure.
 
-    ``denoise_video=False``（V2A）：视频 latent 作干净条件（timestep floor），只去噪音频。
+    ``denoise_video=False`` (V2A): use the video latent as a clean condition
+    (timestep floor) and denoise audio only.
     """
 
     t = _require_torch()
@@ -1420,7 +1423,7 @@ def sample_h3(
     )
     if sampler_mode not in SAMPLER_MODE_CHOICES:
         raise ValueError(
-            f"未知 sampler_mode: {sampler_mode!r}；可选 {SAMPLER_MODE_CHOICES}"
+            f"Unknown sampler_mode: {sampler_mode!r}; choices: {SAMPLER_MODE_CHOICES}"
         )
     res_multistep = sampler_mode == SAMPLER_MODE_RES_MULTISTEP
     visual_condition_noise = _condition_noise_level(
@@ -1431,8 +1434,8 @@ def sample_h3(
     )
     if not callable(transformer):
         raise TypeError(
-            "H3 transformer 不可调用；model loader 必须返回 "
-            "MiniMaxH3DiTModel 或可解析到该模型的 handle"
+            "H3 transformer is not callable; the model loader must return "
+            "MiniMaxH3DiTModel or a handle that resolves to it"
         )
     device = _model_device(transformer)
     _require_accelerated_sampler_device(device)
@@ -1455,7 +1458,7 @@ def sample_h3(
         _validate_conditional_layout(branch, allow_frozen_video=v2a)
 
     if v2a:
-        # 无 video target noise；形状校验用 0 行
+        # No video target noise; use zero rows for shape validation.
         target_video_rows = t.zeros(0, H3_VIDEO_ROW_WIDTH, dtype=t.float32, device=device)
     else:
         target_video_generator = t.Generator(device="cpu").manual_seed(seed)
@@ -1484,16 +1487,16 @@ def sample_h3(
         H3_VIDEO_ROW_WIDTH,
     ):
         raise ValueError(
-            "target video rows 与 packed update_mask 不一致："
-            f"noise={tuple(target_video_rows.shape)}，mask={expected_target_video}"
+            "target video rows do not match packed update_mask: "
+            f"noise={tuple(target_video_rows.shape)}, mask={expected_target_video}"
         )
     if tuple(int(x) for x in target_audio_rows.shape) != (
         expected_target_audio,
         H3_AUDIO_ROW_WIDTH,
     ):
         raise ValueError(
-            "target audio rows 与 packed audio_update_mask 不一致："
-            f"noise={tuple(target_audio_rows.shape)}，mask={expected_target_audio}"
+            "target audio rows do not match packed audio_update_mask: "
+            f"noise={tuple(target_audio_rows.shape)}, mask={expected_target_audio}"
         )
 
     if visual_condition_rows is None:
@@ -1531,11 +1534,11 @@ def sample_h3(
     if n_visual_condition:
         if visual_condition_rows is None:
             raise ValueError(
-                f"packed layout 有 {n_visual_condition} 个 visual condition rows，"
-                "但未提供 visual_cond_rows"
+                f"packed layout has {n_visual_condition} visual condition rows, "
+                "but visual_cond_rows was not provided"
             )
         if visual_condition_shapes is None:
-            raise ValueError("visual condition rows 缺少 visual_condition_shapes")
+            raise ValueError("visual condition rows are missing visual_condition_shapes")
         visual_anchor = noise_visual_condition_rows(
             visual_condition_rows,
             condition_shapes=visual_condition_shapes,
@@ -1548,25 +1551,25 @@ def sample_h3(
             H3_VIDEO_ROW_WIDTH,
         ):
             raise ValueError(
-                "visual condition rows 与 packed update_mask 的 false rows 不一致"
+                "visual condition rows do not match the false rows in packed update_mask"
             )
         visual_anchor = visual_anchor.to(
             device=device, dtype=t.float32
         ).clone()
     else:
         if visual_condition_rows is not None and int(visual_condition_rows.shape[0]):
-            raise ValueError("layout 没有 visual condition，但传入了非空 condition rows")
+            raise ValueError("The layout has no visual condition, but non-empty condition rows were provided")
         visual_anchor = None
 
     n_audio_reference = int((~branch.audio_update_mask).sum())
     if n_audio_reference:
         if audio_reference_rows is None:
             raise ValueError(
-                f"packed layout 有 {n_audio_reference} 个 audio reference rows，"
-                "但未提供 audio_ref_rows"
+                f"packed layout has {n_audio_reference} audio reference rows, "
+                "but audio_ref_rows was not provided"
             )
         if audio_reference_t is None:
-            raise ValueError("audio reference rows 缺少 audio_reference_t")
+            raise ValueError("audio reference rows are missing audio_reference_t")
         audio_anchor = noise_audio_reference_rows(
             audio_reference_rows,
             reference_audio_t=audio_reference_t,
@@ -1578,12 +1581,12 @@ def sample_h3(
             H3_AUDIO_ROW_WIDTH,
         ):
             raise ValueError(
-                "audio reference rows 与 audio_update_mask 的 false rows 不一致"
+                "audio reference rows do not match the false rows in audio_update_mask"
             )
         audio_anchor = audio_anchor.to(device=device, dtype=t.float32).clone()
     else:
         if audio_reference_rows is not None and int(audio_reference_rows.shape[0]):
-            raise ValueError("layout 没有 audio reference，但传入了非空 ref rows")
+            raise ValueError("The layout has no audio reference, but non-empty reference rows were provided")
         audio_anchor = None
 
     # Expand target noise into full modality-row order.  Clean cache tensors
@@ -1614,7 +1617,7 @@ def sample_h3(
         sigma_points=sigma_points, shift=audio_shift
     )
     if len(video_sigmas) != len(audio_sigmas):
-        raise RuntimeError("video/audio sigma schedule 长度不一致")
+        raise RuntimeError("video/audio sigma schedule lengths do not match")
     total = len(video_sigmas) - 1
     from .h3_settings import (
         OPT_ADALN_PRECOMPUTE,
@@ -1626,7 +1629,7 @@ def sample_h3(
     audio_sigma_tensor = t.tensor(audio_sigmas, dtype=t.float32, device=device)
     video_ratios = video_sigma_tensor[1:] / video_sigma_tensor[:-1]
     audio_ratios = audio_sigma_tensor[1:] / audio_sigma_tensor[:-1]
-    if OPT_PREBUILT_TIMESTEPS:  # 连续张量，循环只索引
+    if OPT_PREBUILT_TIMESTEPS:  # Contiguous tensors; the loop performs indexing only.
         video_timesteps = (1.0 - video_sigma_tensor[:-1]).contiguous()
         audio_timesteps = (1.0 - audio_sigma_tensor[:-1]).contiguous()
     else:
@@ -1643,11 +1646,12 @@ def sample_h3(
     fr_opts = dict(frame_rate_options) if isinstance(frame_rate_options, Mapping) else None
     adaln_fr = adaln_frame_rate(fr_opts)
     if adaln_fr is not None and getattr(transformer, "use_adaln_curves", False):
-        # 曲线表 checkpoint 没有 time embedder，帧率项无处可加；提前失败而不是
-        # 让第一步 forward 才报错（temporal_rope 分支不受影响）
+        # Curve-table checkpoints have no time embedder, so there is nowhere to add
+        # frame-rate conditioning. Fail early rather than at the first forward pass
+        # (the temporal_rope branch is unaffected).
         raise RuntimeError(
-            "曲线表 checkpoint 不支持 Frame Rate 节点的 adaln 选项（没有 time "
-            "embedder）；请关闭 adaln 只留 temporal_rope，或改用原版 DiT 权重"
+            "Curve-table checkpoints do not support the Frame Rate node's adaln option "
+            "(there is no time embedder). Disable adaln and keep temporal_rope only, or use the original DiT weights"
         )
     if OPT_ADALN_PRECOMPUTE:
         from .modulation_cache import (
@@ -1669,11 +1673,11 @@ def sample_h3(
                         frame_rate=adaln_fr,
                     )
                 except H3PrecomputeUnsupported as exc:
-                    # frame_rate 仍由 forward 的即时 TimeEmbedder 路径生效
-                    LOGGER.info("%s（不影响出图，仅少一项显存优化）", exc)
+                    # frame_rate still applies through the forward pass's immediate TimeEmbedder path.
+                    LOGGER.info("%s (output is unaffected; only one VRAM optimization is skipped)", exc)
                 else:
                     LOGGER.info(
-                        "AdaLN modulation 预计算完成：%d timesteps, %.2f GiB (%s), "
+                        "AdaLN modulation precomputation complete: %d timesteps, %.2f GiB (%s), "
                         "release_weights=%s, frame_rate=%s",
                         len(mod_ts), mod_cache.bytes() / 1024 ** 3,
                         str(mod_cache.blocks.device), OPT_ADALN_RELEASE_WEIGHTS, adaln_fr,
@@ -1683,22 +1687,24 @@ def sample_h3(
     if res_multistep:
         from .h3_settings import ACCEL_OFF
         if requested_accel is not None and str(requested_accel) != ACCEL_OFF:
-            # accel 档位按 euler-50 标定。二阶采样步数少，跳步的余量也小：实测
-            # 21 点叠加 stride 4 只剩 7 次 DiT，画面出现振铃与色带；31 点叠加
-            # stride 2 才回到可用（16 次 DiT / PSNR 24.2dB），但那已不比
-            # euler-50 + stride 4（14 次 / 24.1dB）划算——两种加速在争同一份
-            # 预算，跳掉的步越多，二阶的每步精度优势越没机会兑现。
-            # 因此默认关闭，但允许调用方显式承担风险打开。
+            # Acceleration tiers are calibrated for euler-50. Second-order sampling
+            # uses fewer steps and has less room to skip: measured at 21 points,
+            # stride 4 leaves only 7 DiT calls and introduces ringing/banding. At 31
+            # points, stride 2 becomes usable again (16 DiT calls / PSNR 24.2dB), but
+            # is no cheaper than euler-50 + stride 4 (14 calls / 24.1dB). Both
+            # accelerations compete for the same budget; the more steps skipped, the
+            # less opportunity second-order per-step accuracy has to pay off. Keep it
+            # disabled by default while allowing callers to opt into the risk explicitly.
             if allow_accel_with_res_multistep:
                 LOGGER.warning(
-                    "res_multistep 叠加 accel=%s：未标定组合，建议同时调高 "
-                    "sigma_points（21 点下会明显劣化）",
+                    "res_multistep combined with accel=%s is uncalibrated; increase "
+                    "sigma_points at the same time (quality degrades noticeably at 21 points)",
                     requested_accel,
                 )
             else:
                 LOGGER.info(
-                    "res_multistep 模式强制 accel=off（请求为 %s；profile 按 "
-                    "euler-50 标定，如需叠加请打开 allow_accel_with_res_multistep）",
+                    "res_multistep forces accel=off (requested %s; profiles are calibrated for "
+                    "euler-50; enable allow_accel_with_res_multistep to combine them)",
                     requested_accel,
                 )
                 requested_accel = ACCEL_OFF
@@ -1727,7 +1733,7 @@ def sample_h3(
     video_update = branch.update_mask_dev
     audio_update = branch.audio_update_mask_dev
     dit_counter = [0]
-    # res_multistep 的上一步 denoised 历史（每流各一份 target-rows 张量）
+    # Previous denoised history for res_multistep (one target-row tensor per stream).
     old_denoised_video: Any = None
     old_denoised_audio: Any = None
     with tel.stage("denoise_loop"):
@@ -1762,7 +1768,7 @@ def sample_h3(
                     dit_counter=dit_counter,
                 )
 
-                if expected_target_video:  # V2A 无 video target，跳过视频 Euler
+                if expected_target_video:  # V2A has no video target; skip video Euler.
                     cur_video = video_rows[video_update]
                     denoised_video = rf_velocity_to_x0(
                         cur_video, mv_video, video_timesteps[step]
@@ -1792,7 +1798,7 @@ def sample_h3(
                         next_video_target, task=task, step=step + 1,
                         modality="video", phase="target latent",
                     )
-                    if OPT_INPLACE_EULER_UPDATE:  # 只写 target；velocity cache 持有独立 mv
+                    if OPT_INPLACE_EULER_UPDATE:  # Write target only; velocity cache owns an independent mv.
                         video_rows.index_copy_(0, branch.update_row_idx, next_video_target)
                     else:
                         next_video_rows = video_rows.clone()
@@ -1840,7 +1846,7 @@ def sample_h3(
     _log_accel_step_stats(velocity_rt, total=total, dit_calls=dit_counter[0])
     # Never leak condition rows into the native target latents sent to VAE.
     target_audio_rows = audio_rows[audio_update].to(device="cpu")
-    if v2a:  # 回传干净输入视频，不从空 target mask unpatchify
+    if v2a:  # Return the clean input video instead of unpatchifying an empty target mask.
         video = target_video.detach().to(device="cpu", dtype=t.float32).contiguous()
     else:
         video = unpatchify_video_rows(
@@ -1886,7 +1892,7 @@ def sample_h3(
 
 
 def sample_t2va(**kwargs: Any) -> dict[str, Any]:
-    """V1 T2VA 入口；统一委托 sample_h3，避免双套 denoise 循环。"""
+    """V1 T2VA entry point; delegate to sample_h3 to avoid duplicate denoising loops."""
     return sample_h3(**kwargs)
 
 __all__ = [n for n in list(globals()) if not n.startswith("__")]

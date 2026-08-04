@@ -197,11 +197,11 @@ def normalize_task(task: Any) -> str:
     """Return one canonical public task name."""
 
     if not isinstance(task, str) or not task.strip():
-        raise H3ContractError("MiniMax-H3 task 必须是非空字符串")
+        raise H3ContractError("MiniMax-H3 task must be a non-empty string")
     normalized = task.strip().lower()
     if normalized not in H3_TASK_PARTITIONS:
         raise H3ContractError(
-            f"未知 MiniMax-H3 task {task!r}；可识别值为 {', '.join(H3_TASKS)}"
+            f"Unknown MiniMax-H3 task {task!r}; recognized values: {', '.join(H3_TASKS)}"
         )
     return normalized
 
@@ -217,18 +217,18 @@ def validate_task_partition(task: Any, partition: Any) -> str:
 
     normalized_task = normalize_task(task)
     if not isinstance(partition, str) or not partition.strip():
-        raise H3ContractError("MiniMax-H3 partition 必须是非空字符串")
+        raise H3ContractError("MiniMax-H3 partition must be a non-empty string")
     normalized_partition = partition.strip().lower()
     if normalized_partition not in H3_PARTITIONS:
         raise H3ContractError(
-            f"未知 MiniMax-H3 partition {partition!r}；可识别值为 "
+            f"Unknown MiniMax-H3 partition {partition!r}; recognized values: "
             f"{', '.join(H3_PARTITIONS)}"
         )
     expected = partition_for_task(normalized_task)
     if normalized_partition != expected:
         raise H3ContractError(
-            f"task {normalized_task!r} 必须使用 {expected!r} 权重分区，"
-            f"实际为 {normalized_partition!r}"
+            f"task {normalized_task!r} must use the {expected!r} weight partition; "
+            f"got {normalized_partition!r}"
         )
     return normalized_partition
 
@@ -241,29 +241,29 @@ def require_t2va(task: str) -> str:
         return normalized
     if normalized in (H3_TASK_FL2VA, H3_TASK_REF2VA):
         raise H3TaskNotImplementedError(
-            "旧版 MiniMax-H3 v1 数据合同只接受 T2VA；"
-            f"{normalized.upper()} 请使用对应的 v2 Target、Encode、"
-            "Empty AV Latent 和 Dual Sigma Sampler 节点。"
+            "The legacy MiniMax-H3 v1 data contract accepts T2VA only; "
+            f"for {normalized.upper()}, use the corresponding v2 Target, Encode, "
+            "Empty AV Latent, and Dual Sigma Sampler nodes."
         )
     raise H3ContractError(
-        f"未知 MiniMax-H3 task {task!r}；可识别值为 {', '.join(H3_TASKS)}"
+        f"Unknown MiniMax-H3 task {task!r}; recognized values: {', '.join(H3_TASKS)}"
     )
 
 
 def _finite_float(value: Any, name: str, *, positive: bool = False) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise H3ContractError(f"{name} 必须是数字")
+        raise H3ContractError(f"{name} must be numeric")
     out = float(value)
     if not math.isfinite(out):
-        raise H3ContractError(f"{name} 必须是有限数字")
+        raise H3ContractError(f"{name} must be finite")
     if positive and out <= 0.0:
-        raise H3ContractError(f"{name} 必须大于 0")
+        raise H3ContractError(f"{name} must be greater than 0")
     return out
 
 
 def _positive_int(value: Any, name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-        raise H3ContractError(f"{name} 必须是正整数")
+        raise H3ContractError(f"{name} must be a positive integer")
     return int(value)
 
 
@@ -289,7 +289,7 @@ def frame_count_from_video_latent_t(latent_t: int) -> int:
     if latent_t == 1:
         return 1
     if latent_t < 2 or (latent_t - 2) % 5:
-        raise H3ContractError("MiniMax-H3 video latent T 必须为 1 或满足 5n+2")
+        raise H3ContractError("MiniMax-H3 video latent T must be 1 or satisfy 5n+2")
     return 17 * ((latent_t - 2) // 5) + 5
 
 
@@ -308,7 +308,7 @@ def parse_aspect_ratio(value: str) -> tuple[int, int]:
         return (16, 9)
     if value not in H3_FINITE_ASPECT_RATIOS:
         raise H3ContractError(
-            f"不支持的 aspect_ratio {value!r}；可选值：{', '.join(H3_ASPECT_RATIOS)}"
+            f"Unsupported aspect_ratio {value!r}; choices: {', '.join(H3_ASPECT_RATIOS)}"
         )
     width, height = value.split(":", 1)
     return int(width), int(height)
@@ -329,8 +329,8 @@ def resolve_spatial_shape(
     ratio = source_width / source_height
     if not H3_MIN_ASPECT_RATIO <= ratio <= H3_MAX_ASPECT_RATIO:
         raise H3ContractError(
-            "MiniMax-H3 宽高比必须在 1:4 到 4:1 之间，"
-            f"实际为 {source_width:g}:{source_height:g}"
+            "MiniMax-H3 aspect ratio must be between 1:4 and 4:1; "
+            f"got {source_width:g}:{source_height:g}"
         )
 
     if ratio >= 1.0:
@@ -375,20 +375,20 @@ def resolve_explicit_spatial_shape(width: int, height: int) -> dict[str, Any]:
         or resolved_height % H3_CANVAS_MULTIPLE
     ):
         raise H3ContractError(
-            f"width/height 必须按 {H3_CANVAS_MULTIPLE} 对齐，"
-            f"实际为 {resolved_width}x{resolved_height}"
+            f"width/height must be aligned to {H3_CANVAS_MULTIPLE}; "
+            f"got {resolved_width}x{resolved_height}"
         )
     ratio = resolved_width / resolved_height
     if not H3_MIN_ASPECT_RATIO <= ratio <= H3_MAX_ASPECT_RATIO:
         raise H3ContractError(
-            "MiniMax-H3 宽高比必须在 1:4 到 4:1 之间，"
-            f"实际为 {resolved_width}:{resolved_height}"
+            "MiniMax-H3 aspect ratio must be between 1:4 and 4:1; "
+            f"got {resolved_width}:{resolved_height}"
         )
     pixels = resolved_width * resolved_height
     if pixels > H3_MAX_PIXELS:
         raise H3ContractError(
-            f"显式分辨率最多允许 {H3_MAX_PIXELS} 像素，"
-            f"实际为 {resolved_width}x{resolved_height}={pixels}"
+            f"Explicit resolution allows at most {H3_MAX_PIXELS} pixels; "
+            f"got {resolved_width}x{resolved_height}={pixels}"
         )
     return {
         "geometry": "explicit_v1",
@@ -418,15 +418,15 @@ def resolve_t2va_target(
     )
     if not H3_MIN_DURATION_SECONDS <= duration <= H3_MAX_DURATION_SECONDS:
         raise H3ContractError(
-            "duration_seconds 必须在 "
-            f"{H3_MIN_DURATION_SECONDS:g} 到 {H3_MAX_DURATION_SECONDS:g} 秒之间"
+            "duration_seconds must be between "
+            f"{H3_MIN_DURATION_SECONDS:g} and {H3_MAX_DURATION_SECONDS:g} seconds"
         )
     frame_count = align_frame_count(int(round(duration * H3_FPS)))
     aligned_duration = frame_count / H3_FPS
     explicit_width = None if width in (None, 0) else width
     explicit_height = None if height in (None, 0) else height
     if (explicit_width is None) != (explicit_height is None):
-        raise H3ContractError("显式 width 和 height 必须同时填写，或同时设为 0 使用宽高比")
+        raise H3ContractError("Explicit width and height must both be set, or both be 0 to use the aspect ratio")
     if explicit_width is None:
         ratio_width, ratio_height = parse_aspect_ratio(str(aspect_ratio))
         shape = resolve_spatial_shape(ratio_width, ratio_height)
@@ -458,8 +458,8 @@ def _validate_duration_seconds(value: Any, *, allow_none: bool = False) -> float
     duration = _finite_float(value, "duration_seconds", positive=True)
     if not H3_MIN_DURATION_SECONDS <= duration <= H3_MAX_DURATION_SECONDS:
         raise H3ContractError(
-            "duration_seconds 必须在 "
-            f"{H3_MIN_DURATION_SECONDS:g} 到 {H3_MAX_DURATION_SECONDS:g} 秒之间"
+            "duration_seconds must be between "
+            f"{H3_MIN_DURATION_SECONDS:g} and {H3_MAX_DURATION_SECONDS:g} seconds"
         )
     return duration
 
@@ -494,21 +494,21 @@ def _apply_video_spatial_latents(shape: dict[str, Any]) -> dict[str, Any]:
 
 def _parse_flexible_aspect_ratio(value: Any) -> tuple[int, int]:
     if not isinstance(value, str) or not value:
-        raise H3ContractError("aspect_ratio 必须是非空字符串")
+        raise H3ContractError("aspect_ratio must be a non-empty string")
     parts = value.split(":")
     if len(parts) != 2:
         raise H3ContractError(
-            f"FL2VA aspect_ratio 必须是 'W:H' 或 'auto'，实际为 {value!r}"
+            f"FL2VA aspect_ratio must be 'W:H' or 'auto'; got {value!r}"
         )
     try:
         width, height = int(parts[0]), int(parts[1])
     except ValueError as exc:
         raise H3ContractError(
-            f"FL2VA aspect_ratio 必须使用整数 W:H，实际为 {value!r}"
+            f"FL2VA aspect_ratio must use integer W:H values; got {value!r}"
         ) from exc
     if width <= 0 or height <= 0:
         raise H3ContractError(
-            f"FL2VA aspect_ratio 两项都必须大于 0，实际为 {value!r}"
+            f"Both FL2VA aspect_ratio values must be greater than 0; got {value!r}"
         )
     return width, height
 
@@ -521,7 +521,7 @@ def _display_metadata(
     if display_width is None and display_height is None:
         return {}
     if display_width is None or display_height is None:
-        raise H3ContractError("display_width/display_height 必须同时提供")
+        raise H3ContractError("display_width/display_height must be provided together")
     return {
         "display_width": _positive_int(display_width, "display_width"),
         "display_height": _positive_int(display_height, "display_height"),
@@ -577,11 +577,11 @@ def make_fl2va_keyframe(
     """Create one FL2VA endpoint condition without resolving ``-1`` early."""
 
     if image is None:
-        raise H3ContractError("FL2VA keyframe image 不能为空")
+        raise H3ContractError("FL2VA keyframe image cannot be empty")
     if isinstance(frame_index, bool) or not isinstance(frame_index, int):
-        raise H3ContractError("FL2VA frame_index 必须是整数")
+        raise H3ContractError("FL2VA frame_index must be an integer")
     if frame_index not in (0, -1):
-        raise H3ContractError("FL2VA frame_index 只允许 0（首帧）或 -1（尾帧）")
+        raise H3ContractError("FL2VA frame_index allows only 0 (first frame) or -1 (last frame)")
     material: H3ConditionMaterialV2 = {
         "schema": H3_CONDITION_MATERIAL_SCHEMA_V2,
         "task": H3_TASK_FL2VA,
@@ -607,27 +607,27 @@ def validate_fl2va_keyframes(
     """Validate the three official endpoint signatures, preserving order."""
 
     if not isinstance(keyframes, Sequence) or isinstance(keyframes, (str, bytes)):
-        raise H3ContractError("FL2VA keyframes 必须是列表")
+        raise H3ContractError("FL2VA keyframes must be a list")
     if not 1 <= len(keyframes) <= 2:
-        raise H3ContractError("FL2VA 必须提供 1 或 2 张 keyframe")
+        raise H3ContractError("FL2VA requires one or two keyframes")
     clean: list[H3ConditionMaterialV2] = []
     for index, raw in enumerate(keyframes):
         path = f"keyframes[{index}]"
         if not isinstance(raw, Mapping):
-            raise H3ContractError(f"{path} 必须是对象")
+            raise H3ContractError(f"{path} must be an object")
         if raw.get("schema") != H3_CONDITION_MATERIAL_SCHEMA_V2:
             raise H3ContractError(
-                f"{path}.schema 必须为 {H3_CONDITION_MATERIAL_SCHEMA_V2!r}"
+                f"{path}.schema must be {H3_CONDITION_MATERIAL_SCHEMA_V2!r}"
             )
         if normalize_task(raw.get("task")) != H3_TASK_FL2VA:
-            raise H3ContractError(f"{path}.task 必须为 'fl2va'")
+            raise H3ContractError(f"{path}.task must be 'fl2va'")
         if raw.get("role") != H3_CONDITION_ROLE_KEYFRAME or raw.get("type") != "image":
-            raise H3ContractError(f"{path} 必须是 image/keyframe")
+            raise H3ContractError(f"{path} must be image/keyframe")
         if raw.get("media") is None:
-            raise H3ContractError(f"{path}.media 不能为空")
+            raise H3ContractError(f"{path}.media cannot be empty")
         frame_index = raw.get("frame_index")
         if isinstance(frame_index, bool) or not isinstance(frame_index, int):
-            raise H3ContractError(f"{path}.frame_index 必须是整数")
+            raise H3ContractError(f"{path}.frame_index must be an integer")
         entry = dict(raw)
         entry["condition_index"] = index
         clean.append(entry)
@@ -635,13 +635,13 @@ def validate_fl2va_keyframes(
     signature = tuple(int(item["frame_index"]) for item in clean)
     if signature not in H3_FL2VA_KEYFRAME_SIGNATURES:
         raise H3ContractError(
-            "FL2VA keyframe 顺序只允许 [0]、[-1] 或 [0,-1]，"
-            f"实际为 {list(signature)!r}"
+            "FL2VA keyframe order allows only [0], [-1], or [0,-1]; "
+            f"got {list(signature)!r}"
         )
     if frame_count is not None:
         aligned_frames = _positive_int(frame_count, "frame_count")
         if aligned_frames % 17 != 5:
-            raise H3ContractError("FL2VA frame_count 必须已经对齐到 17n+5")
+            raise H3ContractError("FL2VA frame_count must already be aligned to 17n+5")
         for entry in clean:
             semantic = int(entry["frame_index"])
             entry["resolved_frame_index"] = (
@@ -656,7 +656,7 @@ def _validate_material_id(value: Any) -> str:
         or len(value) != 32
         or any(character not in "0123456789abcdef" for character in value)
     ):
-        raise H3ContractError("material_id 必须是 32 位小写十六进制字符串")
+        raise H3ContractError("material_id must be a 32-character lowercase hexadecimal string")
     return value
 
 
@@ -664,18 +664,18 @@ def material_compatibility_fingerprint(material: Mapping[str, Any]) -> str:
     """Return the stable identity of one Ref2VA descriptor instance."""
 
     if not isinstance(material, Mapping):
-        raise H3ContractError("Ref2VA material 必须是对象")
+        raise H3ContractError("Ref2VA material must be an object")
     if material.get("schema") != H3_CONDITION_MATERIAL_SCHEMA_V2:
-        raise H3ContractError("Ref2VA material schema 无效")
+        raise H3ContractError("Ref2VA material schema is invalid")
     task = normalize_task(material.get("task"))
     if task != H3_TASK_REF2VA:
-        raise H3ContractError("material fingerprint 仅用于 Ref2VA reference")
+        raise H3ContractError("material fingerprint is only for a Ref2VA reference")
     role = material.get("role")
     if role != H3_CONDITION_ROLE_REFERENCE:
-        raise H3ContractError("Ref2VA material role 必须为 reference")
+        raise H3ContractError("Ref2VA material role must be reference")
     material_type = material.get("type")
     if material_type not in H3_REF2VA_REFERENCE_TYPES:
-        raise H3ContractError("Ref2VA material type 无效")
+        raise H3ContractError("Ref2VA material type is invalid")
     material_id = _validate_material_id(material.get("material_id"))
     payload = json.dumps(
         {
@@ -705,21 +705,21 @@ def make_ref2va_reference(
 
     if reference_type not in H3_REF2VA_REFERENCE_TYPES:
         raise H3ContractError(
-            f"Ref2VA reference type 必须是 {H3_REF2VA_REFERENCE_TYPES!r}，"
-            f"实际为 {reference_type!r}"
+            f"Ref2VA reference type must be {H3_REF2VA_REFERENCE_TYPES!r}; "
+            f"got {reference_type!r}"
         )
     if media is None:
-        raise H3ContractError("Ref2VA reference media 不能为空")
+        raise H3ContractError("Ref2VA reference media cannot be empty")
     if has_audio is not None and not isinstance(has_audio, bool):
-        raise H3ContractError("has_audio 必须是 bool 或 None")
+        raise H3ContractError("has_audio must be bool or None")
     if reference_type == "image" and (
         has_audio is not None or audio_duration_seconds is not None
     ):
-        raise H3ContractError("Ref2VA image reference 不能携带音频元数据")
+        raise H3ContractError("A Ref2VA image reference cannot carry audio metadata")
     if reference_type == "audio" and has_audio is False:
-        raise H3ContractError("Ref2VA audio reference 必须包含音频")
+        raise H3ContractError("A Ref2VA audio reference must contain audio")
     if reference_type == "video_audio" and has_audio is False:
-        raise H3ContractError("Ref2VA video_audio reference 必须包含音轨")
+        raise H3ContractError("A Ref2VA video_audio reference must contain an audio track")
 
     material: H3ConditionMaterialV2 = {
         "schema": H3_CONDITION_MATERIAL_SCHEMA_V2,
@@ -740,7 +740,7 @@ def make_ref2va_reference(
             )
         )
     elif display_width is not None or display_height is not None:
-        raise H3ContractError("Ref2VA audio reference 不能携带画面尺寸")
+        raise H3ContractError("A Ref2VA audio reference cannot carry visual dimensions")
     if reference_type == "audio":
         material["has_audio"] = True
     elif has_audio is not None:
@@ -752,7 +752,7 @@ def make_ref2va_reference(
             positive=True,
         )
         if material.get("has_audio") is False:
-            raise H3ContractError("静音 reference 不能携带 audio_duration_seconds")
+            raise H3ContractError("A silent reference cannot carry audio_duration_seconds")
         material["audio_duration_seconds"] = duration
     return material
 
@@ -763,63 +763,63 @@ def validate_ref2va_references(references: Any) -> list[H3ConditionMaterialV2]:
     if isinstance(references, Mapping):
         if references.get("schema") != H3_REFERENCE_LIST_SCHEMA_V2:
             raise H3ContractError(
-                f"references.schema 必须为 {H3_REFERENCE_LIST_SCHEMA_V2!r}"
+                f"references.schema must be {H3_REFERENCE_LIST_SCHEMA_V2!r}"
             )
         if normalize_task(references.get("task")) != H3_TASK_REF2VA:
-            raise H3ContractError("references.task 必须为 'ref2va'")
+            raise H3ContractError("references.task must be 'ref2va'")
         validate_task_partition(H3_TASK_REF2VA, references.get("partition"))
         materials = references.get("materials")
     else:
         materials = references
     if not isinstance(materials, Sequence) or isinstance(materials, (str, bytes)):
-        raise H3ContractError("Ref2VA references 必须是有序列表")
+        raise H3ContractError("Ref2VA references must be an ordered list")
     if len(materials) == 0:
-        raise H3ContractError("Ref2VA 至少需要一个 reference")
+        raise H3ContractError("Ref2VA requires at least one reference")
 
     clean: list[H3ConditionMaterialV2] = []
     seen_material_fingerprints: set[str] = set()
     for index, raw in enumerate(materials):
         path = f"references[{index}]"
         if not isinstance(raw, Mapping):
-            raise H3ContractError(f"{path} 必须是对象")
+            raise H3ContractError(f"{path} must be an object")
         if raw.get("schema") != H3_CONDITION_MATERIAL_SCHEMA_V2:
             raise H3ContractError(
-                f"{path}.schema 必须为 {H3_CONDITION_MATERIAL_SCHEMA_V2!r}"
+                f"{path}.schema must be {H3_CONDITION_MATERIAL_SCHEMA_V2!r}"
             )
         if normalize_task(raw.get("task")) != H3_TASK_REF2VA:
-            raise H3ContractError(f"{path}.task 必须为 'ref2va'")
+            raise H3ContractError(f"{path}.task must be 'ref2va'")
         if raw.get("role") != H3_CONDITION_ROLE_REFERENCE:
-            raise H3ContractError(f"{path}.role 必须为 'reference'")
+            raise H3ContractError(f"{path}.role must be 'reference'")
         reference_type = raw.get("type")
         if reference_type not in H3_REF2VA_REFERENCE_TYPES:
             raise H3ContractError(
-                f"{path}.type 必须是 {H3_REF2VA_REFERENCE_TYPES!r}"
+                f"{path}.type must be {H3_REF2VA_REFERENCE_TYPES!r}"
             )
         if raw.get("media") is None:
-            raise H3ContractError(f"{path}.media 不能为空")
+            raise H3ContractError(f"{path}.media cannot be empty")
         expected_material_fingerprint = material_compatibility_fingerprint(raw)
         if raw.get("material_fingerprint") != expected_material_fingerprint:
             raise H3ContractError(
-                f"{path}.material_fingerprint 与 descriptor identity 不一致"
+                f"{path}.material_fingerprint does not match the descriptor identity"
             )
         if expected_material_fingerprint in seen_material_fingerprints:
             raise H3ContractError(
-                "Ref2VA references 不能重复使用同一 material identity"
+                "Ref2VA references cannot reuse the same material identity"
             )
         seen_material_fingerprints.add(expected_material_fingerprint)
         if raw.get("frame_index") is not None:
-            raise H3ContractError(f"{path}.frame_index 不允许用于 Ref2VA")
+            raise H3ContractError(f"{path}.frame_index is not allowed for Ref2VA")
         has_audio = raw.get("has_audio")
         if has_audio is not None and not isinstance(has_audio, bool):
-            raise H3ContractError(f"{path}.has_audio 必须是 bool")
+            raise H3ContractError(f"{path}.has_audio must be bool")
         if reference_type == "image" and (
             has_audio is not None or raw.get("audio_duration_seconds") is not None
         ):
-            raise H3ContractError(f"{path} image reference 不能携带音频元数据")
+            raise H3ContractError(f"{path} image reference cannot carry audio metadata")
         if reference_type == "audio" and has_audio is False:
-            raise H3ContractError(f"{path} audio reference 必须包含音频")
+            raise H3ContractError(f"{path} audio reference must contain audio")
         if reference_type == "video_audio" and has_audio is False:
-            raise H3ContractError(f"{path} video_audio reference 必须包含音轨")
+            raise H3ContractError(f"{path} video_audio reference must contain an audio track")
         entry = dict(raw)
         entry["condition_index"] = index
         if reference_type == "audio":
@@ -831,7 +831,7 @@ def validate_ref2va_references(references: Any) -> list[H3ConditionMaterialV2]:
                 positive=True,
             )
             if entry.get("has_audio") is False:
-                raise H3ContractError(f"{path} 静音 reference 不能携带音频时长")
+                raise H3ContractError(f"{path} silent reference cannot carry an audio duration")
         clean.append(entry)
     return clean
 
@@ -926,7 +926,7 @@ def resolve_fl2va_target_v2(
     explicit_width = None if width in (None, 0) else width
     explicit_height = None if height in (None, 0) else height
     if (explicit_width is None) != (explicit_height is None):
-        raise H3ContractError("显式 width 和 height 必须同时填写，或同时设为 0")
+        raise H3ContractError("Explicit width and height must both be set, or both be 0")
     if explicit_width is not None:
         shape = resolve_explicit_spatial_shape(explicit_width, explicit_height)
         shape["geometry_source"] = "explicit_target"
@@ -984,15 +984,15 @@ def _ref2va_duration_source(
     ]
     if not sources:
         raise H3ContractError(
-            "Ref2VA 自动时长需要且只允许一个 audio-bearing reference"
+            "Ref2VA automatic duration requires exactly one audio-bearing reference"
         )
     if len(sources) > 1:
         raise H3ContractError(
-            "Ref2VA 存在多个 audio-bearing references 时必须显式填写时长"
+            "Ref2VA requires an explicit duration when multiple audio-bearing references are present"
         )
     source = sources[0]
     if source.get("has_audio") is False:
-        raise H3ContractError("静音 video 不能提供 Ref2VA 自动目标时长")
+        raise H3ContractError("A silent video cannot provide a Ref2VA automatic target duration")
     return source
 
 
@@ -1013,14 +1013,14 @@ def resolve_ref2va_target_v2(
 
     if aspect_ratio not in H3_ASPECT_RATIOS:
         raise H3ContractError(
-            "Ref2VA aspect_ratio 只允许 'auto' 或上游六个比例桶："
+            "Ref2VA aspect_ratio allows only 'auto' or the six upstream aspect buckets: "
             f"{', '.join(H3_FINITE_ASPECT_RATIOS)}"
         )
     explicit_width = None if width in (None, 0) else width
     explicit_height = None if height in (None, 0) else height
     if (explicit_width is None) != (explicit_height is None):
         raise H3ContractError(
-            "width 和 height 必须同时填写，或同时设为 0 使用 aspect_ratio"
+            "width and height must both be set, or both be 0 to use aspect_ratio"
         )
     if explicit_width is None:
         ratio = "16:9" if aspect_ratio == "auto" else aspect_ratio
@@ -1054,7 +1054,7 @@ def resolve_ref2va_target_v2(
     if duration_seconds is None:
         if not clean_references:
             raise H3ContractError(
-                "Ref2VA 省略 duration_seconds 时必须提供 references"
+                "Ref2VA must provide references when duration_seconds is omitted"
             )
         source = _ref2va_duration_source(clean_references)
         target["requested_duration_seconds"] = None
@@ -1125,31 +1125,31 @@ def validate_target_v2(
     """Validate target provenance, exact 17n+5 timing, and bounded geometry."""
 
     if not isinstance(target, Mapping):
-        raise H3ContractError("target v2 必须是对象")
+        raise H3ContractError("target v2 must be an object")
     if target.get("schema") != H3_TARGET_SCHEMA_V2:
         raise H3ContractError(
-            f"target schema 不匹配：期望 {H3_TARGET_SCHEMA_V2!r}"
+            f"target schema mismatch: expected {H3_TARGET_SCHEMA_V2!r}"
         )
     clean: H3TargetV2 = dict(target)
     task = normalize_task(clean.get("task"))
     if expected_task is not None and task != normalize_task(expected_task):
         raise H3ContractError(
-            f"target.task={task!r} 与工作流 task={normalize_task(expected_task)!r} 不一致"
+            f"target.task={task!r} does not match workflow task={normalize_task(expected_task)!r}"
         )
     clean["task"] = task
     clean["partition"] = validate_task_partition(task, clean.get("partition"))
     fps = _positive_int(clean.get("fps"), "target.fps")
     if fps != H3_FPS:
-        raise H3ContractError(f"target.fps 必须为 {H3_FPS}")
+        raise H3ContractError(f"target.fps must be {H3_FPS}")
     clean["fps"] = fps
 
     aspect_ratio = clean.get("requested_aspect_ratio")
     if not isinstance(aspect_ratio, str) or not aspect_ratio:
-        raise H3ContractError("target.requested_aspect_ratio 必须是非空字符串")
+        raise H3ContractError("target.requested_aspect_ratio must be a non-empty string")
     if task in (H3_TASK_T2VA, H3_TASK_REF2VA):
         if aspect_ratio not in H3_ASPECT_RATIOS:
             raise H3ContractError(
-                f"{task} aspect_ratio 只允许 {H3_ASPECT_RATIOS!r}"
+                f"{task} aspect_ratio allows only {H3_ASPECT_RATIOS!r}"
             )
     elif aspect_ratio != "auto":
         ratio_width, ratio_height = _parse_flexible_aspect_ratio(aspect_ratio)
@@ -1159,7 +1159,7 @@ def validate_target_v2(
     spatial_deferred = geometry == "deferred"
     if spatial_deferred:
         if task != H3_TASK_FL2VA or aspect_ratio != "auto":
-            raise H3ContractError("只有 FL2VA auto target 可以延迟空间解析")
+            raise H3ContractError("Only an FL2VA auto target can defer spatial resolution")
         forbidden_spatial = (
             "width",
             "height",
@@ -1167,17 +1167,17 @@ def validate_target_v2(
             "video_latent_w",
         )
         if any(clean.get(field) is not None for field in forbidden_spatial):
-            raise H3ContractError("deferred FL2VA target 不能伪装已解析空间字段")
+            raise H3ContractError("A deferred FL2VA target cannot claim resolved spatial fields")
         if require_resolved:
-            raise H3ContractError("FL2VA target 空间尺寸仍未从 keyframe 解析")
+            raise H3ContractError("FL2VA target spatial dimensions have not been resolved from the keyframe")
     elif geometry in ("resolved_v2", "explicit_v1"):
         width = _positive_int(clean.get("width"), "target.width")
         height = _positive_int(clean.get("height"), "target.height")
         if width % H3_CANVAS_MULTIPLE or height % H3_CANVAS_MULTIPLE:
-            raise H3ContractError("target width/height 必须按 32 对齐")
+            raise H3ContractError("target width/height must be aligned to 32")
         ratio = width / height
         if not H3_MIN_ASPECT_RATIO <= ratio <= H3_MAX_ASPECT_RATIO:
-            raise H3ContractError("target 宽高比必须在 1:4 到 4:1 之间")
+            raise H3ContractError("target aspect ratio must be between 1:4 and 4:1")
         if geometry == "explicit_v1":
             requested_width = _positive_int(
                 clean.get("requested_width"), "target.requested_width"
@@ -1186,10 +1186,10 @@ def validate_target_v2(
                 clean.get("requested_height"), "target.requested_height"
             )
             if (width, height) != (requested_width, requested_height):
-                raise H3ContractError("显式 target 尺寸与 requested_width/height 不一致")
+                raise H3ContractError("Explicit target dimensions do not match requested_width/height")
             if width * height > H3_MAX_PIXELS:
                 raise H3ContractError(
-                    f"显式 target 最多允许 {H3_MAX_PIXELS} 像素"
+                    f"Explicit target allows at most {H3_MAX_PIXELS} pixels"
                 )
         else:
             if task == H3_TASK_FL2VA and aspect_ratio == "auto":
@@ -1220,7 +1220,7 @@ def validate_target_v2(
                 int(expected_spatial["height"]),
             ):
                 raise H3ContractError(
-                    "target resolved geometry 与声明比例/素材比例不一致"
+                    "target resolved geometry does not match the declared/material aspect ratio"
                 )
         clean["width"] = width
         clean["height"] = height
@@ -1230,19 +1230,19 @@ def validate_target_v2(
             latent_h != height // H3_VIDEO_VAE_SPATIAL_RATIO
             or latent_w != width // H3_VIDEO_VAE_SPATIAL_RATIO
         ):
-            raise H3ContractError("target 的像素尺寸与 video latent 尺寸不一致")
+            raise H3ContractError("target pixel dimensions do not match the video latent dimensions")
         clean["video_latent_h"] = latent_h
         clean["video_latent_w"] = latent_w
     else:
-        raise H3ContractError(f"未知 target.geometry {geometry!r}")
+        raise H3ContractError(f"Unknown target.geometry {geometry!r}")
 
     temporal = clean.get("temporal")
     temporal_deferred = temporal == "deferred_from_audio_reference"
     if temporal_deferred:
         if task != H3_TASK_REF2VA:
-            raise H3ContractError("只有 Ref2VA 可以从 reference audio 延迟解析时长")
+            raise H3ContractError("Only Ref2VA can defer duration resolution to reference audio")
         if clean.get("requested_duration_seconds") is not None:
-            raise H3ContractError("延迟 Ref2VA target 不应包含显式目标时长")
+            raise H3ContractError("A deferred Ref2VA target must not contain an explicit target duration")
         forbidden_temporal = (
             "duration_seconds",
             "frame_count",
@@ -1250,15 +1250,15 @@ def validate_target_v2(
             "audio_latent_t",
         )
         if any(clean.get(field) is not None for field in forbidden_temporal):
-            raise H3ContractError("deferred Ref2VA target 不能伪装已解析时间字段")
+            raise H3ContractError("A deferred Ref2VA target cannot claim resolved temporal fields")
         if require_resolved:
-            raise H3ContractError("Ref2VA target 时长仍未从 reference audio 解析")
+            raise H3ContractError("Ref2VA target duration has not been resolved from reference audio")
     elif temporal in ("resolved", "resolved_from_audio_reference"):
         if temporal == "resolved_from_audio_reference":
             if task != H3_TASK_REF2VA:
-                raise H3ContractError("只有 Ref2VA 能使用 audio-derived duration")
+                raise H3ContractError("Only Ref2VA can use an audio-derived duration")
             if clean.get("requested_duration_seconds") is not None:
-                raise H3ContractError("audio-derived target 不应声明请求时长")
+                raise H3ContractError("An audio-derived target must not declare a requested duration")
             source_duration = _validate_duration_seconds(
                 clean.get("audio_reference_duration_seconds")
             )
@@ -1271,7 +1271,7 @@ def validate_target_v2(
         frame_count = _positive_int(clean.get("frame_count"), "target.frame_count")
         if frame_count != expected_frames:
             raise H3ContractError(
-                "target.frame_count 与 requested/source duration 的 17n+5 对齐结果不一致"
+                "target.frame_count does not match the 17n+5 alignment of the requested/source duration"
             )
         expected_duration = expected_frames / fps
         duration = _finite_float(
@@ -1281,27 +1281,27 @@ def validate_target_v2(
         )
         if not math.isclose(duration, expected_duration, rel_tol=0.0, abs_tol=1e-9):
             raise H3ContractError(
-                "target.duration_seconds 与 requested/source duration 对齐结果不一致"
+                "target.duration_seconds does not match the aligned requested/source duration"
             )
         latent_t = _positive_int(clean.get("video_latent_t"), "target.video_latent_t")
         if latent_t != video_latent_t(expected_frames):
-            raise H3ContractError("target.frame_count 与 video_latent_t 不一致")
+            raise H3ContractError("target.frame_count does not match video_latent_t")
         audio_t = _positive_int(clean.get("audio_latent_t"), "target.audio_latent_t")
         if audio_t != audio_latent_t(expected_duration):
-            raise H3ContractError("target.frame_count 与 audio_latent_t 不一致")
+            raise H3ContractError("target.frame_count does not match audio_latent_t")
         clean["frame_count"] = frame_count
         clean["video_latent_t"] = latent_t
         clean["audio_latent_t"] = audio_t
         clean["duration_seconds"] = duration
     else:
-        raise H3ContractError(f"未知 target.temporal {temporal!r}")
+        raise H3ContractError(f"Unknown target.temporal {temporal!r}")
 
     expected_stage = (
         "pre_media" if spatial_deferred or temporal_deferred else "resolved"
     )
     if clean.get("resolution_stage") != expected_stage:
         raise H3ContractError(
-            f"target.resolution_stage 必须为 {expected_stage!r}"
+            f"target.resolution_stage must be {expected_stage!r}"
         )
     if task == H3_TASK_FL2VA and not spatial_deferred:
         signature_raw = clean.get("keyframe_signature")
@@ -1312,15 +1312,15 @@ def validate_target_v2(
             semantic = tuple(int(value) for value in semantic_raw)
             pixels = tuple(int(value) for value in pixels_raw)
         except (TypeError, ValueError) as exc:
-            raise H3ContractError("FL2VA target 缺少完整 keyframe index 契约") from exc
+            raise H3ContractError("FL2VA target is missing the complete keyframe index contract") from exc
         if signature not in H3_FL2VA_KEYFRAME_SIGNATURES or semantic != signature:
-            raise H3ContractError("FL2VA target keyframe signature 非法或语义索引不一致")
+            raise H3ContractError("FL2VA target keyframe signature is invalid or semantic indices do not match")
         expected_pixels = tuple(
             int(clean["frame_count"]) - 1 if value == -1 else value
             for value in semantic
         )
         if pixels != expected_pixels:
-            raise H3ContractError("FL2VA target resolved keyframe indices 不一致")
+            raise H3ContractError("FL2VA target resolved keyframe indices do not match")
         clean["keyframe_signature"] = list(signature)
         clean["semantic_frame_indices"] = list(semantic)
         clean["pixel_frame_indices"] = list(pixels)
@@ -1328,7 +1328,7 @@ def validate_target_v2(
         reference_fingerprint = clean.get("reference_order_fingerprint")
         if not isinstance(reference_fingerprint, str) or not reference_fingerprint:
             raise H3ContractError(
-                "Ref2VA target 缺少 reference_order_fingerprint"
+                "Ref2VA target is missing reference_order_fingerprint"
             )
     return clean
 
@@ -1336,11 +1336,11 @@ def validate_target_v2(
 def validate_target(target: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(target, Mapping):
         raise H3ContractError(
-            "target 端口内容无效；请连接 MiniMax H3 T2VA Target 节点"
+            "The target port contents are invalid; connect a MiniMax H3 T2VA Target node"
         )
     if target.get("schema") != H3_TARGET_SCHEMA:
         raise H3ContractError(
-            f"target schema 不匹配：期望 {H3_TARGET_SCHEMA!r}"
+            f"target schema mismatch: expected {H3_TARGET_SCHEMA!r}"
         )
     require_t2va(str(target.get("task", "")))
     required = (
@@ -1354,34 +1354,34 @@ def validate_target(target: Mapping[str, Any]) -> dict[str, Any]:
     )
     missing = [key for key in required if key not in target]
     if missing:
-        raise H3ContractError(f"target 缺少字段：{', '.join(missing)}")
+        raise H3ContractError(f"target is missing fields: {', '.join(missing)}")
     clean = dict(target)
     for key in required:
         clean[key] = _positive_int(clean[key], f"target.{key}")
     if clean["width"] % H3_CANVAS_MULTIPLE or clean["height"] % H3_CANVAS_MULTIPLE:
-        raise H3ContractError("target width/height 必须按 32 对齐")
+        raise H3ContractError("target width/height must be aligned to 32")
     if (
         clean["video_latent_h"] != clean["height"] // H3_VIDEO_VAE_SPATIAL_RATIO
         or clean["video_latent_w"]
         != clean["width"] // H3_VIDEO_VAE_SPATIAL_RATIO
     ):
-        raise H3ContractError("target 的像素尺寸与 video latent 尺寸不一致")
+        raise H3ContractError("target pixel dimensions do not match the video latent dimensions")
     return clean
 
 
 def make_t2va_conditioning(prompt: str, prompt_embeds: Any) -> dict[str, Any]:
     if not isinstance(prompt, str) or not prompt.strip():
-        raise H3ContractError("prompt 不能为空")
+        raise H3ContractError("prompt cannot be empty")
     shape = getattr(prompt_embeds, "shape", None)
     if shape is None or len(shape) not in (2, 3):
         raise H3ContractError(
-            "Qwen 编码结果必须是 [L,5120] 或 [1,L,5120] tensor"
+            "Qwen encoded output must be a [L,5120] or [1,L,5120] tensor"
         )
     if len(shape) == 3 and int(shape[0]) != 1:
-        raise H3ContractError("MiniMax-H3 Direct v0 只支持 batch=1")
+        raise H3ContractError("MiniMax-H3 Direct v0 supports batch=1 only")
     if int(shape[-1]) != H3_TEXT_WIDTH:
         raise H3ContractError(
-            f"Qwen hidden width 必须为 {H3_TEXT_WIDTH}，实际为 {int(shape[-1])}"
+            f"Qwen hidden width must be {H3_TEXT_WIDTH}; got {int(shape[-1])}"
         )
     return {
         "schema": H3_CONDITIONING_SCHEMA,
@@ -1396,24 +1396,24 @@ def make_t2va_conditioning(prompt: str, prompt_embeds: Any) -> dict[str, Any]:
 def validate_conditioning(conditioning: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(conditioning, Mapping):
         raise H3ContractError(
-            "conditioning 端口内容无效；请连接 MiniMax H3 T2VA Text Encode"
+            "The conditioning port contents are invalid; connect MiniMax H3 T2VA Text Encode"
         )
     if conditioning.get("schema") != H3_CONDITIONING_SCHEMA:
         raise H3ContractError(
-            f"conditioning schema 不匹配：期望 {H3_CONDITIONING_SCHEMA!r}"
+            f"conditioning schema mismatch: expected {H3_CONDITIONING_SCHEMA!r}"
         )
     require_t2va(str(conditioning.get("task", "")))
     embeds = conditioning.get("prompt_embeds")
     shape = getattr(embeds, "shape", None)
     if shape is None:
-        raise H3ContractError("conditioning 缺少 prompt_embeds tensor")
+        raise H3ContractError("conditioning is missing the prompt_embeds tensor")
     if len(shape) == 3 and int(shape[0]) == 1:
         pass
     elif len(shape) != 2:
-        raise H3ContractError("prompt_embeds 必须是 [L,5120] 或 [1,L,5120]")
+        raise H3ContractError("prompt_embeds must be [L,5120] or [1,L,5120]")
     if int(shape[-1]) != H3_TEXT_WIDTH:
         raise H3ContractError(
-            f"prompt_embeds 最后一维必须为 {H3_TEXT_WIDTH}"
+            f"The last dimension of prompt_embeds must be {H3_TEXT_WIDTH}"
         )
     return dict(conditioning)
 
@@ -1421,12 +1421,12 @@ def validate_conditioning(conditioning: Mapping[str, Any]) -> dict[str, Any]:
 def _validate_prompt_embeds(prompt_embeds: Any, *, path: str) -> Any:
     shape = getattr(prompt_embeds, "shape", None)
     if shape is None or len(shape) not in (2, 3):
-        raise H3ContractError(f"{path} 必须是 [L,5120] 或 [1,L,5120] tensor")
+        raise H3ContractError(f"{path} must be a [L,5120] or [1,L,5120] tensor")
     if len(shape) == 3 and int(shape[0]) != 1:
-        raise H3ContractError("MiniMax-H3 当前只支持 batch=1")
+        raise H3ContractError("MiniMax-H3 currently supports batch=1 only")
     if int(shape[-1]) != H3_TEXT_WIDTH:
         raise H3ContractError(
-            f"{path} 最后一维必须为 {H3_TEXT_WIDTH}，实际为 {int(shape[-1])}"
+            f"The last dimension of {path} must be {H3_TEXT_WIDTH}; got {int(shape[-1])}"
         )
     return prompt_embeds
 
@@ -1446,14 +1446,14 @@ def _normalise_text_token_tags(
     if value is None:
         if required:
             raise H3ContractError(
-                "FL2VA/Ref2VA conditioning 必须包含上游 presentation text_token_tags"
+                "FL2VA/Ref2VA conditioning must contain upstream presentation text_token_tags"
             )
         return None
     shape = getattr(value, "shape", None)
     values: list[Any] | None = None
     if shape is not None:
         if len(shape) != 1:
-            raise H3ContractError("text_token_tags 必须是 rank-1")
+            raise H3ContractError("text_token_tags must be rank-1")
         length = int(shape[0])
         candidate = value
         for method_name in ("detach", "cpu"):
@@ -1469,18 +1469,18 @@ def _normalise_text_token_tags(
         length = len(value)
         values = list(value)
     else:
-        raise H3ContractError("text_token_tags 必须是一维 tensor 或整数列表")
+        raise H3ContractError("text_token_tags must be a one-dimensional tensor or integer list")
     if length != expected_length:
         raise H3ContractError(
-            f"text_token_tags 长度必须等于 prompt_embeds L={expected_length}，"
-            f"实际为 {length}"
+            f"text_token_tags length must equal prompt_embeds L={expected_length}; "
+            f"got {length}"
         )
     if values is not None:
         for index, tag in enumerate(values):
             if isinstance(tag, bool) or not isinstance(tag, (int, float)):
-                raise H3ContractError(f"text_token_tags[{index}] 必须是整数 0 或 1")
+                raise H3ContractError(f"text_token_tags[{index}] must be integer 0 or 1")
             if int(tag) != tag or int(tag) not in (0, 1):
-                raise H3ContractError(f"text_token_tags[{index}] 只允许 0 或 1")
+                raise H3ContractError(f"text_token_tags[{index}] allows only 0 or 1")
     return value
 
 
@@ -1540,10 +1540,10 @@ def _validate_condition_blocks(
     blocks: Any,
 ) -> list[dict[str, Any]]:
     if not isinstance(blocks, Sequence) or isinstance(blocks, (str, bytes)):
-        raise H3ContractError("conditioning.condition_blocks 必须是有序列表")
+        raise H3ContractError("conditioning.condition_blocks must be an ordered list")
     if len(blocks) != len(conditions):
         raise H3ContractError(
-            "conditioning.conditions 与 condition_blocks 数量必须一一对应"
+            "conditioning.conditions and condition_blocks counts must correspond one-to-one"
         )
     clean_blocks: list[dict[str, Any]] = []
     for index, (condition, raw_block) in enumerate(
@@ -1551,7 +1551,7 @@ def _validate_condition_blocks(
     ):
         path = f"condition_blocks[{index}]"
         if not isinstance(raw_block, Mapping):
-            raise H3ContractError(f"{path} 必须是对象")
+            raise H3ContractError(f"{path} must be an object")
         block = dict(raw_block)
         condition_index = block.get("condition_index")
         if (
@@ -1560,34 +1560,34 @@ def _validate_condition_blocks(
             or condition_index != index
         ):
             raise H3ContractError(
-                f"{path}.condition_index 必须严格等于原始顺序 {index}"
+                f"{path}.condition_index must exactly match the original order {index}"
             )
         kind = block.get("kind", block.get("type"))
         if not isinstance(kind, str):
-            raise H3ContractError(f"{path}.kind 必须是字符串")
+            raise H3ContractError(f"{path}.kind must be a string")
         kind = kind.strip().lower()
         expected_kind = str(condition["type"])
         if task == H3_TASK_FL2VA:
             if kind not in ("image", "keyframe"):
-                raise H3ContractError(f"{path}.kind 必须为 image/keyframe")
+                raise H3ContractError(f"{path}.kind must be image/keyframe")
             semantic = block.get(
                 "semantic_frame_index", block.get("frame_index")
             )
             resolved = block.get("resolved_frame_index")
             if semantic != condition.get("frame_index"):
-                raise H3ContractError(f"{path} 的 semantic_frame_index 串线")
+                raise H3ContractError(f"{path}.semantic_frame_index is cross-wired")
             if resolved != condition.get("resolved_frame_index"):
-                raise H3ContractError(f"{path} 的 resolved_frame_index 串线")
+                raise H3ContractError(f"{path}.resolved_frame_index is cross-wired")
         else:
             if kind != expected_kind:
                 raise H3ContractError(
-                    f"{path}.kind={kind!r} 与 references[{index}].type="
-                    f"{expected_kind!r} 不一致"
+                    f"{path}.kind={kind!r} does not match references[{index}].type="
+                    f"{expected_kind!r}"
                 )
             expected_fingerprint = condition.get("material_fingerprint")
             if block.get("material_fingerprint") != expected_fingerprint:
                 raise H3ContractError(
-                    f"{path}.material_fingerprint 与 references[{index}] 串线"
+                    f"{path}.material_fingerprint is cross-wired with references[{index}]"
                 )
         block["condition_index"] = index
         block["kind"] = kind
@@ -1608,11 +1608,11 @@ def make_conditioning_v2(
 
     normalized_task = normalize_task(task)
     if not isinstance(prompt, str) or not prompt.strip():
-        raise H3ContractError("prompt 不能为空")
+        raise H3ContractError("prompt cannot be empty")
     _validate_prompt_embeds(prompt_embeds, path="prompt_embeds")
     if text_token_tags is not None and token_tags is not None:
         raise H3ContractError(
-            "只能传 text_token_tags；token_tags 仅作为旧调用兼容别名"
+            "Pass text_token_tags only; token_tags is a compatibility alias for legacy callers"
         )
     # Explicit legacy compatibility: read the old spelling, but canonicalize
     # the returned v2 payload to text_token_tags only.
@@ -1624,7 +1624,7 @@ def make_conditioning_v2(
     )
     if normalized_task == H3_TASK_T2VA:
         if conditions not in (None, (), []):
-            raise H3ContractError("T2VA conditioning 不允许条件素材")
+            raise H3ContractError("T2VA conditioning does not allow conditioning materials")
         clean_conditions: list[H3ConditionMaterialV2] = []
     elif normalized_task == H3_TASK_FL2VA:
         clean_conditions = validate_fl2va_keyframes(conditions)
@@ -1655,28 +1655,28 @@ def validate_conditioning_v2(
     expected_task: str | None = None,
 ) -> H3ConditioningV2:
     if not isinstance(conditioning, Mapping):
-        raise H3ContractError("conditioning v2 必须是对象")
+        raise H3ContractError("conditioning v2 must be an object")
     if conditioning.get("schema") != H3_CONDITIONING_SCHEMA_V2:
         raise H3ContractError(
-            f"conditioning schema 不匹配：期望 {H3_CONDITIONING_SCHEMA_V2!r}"
+            f"conditioning schema mismatch: expected {H3_CONDITIONING_SCHEMA_V2!r}"
         )
     clean: H3ConditioningV2 = dict(conditioning)
     task = normalize_task(clean.get("task"))
     if expected_task is not None and task != normalize_task(expected_task):
         raise H3ContractError(
-            f"conditioning.task={task!r} 与工作流 task="
-            f"{normalize_task(expected_task)!r} 不一致"
+            f"conditioning.task={task!r} does not match workflow task="
+            f"{normalize_task(expected_task)!r}"
         )
     clean["task"] = task
     clean["partition"] = validate_task_partition(task, clean.get("partition"))
     prompt = clean.get("prompt")
     if not isinstance(prompt, str) or not prompt.strip():
-        raise H3ContractError("conditioning.prompt 不能为空")
+        raise H3ContractError("conditioning.prompt cannot be empty")
     prompt_embeds = clean.get("prompt_embeds")
     _validate_prompt_embeds(prompt_embeds, path="conditioning.prompt_embeds")
     if clean.get("text_token_tags") is not None and clean.get("token_tags") is not None:
         raise H3ContractError(
-            "conditioning 不能同时包含 text_token_tags 和旧 token_tags"
+            "conditioning cannot contain both text_token_tags and legacy token_tags"
         )
     legacy_tags = clean.pop("token_tags", None)
     text_token_tags = (
@@ -1692,17 +1692,17 @@ def validate_conditioning_v2(
     if text_token_tags is not None:
         clean["text_token_tags"] = text_token_tags
     if clean.get("cfg_distilled") is not True:
-        raise H3ContractError("MiniMax-H3 v2 只允许单个 CFG-distilled 正向分支")
+        raise H3ContractError("MiniMax-H3 v2 allows only one CFG-distilled positive branch")
     guidance = _finite_float(clean.get("guidance_scale"), "guidance_scale")
     if guidance != 1.0:
-        raise H3ContractError("MiniMax-H3 v2 guidance_scale 必须为 1.0")
+        raise H3ContractError("MiniMax-H3 v2 guidance_scale must be 1.0")
     raw_conditions = clean.get("conditions", [])
     if task == H3_TASK_T2VA:
         if raw_conditions not in (None, (), []):
-            raise H3ContractError("T2VA conditioning 不允许条件素材")
+            raise H3ContractError("T2VA conditioning does not allow conditioning materials")
         clean["conditions"] = []
         if clean.get("condition_blocks") not in (None, (), []):
-            raise H3ContractError("T2VA conditioning 不允许 condition_blocks")
+            raise H3ContractError("T2VA conditioning does not allow condition_blocks")
     elif task == H3_TASK_FL2VA:
         target = validate_target_v2(
             clean.get("target"),
@@ -1726,7 +1726,7 @@ def validate_conditioning_v2(
         expected_order = condition_order_fingerprint(task, clean["conditions"])
         if clean.get("condition_order_fingerprint") != expected_order:
             raise H3ContractError(
-                "conditioning.condition_order_fingerprint 与原始条件顺序不一致"
+                "conditioning.condition_order_fingerprint does not match the original condition order"
             )
         clean["condition_blocks"] = _validate_condition_blocks(
             task=task,
@@ -1736,7 +1736,7 @@ def validate_conditioning_v2(
         expected_target_fingerprint = target_compatibility_fingerprint(clean["target"])
         if clean.get("target_fingerprint") != expected_target_fingerprint:
             raise H3ContractError(
-                "conditioning.target_fingerprint 与 target 内容不一致"
+                "conditioning.target_fingerprint does not match the target contents"
             )
         if task == H3_TASK_FL2VA:
             semantic = [
@@ -1746,12 +1746,12 @@ def validate_conditioning_v2(
                 int(item["resolved_frame_index"]) for item in clean["conditions"]
             ]
             if semantic != list(clean["target"]["semantic_frame_indices"]):
-                raise H3ContractError("FL2VA conditioning 与 target 语义关键帧串线")
+                raise H3ContractError("FL2VA conditioning is cross-wired with the target semantic keyframes")
             if resolved != list(clean["target"]["pixel_frame_indices"]):
-                raise H3ContractError("FL2VA conditioning 与 target 像素关键帧串线")
+                raise H3ContractError("FL2VA conditioning is cross-wired with the target pixel keyframes")
         elif clean["target"].get("reference_order_fingerprint") != expected_order:
             raise H3ContractError(
-                "Ref2VA conditioning 与 target reference 顺序指纹不一致"
+                "Ref2VA conditioning does not match the target reference-order fingerprint"
             )
         for field in (
             "release_fingerprint",
@@ -1760,18 +1760,18 @@ def validate_conditioning_v2(
         ):
             value = clean.get(field)
             if not isinstance(value, str) or not value:
-                raise H3ContractError(f"conditioning.{field} 必须是非空字符串")
+                raise H3ContractError(f"conditioning.{field} must be a non-empty string")
     return clean
 
 
 def validate_av_latent(latent: Mapping[str, Any]) -> dict[str, Any]:
     if not isinstance(latent, Mapping):
         raise H3ContractError(
-            "av_latent 端口内容无效；请连接 MiniMax H3 Empty AV Latent"
+            "The av_latent port contents are invalid; connect MiniMax H3 Empty AV Latent"
         )
     if latent.get("schema") != H3_AV_LATENT_SCHEMA:
         raise H3ContractError(
-            f"av_latent schema 不匹配：期望 {H3_AV_LATENT_SCHEMA!r}"
+            f"av_latent schema mismatch: expected {H3_AV_LATENT_SCHEMA!r}"
         )
     require_t2va(str(latent.get("task", "")))
     target = validate_target(latent.get("target", {}))
@@ -1793,11 +1793,11 @@ def validate_av_latent(latent: Mapping[str, Any]) -> dict[str, Any]:
     )
     if video_shape is None or tuple(int(x) for x in video_shape) != expected_video:
         raise H3ContractError(
-            f"video latent shape 必须为 {expected_video}，实际为 {video_shape}"
+            f"video latent shape must be {expected_video}; got {video_shape}"
         )
     if audio_shape is None or tuple(int(x) for x in audio_shape) != expected_audio:
         raise H3ContractError(
-            f"audio latent shape 必须为 {expected_audio}，实际为 {audio_shape}"
+            f"audio latent shape must be {expected_audio}; got {audio_shape}"
         )
     return dict(latent)
 
@@ -1808,17 +1808,17 @@ def validate_av_latent_v2(
     expected_task: str | None = None,
 ) -> dict[str, Any]:
     if not isinstance(latent, Mapping):
-        raise H3ContractError("av_latent v2 必须是对象")
+        raise H3ContractError("av_latent v2 must be an object")
     if latent.get("schema") != H3_AV_LATENT_SCHEMA_V2:
         raise H3ContractError(
-            f"av_latent schema 不匹配：期望 {H3_AV_LATENT_SCHEMA_V2!r}"
+            f"av_latent schema mismatch: expected {H3_AV_LATENT_SCHEMA_V2!r}"
         )
     clean = dict(latent)
     task = normalize_task(clean.get("task"))
     if expected_task is not None and task != normalize_task(expected_task):
         raise H3ContractError(
-            f"av_latent.task={task!r} 与工作流 task="
-            f"{normalize_task(expected_task)!r} 不一致"
+            f"av_latent.task={task!r} does not match workflow task="
+            f"{normalize_task(expected_task)!r}"
         )
     clean["task"] = task
     clean["partition"] = validate_task_partition(task, clean.get("partition"))
@@ -1833,7 +1833,7 @@ def validate_av_latent_v2(
         expected_target_fingerprint = target_compatibility_fingerprint(target)
         if declared_target_fingerprint != expected_target_fingerprint:
             raise H3ContractError(
-                "av_latent.target_fingerprint 与 av_latent.target 不一致"
+                "av_latent.target_fingerprint does not match av_latent.target"
             )
     video = clean.get("video")
     audio = clean.get("audio")
@@ -1853,14 +1853,14 @@ def validate_av_latent_v2(
     )
     if video_shape is None or tuple(int(value) for value in video_shape) != expected_video:
         raise H3ContractError(
-            f"video latent shape 必须为 {expected_video}，实际为 {video_shape}"
+            f"video latent shape must be {expected_video}; got {video_shape}"
         )
     if audio_shape is None or tuple(int(value) for value in audio_shape) != expected_audio:
         raise H3ContractError(
-            f"audio latent shape 必须为 {expected_audio}，实际为 {audio_shape}"
+            f"audio latent shape must be {expected_audio}; got {audio_shape}"
         )
     if clean.get("sampled") not in (True, False):
-        raise H3ContractError("av_latent.sampled 必须是 bool")
+        raise H3ContractError("av_latent.sampled must be bool")
     return clean
 
 
@@ -1876,54 +1876,54 @@ def validate_release_for_task(
     if metadata in (None, {}):
         if allow_missing:
             return {}
-        raise H3ContractError("缺少 model_index.json._minimax_h3 release metadata")
+        raise H3ContractError("Missing model_index.json._minimax_h3 release metadata")
     if not isinstance(metadata, Mapping):
-        raise H3ContractError("release_metadata 必须是对象")
+        raise H3ContractError("release_metadata must be an object")
     raw = metadata.get("_minimax_h3", metadata)
     if not isinstance(raw, Mapping):
-        raise H3ContractError("model_index.json._minimax_h3 必须是对象")
+        raise H3ContractError("model_index.json._minimax_h3 must be an object")
     if raw.get("schema_version") != 1:
-        raise H3ContractError("release_metadata.schema_version 必须为 1")
+        raise H3ContractError("release_metadata.schema_version must be 1")
     partition = validate_task_partition(normalized_task, raw.get("partition"))
     tasks = raw.get("tasks")
     if not isinstance(tasks, Sequence) or isinstance(tasks, (str, bytes)) or not tasks:
-        raise H3ContractError("release_metadata.tasks 必须是非空字符串列表")
+        raise H3ContractError("release_metadata.tasks must be a non-empty string list")
     normalized_tasks: list[str] = []
     for index, value in enumerate(tasks):
         try:
             declared_task = normalize_task(value)
         except H3ContractError as exc:
             raise H3ContractError(
-                f"release_metadata.tasks[{index}] 不是受支持任务"
+                f"release_metadata.tasks[{index}] is not a supported task"
             ) from exc
         validate_task_partition(declared_task, partition)
         normalized_tasks.append(declared_task)
     if len(set(normalized_tasks)) != len(normalized_tasks):
-        raise H3ContractError("release_metadata.tasks 不能包含重复项")
+        raise H3ContractError("release_metadata.tasks cannot contain duplicates")
     if normalized_task not in normalized_tasks:
         raise H3ContractError(
-            f"release partition {partition!r} 未声明 task {normalized_task!r}；"
+            f"release partition {partition!r} does not declare task {normalized_task!r}; "
             f"tasks={normalized_tasks!r}"
         )
     aliases = raw.get("task_aliases", {})
     if not isinstance(aliases, Mapping):
-        raise H3ContractError("release_metadata.task_aliases 必须是对象")
+        raise H3ContractError("release_metadata.task_aliases must be an object")
     for alias, target in aliases.items():
         if not isinstance(alias, str) or not alias or not isinstance(target, str):
-            raise H3ContractError("release_metadata.task_aliases 必须映射非空字符串")
+            raise H3ContractError("release_metadata.task_aliases must map non-empty strings")
         if target not in normalized_tasks:
             raise H3ContractError(
-                f"release task alias {alias!r} 指向未声明任务 {target!r}"
+                f"release task alias {alias!r} points to undeclared task {target!r}"
             )
         # The official v1 dispatcher defines no aliases.  Identity entries are
         # harmless, but a new public spelling must not be guessed here.
         if alias != target:
             raise H3ContractError(
-                f"当前 MiniMax-H3 协议不支持 task alias {alias!r}->{target!r}"
+                f"The current MiniMax-H3 protocol does not support task alias {alias!r}->{target!r}"
             )
     scales = raw.get("sigma_shift_scales")
     if not isinstance(scales, Mapping):
-        raise H3ContractError("release_metadata.sigma_shift_scales 必须是对象")
+        raise H3ContractError("release_metadata.sigma_shift_scales must be an object")
     normalized_scales = {
         "video": _finite_float(
             scales.get("video"),
@@ -1987,15 +1987,17 @@ _H3_COMPONENT_RELATED_PATH_FIELDS = MappingProxyType(
     {
         "model": (),
         "text_encoder": ("tokenizer_path", "processor_path"),
-        # 双 VAE loader 同时选择 video/audio 两个组件：``vae_path`` 保持为主路径
-        # （video），audio 作为 related path 折进同一个 component fingerprint。
+        # The dual-VAE loader selects video/audio components together: ``vae_path``
+        # remains the primary path (video), while audio is folded into the same
+        # component fingerprint as a related path.
         "vae": ("audio_vae_path",),
     }
 )
 
-# 扁平单文件权重住在 models/MiniMax-H3 下，配置来自 release 根，因此这些路径
-# 必然落在 model_root 之外：豁免包含性检查，但仍逐字折进 component fingerprint，
-# 换掉权重就会立刻失配。
+# Flat single-file weights live under models/MiniMax-H3 while configuration comes
+# from the release root, so these paths necessarily fall outside model_root. Exempt
+# them from containment checks but still fold them exactly into the component
+# fingerprint so replacing a weight causes an immediate mismatch.
 _H3_COMPONENT_EXTERNAL_PATH_FIELDS = MappingProxyType(
     {
         "model": ("transformer_weights_path",),
@@ -2214,26 +2216,26 @@ def validate_component_for_task(
     normalized_task = normalize_task(task)
     if component_kind not in _H3_COMPONENT_SCHEMA_OPTIONS:
         raise H3ContractError(
-            f"未知 component_kind {component_kind!r}；可选值为 model/text_encoder/vae"
+            f"Unknown component_kind {component_kind!r}; choices are model/text_encoder/vae"
         )
     if not isinstance(component, Mapping):
-        raise H3ContractError(f"{component_kind} component 必须是对象")
+        raise H3ContractError(f"{component_kind} component must be an object")
     schema = component.get("schema")
     if schema not in _H3_COMPONENT_SCHEMA_OPTIONS[component_kind]:
         raise H3ContractError(
-            f"{component_kind}.schema 不匹配；期望 "
+            f"{component_kind}.schema mismatch; expected "
             f"{sorted(_H3_COMPONENT_SCHEMA_OPTIONS[component_kind])!r}"
         )
     is_v2 = schema == H3_COMPONENT_SCHEMAS_V2[component_kind]
     if not is_v2 and normalized_task != H3_TASK_T2VA:
         raise H3ContractError(
-            f"{component_kind} 的 v1 wrapper 只允许 T2VA；"
-            f"{normalized_task.upper()} 必须重新经过 task-aware v2 Loader"
+            f"The {component_kind} v1 wrapper allows T2VA only; "
+            f"{normalized_task.upper()} must pass through a task-aware v2 Loader"
         )
     partition = validate_task_partition(normalized_task, component.get("partition"))
     if is_v2 and normalize_task(component.get("task")) != normalized_task:
         raise H3ContractError(
-            f"{component_kind}.task 必须明确等于当前 task {normalized_task!r}"
+            f"{component_kind}.task must explicitly equal the current task {normalized_task!r}"
         )
     release_raw = component.get("release_metadata")
     release = validate_release_for_task(
@@ -2248,7 +2250,7 @@ def validate_component_for_task(
         declared = [component.get("task")]
     if not isinstance(declared, Sequence) or isinstance(declared, (str, bytes)):
         raise H3ContractError(
-            f"{component_kind} 必须声明 task 或 tasks 列表"
+            f"{component_kind} must declare task or a tasks list"
         )
     tasks: list[str] = []
     for value in declared:
@@ -2257,11 +2259,11 @@ def validate_component_for_task(
         tasks.append(declared_task)
     if normalized_task not in tasks:
         raise H3ContractError(
-            f"{component_kind} 未声明 task {normalized_task!r}；tasks={tasks!r}"
+            f"{component_kind} does not declare task {normalized_task!r}; tasks={tasks!r}"
         )
     root = component.get("model_root")
     if not isinstance(root, str) or not root.strip():
-        raise H3ContractError(f"{component_kind}.model_root 必须是非空字符串")
+        raise H3ContractError(f"{component_kind}.model_root must be a non-empty string")
     resolved_root = str(Path(root).resolve())
     clean = dict(component)
     clean["partition"] = partition
@@ -2285,18 +2287,18 @@ def validate_component_for_task(
         )
         if component.get("release_fingerprint") != expected_release_fingerprint:
             raise H3ContractError(
-                f"{component_kind}.release_fingerprint 与 root/partition/metadata 不一致"
+                f"{component_kind}.release_fingerprint does not match root/partition/metadata"
             )
         path_field = _H3_COMPONENT_PATH_FIELDS[component_kind]
         component_path = component.get(path_field)
         if not isinstance(component_path, str) or not component_path.strip():
-            raise H3ContractError(f"{component_kind}.{path_field} 必须是非空路径")
+            raise H3ContractError(f"{component_kind}.{path_field} must be a non-empty path")
         resolved_component_path = Path(component_path).resolve()
         try:
             resolved_component_path.relative_to(Path(resolved_root))
         except ValueError as exc:
             raise H3ContractError(
-                f"{component_kind}.{path_field} 必须位于 resolved model_root 内"
+                f"{component_kind}.{path_field} must be inside the resolved model_root"
             ) from exc
         related_paths: dict[str, Path] = {}
         for related_field in _H3_COMPONENT_RELATED_PATH_FIELDS[component_kind]:
@@ -2305,14 +2307,14 @@ def validate_component_for_task(
                 continue
             if not isinstance(related_value, str) or not related_value.strip():
                 raise H3ContractError(
-                    f"{component_kind}.{related_field} 必须是非空路径"
+                    f"{component_kind}.{related_field} must be a non-empty path"
                 )
             resolved_related = Path(related_value).resolve()
             try:
                 resolved_related.relative_to(Path(resolved_root))
             except ValueError as exc:
                 raise H3ContractError(
-                    f"{component_kind}.{related_field} 必须位于 resolved model_root 内"
+                    f"{component_kind}.{related_field} must be inside the resolved model_root"
                 ) from exc
             related_paths[related_field.removesuffix("_path")] = resolved_related
             clean[related_field] = str(resolved_related)
@@ -2322,7 +2324,7 @@ def validate_component_for_task(
                 continue
             if not isinstance(external_value, str) or not external_value.strip():
                 raise H3ContractError(
-                    f"{component_kind}.{external_field} 必须是非空路径"
+                    f"{component_kind}.{external_field} must be a non-empty path"
                 )
             resolved_external = Path(external_value).resolve()
             related_paths[external_field.removesuffix("_path")] = resolved_external
@@ -2335,12 +2337,12 @@ def validate_component_for_task(
         )
         if component.get("component_fingerprint") != expected_component_fingerprint:
             raise H3ContractError(
-                f"{component_kind}.component_fingerprint 与组件路径不一致"
+                f"{component_kind}.component_fingerprint does not match the component paths"
             )
         specific_field = _H3_COMPONENT_FINGERPRINT_FIELDS[component_kind]
         if component.get(specific_field) != expected_component_fingerprint:
             raise H3ContractError(
-                f"{component_kind}.{specific_field} 与 component_fingerprint 不一致"
+                f"{component_kind}.{specific_field} does not match component_fingerprint"
             )
         clean["release_fingerprint"] = expected_release_fingerprint
         clean["component_fingerprint"] = expected_component_fingerprint
@@ -2414,7 +2416,7 @@ def validate_component_compatibility(
                 for name, value in components.items()
             )
             raise H3ContractError(
-                "MiniMax-H3 组件来自不同 model_root，禁止混用：" + detail
+                "MiniMax-H3 components come from different model_root values and cannot be mixed: " + detail
             )
     release_fingerprints = {
         name: value.get("release_fingerprint")
@@ -2422,7 +2424,7 @@ def validate_component_compatibility(
         if value.get("release_fingerprint") is not None
     }
     if len(set(release_fingerprints.values())) > 1:
-        raise H3ContractError("MiniMax-H3 v2 组件 release_fingerprint 不一致")
+        raise H3ContractError("MiniMax-H3 v2 component release_fingerprint values do not match")
     clean["components"] = components
     clean.update(components)
 
@@ -2438,7 +2440,7 @@ def validate_component_compatibility(
             clean["target"] = validate_target(target)
         else:
             raise H3ContractError(
-                f"{normalized_task.upper()} 必须连接 target v2"
+                f"{normalized_task.upper()} must connect to target v2"
             )
     clean_conditioning: dict[str, Any] | None = None
     if conditioning is not None:
@@ -2455,7 +2457,7 @@ def validate_component_compatibility(
             clean["conditioning"] = validate_conditioning(conditioning)
         else:
             raise H3ContractError(
-                f"{normalized_task.upper()} 必须连接 conditioning v2"
+                f"{normalized_task.upper()} must connect to conditioning v2"
             )
     clean_latent: dict[str, Any] | None = None
     if av_latent is not None:
@@ -2472,7 +2474,7 @@ def validate_component_compatibility(
             clean["av_latent"] = validate_av_latent(av_latent)
         else:
             raise H3ContractError(
-                f"{normalized_task.upper()} 必须连接 av_latent v2"
+                f"{normalized_task.upper()} must connect to av_latent v2"
             )
 
     target_fingerprints: dict[str, str] = {}
@@ -2489,19 +2491,19 @@ def validate_component_compatibility(
             clean_latent["target"]
         )
     if len(set(target_fingerprints.values())) > 1:
-        raise H3ContractError("target/conditioning/av_latent.target 指纹不一致")
+        raise H3ContractError("target/conditioning/av_latent.target fingerprints do not match")
 
     if clean_conditioning is not None:
         conditioning_release = clean_conditioning.get("release_fingerprint")
         if conditioning_release is not None:
             if not isinstance(conditioning_release, str) or not conditioning_release:
                 raise H3ContractError(
-                    "conditioning.release_fingerprint 必须是非空字符串"
+                    "conditioning.release_fingerprint must be a non-empty string"
                 )
             for name, fingerprint in release_fingerprints.items():
                 if fingerprint != conditioning_release:
                     raise H3ContractError(
-                        f"conditioning 与 {name} release_fingerprint 不一致"
+                        f"conditioning and {name} release_fingerprint values do not match"
                     )
         text_encoder_fingerprint = clean_conditioning.get(
             "text_encoder_fingerprint"
@@ -2510,29 +2512,29 @@ def validate_component_compatibility(
             actual = components["text_encoder"]["component_fingerprint"]
             if text_encoder_fingerprint != actual:
                 raise H3ContractError(
-                    "conditioning.text_encoder_fingerprint 与 Text Encoder 不一致"
+                    "conditioning.text_encoder_fingerprint does not match the Text Encoder"
                 )
         vae_fingerprint = clean_conditioning.get("vae_fingerprint")
         if "vae" in components and vae_fingerprint is not None:
             actual = components["vae"]["component_fingerprint"]
             if vae_fingerprint != actual:
                 raise H3ContractError(
-                    "conditioning.vae_fingerprint 与 VAE 不一致"
+                    "conditioning.vae_fingerprint does not match the VAE"
                 )
     if clean_latent is not None:
         latent_release = clean_latent.get("release_fingerprint")
         if latent_release is not None:
             if not isinstance(latent_release, str) or not latent_release:
-                raise H3ContractError("av_latent.release_fingerprint 必须是非空字符串")
+                raise H3ContractError("av_latent.release_fingerprint must be a non-empty string")
             for name, fingerprint in release_fingerprints.items():
                 if fingerprint != latent_release:
                     raise H3ContractError(
-                        f"av_latent 与 {name} release_fingerprint 不一致"
+                        f"av_latent and {name} release_fingerprint values do not match"
                     )
         latent_vae = clean_latent.get("vae_fingerprint")
         if latent_vae is not None and "vae" in components:
             if latent_vae != components["vae"]["component_fingerprint"]:
-                raise H3ContractError("av_latent.vae_fingerprint 与 VAE 不一致")
+                raise H3ContractError("av_latent.vae_fingerprint does not match the VAE")
     return clean
 
 
@@ -2543,7 +2545,7 @@ def validate_seed(seed: Any) -> int:
         or seed < 0
         or seed > (1 << 63) - 1
     ):
-        raise H3ContractError("seed 必须是 0 到 int64 最大值之间的整数")
+        raise H3ContractError("seed must be an integer between 0 and the int64 maximum")
     return int(seed)
 
 
@@ -2558,7 +2560,7 @@ def validate_sigma_request(
         or not isinstance(sigma_points, int)
         or sigma_points < 2
     ):
-        raise H3ContractError("sigma_points 必须是不小于 2 的整数")
+        raise H3ContractError("sigma_points must be an integer of at least 2")
     return (
         int(sigma_points),
         _finite_float(video_shift, "video_shift", positive=True),

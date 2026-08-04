@@ -1,4 +1,4 @@
-"""qwen_encoder 包 facade。"""
+"""qwen_encoder package facade."""
 from __future__ import annotations
 from .helpers import *  # noqa: F403
 from .loading import *  # noqa: F403

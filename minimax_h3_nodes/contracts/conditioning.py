@@ -1,4 +1,4 @@
-"""contracts.conditioning facade（实现见 _impl）。"""
+"""contracts.conditioning facade (implementation lives in _impl)."""
 from __future__ import annotations
 from ._impl import (
     make_conditioning_v2,

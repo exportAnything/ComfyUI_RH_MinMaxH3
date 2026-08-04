@@ -1,4 +1,4 @@
-"""实验性帧率条件：adaLN 时间嵌入 + 可选时序 RoPE 缩放。非上游契约。"""
+"""Experimental frame-rate conditioning: adaLN time embedding plus optional temporal RoPE scaling. Not an upstream contract."""
 from __future__ import annotations
 from typing import Any, Mapping
 from .h3_settings import (
@@ -18,27 +18,27 @@ def validate_frame_rate_options(
     rope_sigma_profile: str = "constant",
     rope_sigma_end: float = 0.0,
 ) -> dict[str, Any]:
-    """校验并规范化 Frame Rate 节点选项。"""
+    """Validate and normalize Frame Rate node options."""
     fr = float(frame_rate)
     if not 1.0 <= fr <= 120.0:
-        raise ValueError(f"frame_rate 必须在 [1,120]，实际 {fr}")
+        raise ValueError(f"frame_rate must be in [1,120]; got {fr}")
     end_t = float(rope_end_timestep)
     if not 0.0 <= end_t <= 1.0:
-        raise ValueError("rope_end_timestep 必须在 [0,1]")
+        raise ValueError("rope_end_timestep must be in [0,1]")
     low_n = int(rope_low_frequency_count)
     if not 0 <= low_n <= 16:
-        raise ValueError("rope_low_frequency_count 必须在 [0,16]")
+        raise ValueError("rope_low_frequency_count must be in [0,16]")
     freq_p = str(rope_frequency_profile)
     if freq_p not in FRAME_RATE_ROPE_FREQ_PROFILES:
-        raise ValueError(f"rope_frequency_profile 必须是 {FRAME_RATE_ROPE_FREQ_PROFILES}")
+        raise ValueError(f"rope_frequency_profile must be {FRAME_RATE_ROPE_FREQ_PROFILES}")
     sigma_p = str(rope_sigma_profile)
     if sigma_p not in FRAME_RATE_ROPE_SIGMA_PROFILES:
-        raise ValueError(f"rope_sigma_profile 必须是 {FRAME_RATE_ROPE_SIGMA_PROFILES}")
+        raise ValueError(f"rope_sigma_profile must be {FRAME_RATE_ROPE_SIGMA_PROFILES}")
     sigma_end = float(rope_sigma_end)
     if not 0.0 <= sigma_end <= 0.99:
-        raise ValueError("rope_sigma_end 必须在 [0,0.99]")
+        raise ValueError("rope_sigma_end must be in [0,0.99]")
     if not adaln and not temporal_rope:
-        raise ValueError("Frame Rate：adaln 与 temporal_rope 至少启用一项")
+        raise ValueError("Frame Rate: enable at least one of adaln or temporal_rope")
     return {
         "frame_rate": fr,
         "adaln": bool(adaln),
@@ -51,7 +51,7 @@ def validate_frame_rate_options(
     }
 
 def adaln_frame_rate(options: Mapping[str, Any] | None) -> float | None:
-    """供 TimeEmbedder / 预计算：未启用 adaln 时返回 None。"""
+    """For TimeEmbedder/precomputation: return None when adaln is disabled."""
     if not options or not options.get("adaln"):
         return None
     return float(options["frame_rate"])
@@ -62,7 +62,7 @@ def rope_temporal_scale(
     video_timestep: float,
     video_sigma: float,
 ) -> float:
-    """PR：scale=24/fps，可按 sigma 剖面淡入；native 24fps 或未启用则为 1。"""
+    """PR: scale=24/fps, optionally blended by a sigma profile; returns 1 at native 24 fps or when disabled."""
     if not options or not options.get("temporal_rope"):
         return 1.0
     fr = float(options["frame_rate"])
@@ -87,7 +87,7 @@ def apply_temporal_freq_scale(
     low_frequency_count: int,
     frequency_profile: str,
 ) -> Any:
-    """就地缩放视频行时间轴低频 RoPE；scale≈1 或 low_n=0 时跳过。"""
+    """Scale low-frequency temporal RoPE for video rows in place; skip when scale≈1 or low_n=0."""
     if video_mask is None or low_frequency_count <= 0 or abs(float(temporal_scale) - 1.0) < 1e-12:
         return time_freq
     import torch

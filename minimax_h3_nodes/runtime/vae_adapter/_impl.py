@@ -34,7 +34,7 @@ from typing import Any, Iterable, Mapping, Sequence
 
 import torch
 
-from ...vendor.minimax_h3_audio_vae import DacAudioVAE  # vendor 在 minimax_h3_nodes 顶层
+from ...vendor.minimax_h3_audio_vae import DacAudioVAE  # vendor lives at the top level of minimax_h3_nodes.
 from ...vendor.minimax_h3_video_vae import AutoencoderKLLegacy
 from ..backend_state import TORCH_BACKEND_STATE_LOCK
 
@@ -1167,10 +1167,10 @@ class MiniMaxH3AudioVAEAdapter:
             raise H3VAEError("Reference audio contains no channels")
         if channels == 1:
             waveform = waveform.repeat(2, 1)
-        elif channels > self.output_channels:  # 无 layout：均值 mono→stereo
+        elif channels > self.output_channels:  # No layout: average mono→stereo.
             import logging
             logging.getLogger(__name__).warning(
-                "audio VAE 收到 %s 声道且无 layout，已均值下混为 stereo", channels
+                "audio VAE received %s channels with no layout; averaged down to stereo", channels
             )
             waveform = waveform.mean(dim=0, keepdim=True).expand(
                 self.output_channels, -1

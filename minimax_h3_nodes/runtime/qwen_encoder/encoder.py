@@ -48,7 +48,7 @@ class MiniMaxH3TextEncoder:
         self._linear_storage_bytes = 0
         self._static_storage_bytes = 0
 
-    def _movable(self):  # 文本编码实际参与的直接子模块（可选跳过 visual 塔）
+    def _movable(self):  # Direct submodules used by text encoding (optionally skip the visual tower).
         return [m for n, m in self.model.named_children() if not (TE_VISUAL_ON_CPU and n == "visual")]
 
     def _actual_device(self):
@@ -462,7 +462,7 @@ class MiniMaxH3TextEncoder:
         need = sum(_physical_module_bytes(module) for module in mods)
         free = torch.cuda.mem_get_info(self.load_device)[0] if torch.cuda.is_available() else 0
         if free < need + TE_GPU_HEADROOM + extra_headroom:
-            LOGGER.warning("text_encoder 需 %.1fGB + %.1fGB 工作区 > 空闲 %.1fGB，回退 CPU encode",
+            LOGGER.warning("text_encoder needs %.1fGB + %.1fGB workspace > %.1fGB free; falling back to CPU encode",
                            need / 2**30, TE_GPU_HEADROOM / 2**30, free / 2**30)
             return self
         try:
@@ -471,7 +471,7 @@ class MiniMaxH3TextEncoder:
         except BaseException as exc:
             rollback_clean = self._rollback_failed_full_load(mods)
             if isinstance(exc, torch.OutOfMemoryError) and rollback_clean:
-                LOGGER.warning("text_encoder 上卡 OOM，回滚 CPU encode")
+                LOGGER.warning("text_encoder ran out of memory on GPU; falling back to CPU encode")
                 try:
                     torch.cuda.empty_cache()
                 except BaseException:

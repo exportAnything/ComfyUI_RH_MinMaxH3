@@ -16,7 +16,7 @@ dependencies = [
 ]
 
 [project.urls]
-Repository = "https://github.com/HM-RunningHub/ComfyUI_RH_MinMaxH3"
+Repository = "https://github.com/exportAnything/ComfyUI_RH_MinMaxH3"
 
 [project.optional-dependencies]
 cache-dit = ["cache-dit>=1.3.0"]

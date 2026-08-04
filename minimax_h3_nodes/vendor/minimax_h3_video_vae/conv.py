@@ -51,7 +51,8 @@ class BaseConv3d(nn.Conv3d):
         else:
             if self.pad_mode_t == "constant":
                 assert self.causal, "Zeros padding is only supported for causal mode"
-                # F.pad 一次 kernel 完成；原 zeros_like+expand+cat 要两次分配拷贝
+                # F.pad completes in one kernel; the original zeros_like+expand+cat
+                # required two allocations/copies.
                 return F.pad(
                     x,
                     (0, 0, 0, 0, self.kernel_size[0] - 1, 0),

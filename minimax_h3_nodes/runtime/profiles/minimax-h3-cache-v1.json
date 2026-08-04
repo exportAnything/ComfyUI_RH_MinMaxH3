@@ -3,7 +3,7 @@
   "profile_id": "minimax-h3-cache-v1",
   "status": "validated",
   "technique": "cache-dit",
-  "notes": "面向单卡 Comfy：旋钮与上游 Cache-DiT quality profile 一致。上游约 2× 测于 4×H200，单卡只启用同一 DBCache 旋钮，不做多卡/Ulysses 门禁；需 pip install cache-dit。",
+  "notes": "For single-GPU Comfy: controls match the upstream Cache-DiT quality profile. The upstream ~2× result was measured on 4×H200. Single-GPU mode enables the same DBCache controls without multi-GPU/Ulysses gating; requires pip install cache-dit.",
   "workloads": [
     {
       "task": "t2va",

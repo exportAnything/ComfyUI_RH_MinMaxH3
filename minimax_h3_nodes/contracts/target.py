@@ -1,4 +1,4 @@
-"""contracts.target facade（实现见 _impl）。"""
+"""contracts.target facade (implementation lives in _impl)."""
 from __future__ import annotations
 from ._impl import (
     append_ref2va_reference,

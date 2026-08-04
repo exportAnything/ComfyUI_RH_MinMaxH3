@@ -1,4 +1,4 @@
-"""Loader 节点。"""
+"""Loader nodes."""
 from __future__ import annotations
 from ._shared import *  # noqa: F403
 
@@ -36,7 +36,8 @@ def _load_dual_vae(
     normalized_task = normalize_task(task)
     video_selector = video_vae_path or _default_video_vae_model_name()
     audio_selector = audio_vae_path or _default_audio_vae_model_name()
-    # 分区准入只需要一个组件作为 hint；audio 侧在 root 解析完成后单独校验。
+    # Partition admission needs only one component as a hint; validate the audio side
+    # separately after resolving the root.
     video_component = _selector_to_component_dirname(
         video_selector,
         VIDEO_VAE_DIRNAME,
@@ -68,8 +69,9 @@ def _load_dual_vae(
         ("load_h3_vae_bundle",),
         "dual VAE",
     )
-    # 两个组件路径都是正确性关键参数，不能走 _call_supported 的可丢弃调用路径：
-    # 悄悄丢掉一个就会退回 model_root 下的另一份权重。
+    # Both component paths are correctness-critical and cannot use the optional
+    # _call_supported path: silently dropping one would fall back to the other
+    # weight under model_root.
     bundle = loader(
         model_root=str(root),
         video_vae_path=str(selected_video),
@@ -81,13 +83,14 @@ def _load_dual_vae(
         audio_compute_dtype="float32",
     )
     if bundle is None:
-        raise RuntimeError("runtime.vae_adapter 返回了 None")
+        raise RuntimeError("runtime.vae_adapter returned None")
     wrapper = {
         "schema": schema,
         "bundle": bundle,
         "model_root": str(root),
-        # vae_path 仍是 contracts 认定的主路径字段（video 侧）；audio 与两侧的
-        # 单文件权重都作为 related path 折进同一个 component fingerprint。
+        # vae_path remains the primary path recognized by contracts (video side);
+        # audio and both single-file weights are folded into the same component
+        # fingerprint as related paths.
         "vae_path": str(selected_video),
         "video_vae_path": str(selected_video),
         "audio_vae_path": str(selected_audio),
@@ -137,7 +140,7 @@ class MiniMaxH3DirectModelLoader:
                     {
                         "default": "auto",
                         "tooltip": (
-                            "auto/bfloat16 推荐；runtime 会保留 H3 指定的 fp32 层。"
+                            "auto/bfloat16 is recommended; the runtime preserves H3's designated fp32 layers."
                         ),
                     },
                 ),
@@ -213,7 +216,7 @@ class MiniMaxH3DirectModelLoader:
             transformer_weights=_optional_path(transformer_weights),
         )
         if handle is None:
-            raise RuntimeError("runtime.model_loader 返回了 None")
+            raise RuntimeError("runtime.model_loader returned None")
         return (
             {
                 "schema": H3_MODEL_SCHEMA,
@@ -242,7 +245,7 @@ class MiniMaxH3DirectTextEncoderLoader:
                     ["auto", "bfloat16", "float16", "float32"],
                     {"default": "auto"},
                 ),
-                "text_encoder_path": _component_dir_input("text_encoder", "文本编码器"),
+                "text_encoder_path": _component_dir_input("text_encoder", "text encoder"),
             },
         }
 
@@ -315,7 +318,7 @@ class MiniMaxH3DirectTextEncoderLoader:
             text_encoder_weights=_optional_path(text_encoder_weights),
         )
         if handle is None:
-            raise RuntimeError("runtime.qwen_encoder 返回了 None")
+            raise RuntimeError("runtime.qwen_encoder returned None")
         return (
             {
                 "schema": H3_TEXT_ENCODER_SCHEMA,
@@ -417,7 +420,7 @@ class _MiniMaxH3ExplicitModelLoader:
                     ["auto", "bfloat16", "float16"],
                     {
                         "default": "auto",
-                        "tooltip": "auto/bfloat16 推荐；runtime 保留 H3 指定的 fp32 层。",
+                        "tooltip": "auto/bfloat16 is recommended; the runtime preserves H3's designated fp32 layers.",
                     },
                 ),
                 "transformer_path": _component_dir_input(
@@ -489,7 +492,7 @@ class _MiniMaxH3ExplicitModelLoader:
             offload_device="auto",
         )
         if handle is None:
-            raise RuntimeError("runtime.model_loader 返回了 None")
+            raise RuntimeError("runtime.model_loader returned None")
         release_fingerprint = _release_fingerprint(root, partition, release_info)
         component_fingerprint = _component_fingerprint(
             release_fingerprint,
@@ -545,7 +548,7 @@ class _MiniMaxH3ExplicitTextEncoderLoader:
                     {"default": "auto"},
                 ),
                 "text_encoder_path": _component_dir_input(
-                    "text_encoder", "文本编码器", partition
+                    "text_encoder", "text encoder", partition
                 ),
             }
         }
@@ -613,7 +616,7 @@ class _MiniMaxH3ExplicitTextEncoderLoader:
             offload_device="cpu",
         )
         if handle is None:
-            raise RuntimeError("runtime.qwen_encoder 返回了 None")
+            raise RuntimeError("runtime.qwen_encoder returned None")
         tokenizer_component = Path(
             getattr(handle, "tokenizer_component_path", selected_text_encoder)
         ).resolve()

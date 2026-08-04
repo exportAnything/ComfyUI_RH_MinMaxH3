@@ -1,7 +1,7 @@
-"""MiniMax-H3 contracts 包：facade + _impl。"""
+"""MiniMax-H3 contracts package: facade plus _impl."""
 from __future__ import annotations
 from ._impl import *  # noqa: F403
-# __all__ 未列但跨模块常用的几何常量/工具
+# Geometry constants and helpers used across modules but not listed in __all__.
 from ._impl import (  # noqa: F401
     H3_CANVAS_MULTIPLE, H3_MAX_ASPECT_RATIO, H3_MAX_DURATION_SECONDS, H3_MAX_PIXELS,
     H3_MIN_ASPECT_RATIO, H3_MIN_DURATION_SECONDS, H3_SHORT_EDGE, parse_aspect_ratio,

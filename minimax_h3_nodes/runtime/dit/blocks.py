@@ -1,4 +1,4 @@
-"""dit.blocks facade。"""
+"""dit.blocks facade."""
 from __future__ import annotations
 from ._impl import (
     MiniMaxH3Rope,

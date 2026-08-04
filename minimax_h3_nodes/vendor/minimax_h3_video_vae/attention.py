@@ -26,12 +26,13 @@ def _vit_norm_input(module, hidden_states):
 
 
 def _apply_qk_norm(module, hidden_states):
-    """无仿射参数时跳过 fp32 往返；输出与 fp32-norm-then-cast 逐位相同。
+    """Skip the fp32 round trip when there are no affine parameters; output is bit-identical to fp32-norm-then-cast.
 
-    CUDA 的 LayerNorm/RMSNorm 对 half/bf16 输入本就在 fp32 累加。当 norm 没有
-    weight/bias 时（H3 ViT 的 qk_norm_affine=False），关掉 autocast 直接送半精度
-    进去，结果与"转 fp32 → norm → 转回"完全一致，但省掉两次全张量 cast。
-    条件不满足时回落原路径。
+    CUDA LayerNorm/RMSNorm already accumulates half/bf16 inputs in fp32. When the
+    norm has no weight/bias (qk_norm_affine=False in H3 ViT), disabling autocast
+    and passing half precision directly is identical to "cast to fp32 → norm →
+    cast back" while avoiding two full-tensor casts. Fall back to the original
+    path when these conditions are not met.
     """
     if (
         _env_flag("MINIMAX_H3_VAE_DECODER_VIT_FP32_NORM", "1")

@@ -47,9 +47,10 @@ def _vit_norm_input(module, hidden_states):
 
 
 def _scaled_residual_add(residual, x, scale):
-    """residual + x * scale；x 是 attn/ff 的新输出，可就地算省两次分配。
+    """residual + x * scale; x is the new attn/ff output, so in-place evaluation saves two allocations.
 
-    浮点上 (x*s)+r 与 r+(x*s) 逐位相同（加法对同一对操作数可交换）。
+    In floating point, (x*s)+r and r+(x*s) are bit-identical because addition is
+    commutative for the same operand pair.
     """
     if torch.is_grad_enabled() or not isinstance(x, torch.Tensor):
         return residual + x * scale
@@ -105,7 +106,8 @@ class FeedForward(nn.Module):
 
         if self.use_gated:
             gate, hidden_states = hidden_states.chunk(2, dim=-1)
-            # act_fn(gate) 是新张量，就地乘可省一个 inner_dim 大小的中间结果
+            # act_fn(gate) is a new tensor; in-place multiplication saves an
+            # inner_dim-sized intermediate.
             hidden_states = self.act_fn(gate).mul_(hidden_states)
         else:
             hidden_states = self.act_fn(hidden_states)

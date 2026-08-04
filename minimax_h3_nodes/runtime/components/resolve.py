@@ -1,4 +1,4 @@
-"""components.resolve facade。"""
+"""components.resolve facade."""
 from __future__ import annotations
 from ._impl import (
     classify_weight_filename,

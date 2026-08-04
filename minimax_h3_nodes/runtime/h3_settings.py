@@ -1,29 +1,31 @@
-"""H3 runtime 统一常量（量化标记 / 加载策略 / 加速），禁止在别处重复定义。"""
+"""Canonical H3 runtime constants (quantization markers, loading policy, acceleration); do not redefine elsewhere."""
 
 MODEL_NAME = "MiniMax-H3"
 DEFAULT_PARTITION = "FL2VA"
-QUANT_KEY_SUFFIXES = (".comfy_quant", ".weight_scale")  # checkpoint 量化标记
+QUANT_KEY_SUFFIXES = (".comfy_quant", ".weight_scale")  # Checkpoint quantization markers.
 QKV_WEIGHT_SUFFIX = ".attn.qkv_proj.weight"
 QKV_SCALE_SUFFIX = ".attn.qkv_proj.weight_scale"
 INT8_FORMAT = "int8_tensorwise"  # Comfy QUANT_ALGOS / comfy_quant.format
-QUANT_NAME_TAG = "int8_convrot"  # 产物文件名用的量化格式标签
-TEXT_ENCODER_MODEL_SLUG = "qwen3-vl-32b"  # TE 权重文件名前缀
-# 目录：组件+格式；DiT 文件：MiniMax-H3-{FL2VA|Ref2VA}-int8_convrot；TE：qwen3-vl-32b-int8_convrot
+QUANT_NAME_TAG = "int8_convrot"  # Quantization-format tag used in artifact filenames.
+TEXT_ENCODER_MODEL_SLUG = "qwen3-vl-32b"  # TE weight filename prefix.
+# Directories: component+format; DiT file: MiniMax-H3-{FL2VA|Ref2VA}-int8_convrot;
+# TE: qwen3-vl-32b-int8_convrot.
 INT8_DIT_DIRNAME = f"transformer_{QUANT_NAME_TAG}"
 INT8_TE_DIRNAME = f"text_encoder_{QUANT_NAME_TAG}"
-VAE_MERGED_DIRNAME = "vae"  # video_vae+audio_vae 合并包
+VAE_MERGED_DIRNAME = "vae"  # Combined video_vae+audio_vae package.
 VIDEO_VAE_FILENAME = f"{MODEL_NAME}-video_vae.safetensors"
 AUDIO_VAE_FILENAME = f"{MODEL_NAME}-audio_vae.safetensors"
 INT8_TE_FILENAME = f"{TEXT_ENCODER_MODEL_SLUG}-{QUANT_NAME_TAG}.safetensors"
-BF16_TE_MODEL_NAME = TEXT_ENCODER_MODEL_SLUG  # 分片 BF16 逻辑名 → text_encoder/
-VAE_MERGED_MODEL_NAME = f"{MODEL_NAME}-vae"  # 合并双 VAE 逻辑名 → vae/
+BF16_TE_MODEL_NAME = TEXT_ENCODER_MODEL_SLUG  # Sharded BF16 logical name → text_encoder/.
+VAE_MERGED_MODEL_NAME = f"{MODEL_NAME}-vae"  # Combined dual-VAE logical name → vae/.
 VIDEO_VAE_DIRNAME, AUDIO_VAE_DIRNAME = "video_vae", "audio_vae"
-VIDEO_VAE_MODEL_NAME = f"{MODEL_NAME}-video_vae"  # 分片/原始 video VAE 逻辑名
-AUDIO_VAE_MODEL_NAME = f"{MODEL_NAME}-audio_vae"  # 分片/原始 audio VAE 逻辑名
-# ---- 专属权重根 ComfyUI/models/MiniMax-H3：扁平存放单文件转换产物 ----
-# 上游分片 release 留在 models/diffusers/MiniMax-H3/<分区>/ 下，继续提供
-# config.json / source/config.json / tokenizer / preprocessor；专属根只放权重，
-# 组件类型与分区一律由文件名判定（见 classify_weight_filename）。
+VIDEO_VAE_MODEL_NAME = f"{MODEL_NAME}-video_vae"  # Sharded/source video VAE logical name.
+AUDIO_VAE_MODEL_NAME = f"{MODEL_NAME}-audio_vae"  # Sharded/source audio VAE logical name.
+# ---- Dedicated weight root ComfyUI/models/MiniMax-H3: flat converted single-file artifacts ----
+# The upstream sharded release remains under models/diffusers/MiniMax-H3/<partition>/
+# and supplies config.json / source/config.json / tokenizer / preprocessor. The
+# dedicated root contains weights only; component type and partition are determined
+# exclusively from filenames (see classify_weight_filename).
 WEIGHTS_ROOT_DIRNAME = MODEL_NAME
 H3_COMPONENT_KINDS = (
     "transformer",
@@ -31,75 +33,75 @@ H3_COMPONENT_KINDS = (
     VIDEO_VAE_DIRNAME,
     AUDIO_VAE_DIRNAME,
 )
-QUANT_EXCLUDE_HINT = "adaln_proj|token_refiner"  # DiT 量化脚本建议 --exclude
-# ---- adaLN 曲线表 checkpoint（见 runtime/adaln_curve.py）----
-ADALN_CURVE_TABLE_KEY = "adaln_t_table"  # checkpoint buffer 名，[grid, rank] fp32
-ADALN_CURVE_DEFAULT_GRID = 1024  # 转换默认采样点数
-ADALN_CURVE_DEFAULT_RANK = 64  # 转换默认基秩 k（adaLN 权重宽度 2688 → k）
-ADALN_CURVE_DIRNAME_SUFFIX = "adaln_curve"  # 输出目录后缀：transformer_adaln_curve
-TEXT_ENCODER_SELECTED_LAYERS = 50  # 与 qwen_encoder.SELECTED_LAYERS 一致
-TEXT_ENCODER_QUANT_LINEAR = (  # 仅量化 language_model.layers.<N>.{self_attn.*_proj,mlp.*_proj}，N<50
+QUANT_EXCLUDE_HINT = "adaln_proj|token_refiner"  # Suggested --exclude for the DiT quantization script.
+# ---- adaLN curve-table checkpoint (see runtime/adaln_curve.py) ----
+ADALN_CURVE_TABLE_KEY = "adaln_t_table"  # Checkpoint buffer name, [grid, rank] fp32.
+ADALN_CURVE_DEFAULT_GRID = 1024  # Default number of conversion samples.
+ADALN_CURVE_DEFAULT_RANK = 64  # Default basis rank k for conversion (adaLN weight width 2688 → k).
+ADALN_CURVE_DIRNAME_SUFFIX = "adaln_curve"  # Output-directory suffix: transformer_adaln_curve.
+TEXT_ENCODER_SELECTED_LAYERS = 50  # Must match qwen_encoder.SELECTED_LAYERS.
+TEXT_ENCODER_QUANT_LINEAR = (  # Quantize only language_model.layers.<N>.{self_attn.*_proj,mlp.*_proj}, N<50.
     r"^model\.language_model\.layers\.(\d+)\."
     r"(?:self_attn\.(?:q|k|v|o)_proj|mlp\.(?:gate|up|down)_proj)$"
 )
-TEXT_ENCODER_DROP_KEY = r"(?:^lm_head\.|language_model\.layers\.(?:[5-9]\d|\d{3,})\.)"  # 丢弃 lm_head 与 layer>=50
-FORCE_FULL_LOAD_BF16 = True  # layerwise 关闭时 BF16 仍整模上卡
-ALLOW_PARTIAL_OFFLOAD_INT8 = True  # MixedPrecisionOps 可部分 offload
-ENABLE_DIT_LAYERWISE_OFFLOAD = True  # BF16：True=auto（整模+reserve 放得下则关）；False=强制整模
-DIT_LAYERWISE_PREFETCH = 1  # 预取 block 数（与上游 prefetch_size 默认一致）
-DIT_LAYERWISE_PIN_MEMORY = True  # block 权重 pin 到主机内存，便于非阻塞 H2D
-TE_GPU_HEADROOM = 3 << 30  # TE 上卡前额外预留的 encode 工作区显存（字节）
-TE_VISUAL_ON_CPU = True  # 纯文本编码不搬 visual 塔，常驻 CPU 省 ~7GB 显存
-DIT_INFERENCE_RESERVE = 6 << 30  # 无 shape 提示时的默认激活预留
-DIT_ACTIVATION_FLOOR = 2 << 30  # 激活预算下限
-DIT_ACTIVATION_CEIL = 24 << 30  # 激活预算上限（防估炸）
-DIT_SAFETY_MARGIN = 2 << 30  # resolve 时额外安全余量
-DIT_ACTIVATION_BYTES_PER_TOKEN = 0  # 0=按 hidden×8×elem 估算；可钉死覆盖
-DIT_ACTIVATION_EWMA_ALPHA = 0.3  # 实测峰值 EWMA 系数
-# ---- 热路径 feature flags（回滚只切 flag，不重装环境）----
-OPT_SDPA_PRECOMPUTED_BOUNDS = True  # 预计算 cu_seqlens bounds，消除每层 DtoH
-OPT_PREPARED_STRUCTURE = True  # session 缓存 RoPE/结构张量
-OPT_INPLACE_EULER_UPDATE = True  # 原位更新 target rows，避免整序列 clone
-OPT_ADALN_SEGMENT_BROADCAST = True  # adaLN 按连续段广播 in-place，避免 index_select 物化
-OPT_ADALN_PRECOMPUTE = True  # 采样前预计算全部 timestep 的 adaLN，推理只查表
-OPT_ADALN_RELEASE_WEIGHTS = True  # 预计算后释放 adaln/time_embedder 权重（约 40% DiT）
-OPT_ADALN_CACHE_DEVICE = "auto"  # auto|ram|vram；auto：总显存>40GB 放 VRAM 否则 RAM
-OPT_INT8_FUSED_SWIGLU = True  # INT8 MLP：swiglu 折进激活量化 kernel（需新版 comfy.ops）
-OPT_FUSED_QK_ROPE = True  # 注意力：融合 per-head RMSNorm + split-half RoPE（需 comfy-kitchen）
-OPT_FUSED_QK_ROPE_CUDA_ONLY = True  # comfy-kitchen 只有 CUDA 实现，非 CUDA 一律回退
-OPT_PREBUILT_TIMESTEPS = True  # 预生成连续 sigma/timestep 张量
-OPT_DYNAMIC_ACTIVATION_RESERVE = True  # 按画布估算激活预留
-DIT_DEBUG_STRUCTURE_CHECKS = False  # True 时 forward 每步恢复 .item() 校验
-# ---- 生命周期 / 缓存 / 降档 ----
-OPT_RESIDENCY_LEASE = True  # 推理后租约驻留，非每次冷卸载
+TEXT_ENCODER_DROP_KEY = r"(?:^lm_head\.|language_model\.layers\.(?:[5-9]\d|\d{3,})\.)"  # Drop lm_head and layers >=50.
+FORCE_FULL_LOAD_BF16 = True  # When layerwise is off, still load the full BF16 model onto GPU.
+ALLOW_PARTIAL_OFFLOAD_INT8 = True  # MixedPrecisionOps supports partial offload.
+ENABLE_DIT_LAYERWISE_OFFLOAD = True  # BF16: True=auto (disable when full model+reserve fits); False=force full model.
+DIT_LAYERWISE_PREFETCH = 1  # Number of blocks to prefetch (matches upstream prefetch_size default).
+DIT_LAYERWISE_PIN_MEMORY = True  # Pin block weights in host memory for nonblocking H2D.
+TE_GPU_HEADROOM = 3 << 30  # Additional encode-workspace VRAM reserved before moving TE to GPU (bytes).
+TE_VISUAL_ON_CPU = True  # Do not move the visual tower for text-only encoding; saves ~7GB VRAM.
+DIT_INFERENCE_RESERVE = 6 << 30  # Default activation reserve when no shape hint is available.
+DIT_ACTIVATION_FLOOR = 2 << 30  # Activation-budget floor.
+DIT_ACTIVATION_CEIL = 24 << 30  # Activation-budget ceiling to prevent runaway estimates.
+DIT_SAFETY_MARGIN = 2 << 30  # Additional safety margin during resolution.
+DIT_ACTIVATION_BYTES_PER_TOKEN = 0  # 0=estimate as hidden×8×element size; set explicitly to override.
+DIT_ACTIVATION_EWMA_ALPHA = 0.3  # EWMA coefficient for measured peaks.
+# ---- Hot-path feature flags (rollback by changing a flag, no reinstall required) ----
+OPT_SDPA_PRECOMPUTED_BOUNDS = True  # Precompute cu_seqlens bounds to remove per-layer DtoH.
+OPT_PREPARED_STRUCTURE = True  # Cache RoPE/structural tensors for the session.
+OPT_INPLACE_EULER_UPDATE = True  # Update target rows in place to avoid cloning the full sequence.
+OPT_ADALN_SEGMENT_BROADCAST = True  # Broadcast adaLN by contiguous runs in place, avoiding materialized index_select.
+OPT_ADALN_PRECOMPUTE = True  # Precompute adaLN for every timestep before sampling; inference uses table lookups.
+OPT_ADALN_RELEASE_WEIGHTS = True  # Release adaln/time_embedder weights after precompute (~40% of DiT).
+OPT_ADALN_CACHE_DEVICE = "auto"  # auto|ram|vram; auto uses VRAM above 40GB total, otherwise RAM.
+OPT_INT8_FUSED_SWIGLU = True  # INT8 MLP: fold swiglu into the activation-quantization kernel (needs newer comfy.ops).
+OPT_FUSED_QK_ROPE = True  # Attention: fused per-head RMSNorm + split-half RoPE (needs comfy-kitchen).
+OPT_FUSED_QK_ROPE_CUDA_ONLY = True  # comfy-kitchen implements CUDA only; always fall back elsewhere.
+OPT_PREBUILT_TIMESTEPS = True  # Prebuild contiguous sigma/timestep tensors.
+OPT_DYNAMIC_ACTIVATION_RESERVE = True  # Estimate activation reserve from the canvas.
+DIT_DEBUG_STRUCTURE_CHECKS = False  # True restores per-step .item() checks in forward.
+# ---- Lifecycle / cache / downscaling ----
+OPT_RESIDENCY_LEASE = True  # Keep a residency lease after inference instead of cold-unloading every run.
 RESIDENCY_POLICY = "balanced"  # safe|balanced|resident
-RESIDENCY_TTL_SECONDS = 120  # 空闲 TTL 后冷卸载
-RESIDENCY_VAE_TTL_SECONDS = 60  # VAE 短 TTL
-OPT_ENCODE_CACHE = True  # Qwen/条件编码 LRU
-ENCODE_CACHE_MAX_BYTES = 2 << 30  # 文本+视觉特征缓存上限
-OPT_VAE_RESIDENCY = True  # VAE session 短 TTL 复用
-OPT_WRITE_SIDECAR = True  # Decode 旁写 JSON 元数据
-FORCE_ABSOLUTE_MODEL_ROOTS = False  # True=COMBO 一律写绝对路径；False 时同名冲突才回退绝对路径
-# ---- 可观测性 / 基准 ----
-OPT_TELEMETRY = True  # 阶段计时 + 峰值显存 + 每步统计
-TELEMETRY_CUDA_EVENTS = True  # CUDA Event 双计时（无 CUDA 时自动降级）
-TELEMETRY_STEP_ABORT_SECONDS = 75.0  # 连续两步超过则标记异常（矩阵慢路径可豁免）
-TELEMETRY_STALL_SECONDS = 900.0  # 采样无步进判定
+RESIDENCY_TTL_SECONDS = 120  # Cold-unload after the idle TTL.
+RESIDENCY_VAE_TTL_SECONDS = 60  # Short VAE TTL.
+OPT_ENCODE_CACHE = True  # Qwen/conditioning encoding LRU.
+ENCODE_CACHE_MAX_BYTES = 2 << 30  # Text+visual feature cache limit.
+OPT_VAE_RESIDENCY = True  # Reuse VAE sessions with a short TTL.
+OPT_WRITE_SIDECAR = True  # Write JSON metadata alongside Decode output.
+FORCE_ABSOLUTE_MODEL_ROOTS = False  # True=always use absolute COMBO paths; False=fall back only on name collisions.
+# ---- Observability / benchmarks ----
+OPT_TELEMETRY = True  # Stage timings + peak VRAM + per-step statistics.
+TELEMETRY_CUDA_EVENTS = True  # Dual timing with CUDA events (automatically degrades without CUDA).
+TELEMETRY_STEP_ABORT_SECONDS = 75.0  # Flag anomaly after two consecutive slow steps (matrix slow path may be exempt).
+TELEMETRY_STALL_SECONDS = 900.0  # Sampling-without-progress threshold.
 BENCHMARK_DEFAULT_SEED = 42
 BENCHMARK_DEFAULT_REPEATS = 3
-BENCHMARK_ACCEL_GOLDEN = "off"  # golden 必须 accel=off
-# 16:9 上游降档链；其它比例按短边序列保比例 32 对齐
+BENCHMARK_ACCEL_GOLDEN = "off"  # Golden runs must use accel=off.
+# Upstream 16:9 downscale chain; other ratios preserve aspect using short-edge steps aligned to 32.
 H3_DOWNSCALE_16_9 = ((1344, 768), (1024, 576), (832, 480), (640, 352))
 H3_DOWNSCALE_SHORT_EDGES = (768, 576, 480, 352)
-FFMPEG_BIN, FFPROBE_BIN = "ffmpeg", "ffprobe"  # Ref2VA 媒体工具
-TRANSFORMERS_MIN_VERSION = "4.57.0"  # Qwen3-VL 最低验证
-TRANSFORMERS_MAX_VERSION = "5.8.1"  # 当前钉死上限（含）
-# ---- 采样器（euler=上游 50 步一阶；res_multistep=二阶多步，~21 sigma 点等质）----
+FFMPEG_BIN, FFPROBE_BIN = "ffmpeg", "ffprobe"  # Ref2VA media tools.
+TRANSFORMERS_MIN_VERSION = "4.57.0"  # Lowest validated Qwen3-VL version.
+TRANSFORMERS_MAX_VERSION = "5.8.1"  # Current inclusive upper pin.
+# ---- Sampler (euler=upstream 50-step first order; res_multistep=second-order multistep, ~21 sigma points at equal quality) ----
 SAMPLER_MODE_EULER = "euler"
 SAMPLER_MODE_RES_MULTISTEP = "res_multistep"
 SAMPLER_MODE_CHOICES = (SAMPLER_MODE_EULER, SAMPLER_MODE_RES_MULTISTEP)
 
-# ---- 采样加速（近似；默认 off；Cache-DiT / velocity-cache 互斥）----
+# ---- Sampling acceleration (approximate; off by default; Cache-DiT and velocity-cache are mutually exclusive) ----
 ACCEL_OFF, ACCEL_AUTO = "off", "auto"
 ACCEL_CACHE_DIT_PROFILE = "minimax-h3-cache-v1"
 ACCEL_VELOCITY_PROFILE = "minimax-h3-velocity-cache-v1"
@@ -108,7 +110,7 @@ ACCEL_MODE_CHOICES = (
     ACCEL_OFF, ACCEL_AUTO, ACCEL_VELOCITY_PROFILE, ACCEL_CACHE_DIT_PROFILE,
     ACCEL_MANUAL_VELOCITY, ACCEL_MANUAL_CACHE_DIT,
 )
-# 旧工作流字段名别名
+# Legacy workflow field-name aliases.
 CACHE_DIT_MODE_OFF, CACHE_DIT_MODE_AUTO, CACHE_DIT_MODE_MANUAL = ACCEL_OFF, ACCEL_AUTO, ACCEL_MANUAL_CACHE_DIT
 CACHE_DIT_PROFILE_ID = ACCEL_CACHE_DIT_PROFILE
 CACHE_DIT_MODE_CHOICES = ACCEL_MODE_CHOICES
@@ -120,19 +122,20 @@ CACHE_DIT_MC = 2
 CACHE_DIT_TAYLORSEER, CACHE_DIT_TS_ORDER = False, 1
 CACHE_DIT_SCM_PRESET, CACHE_DIT_SCM_POLICY = "none", "dynamic"
 CACHE_DIT_MARK = "_h3_cache_dit_enabled"
-# velocity-cache 上游验证旋钮（上游验证 manifest）
+# Upstream-validated velocity-cache controls (upstream validation manifest).
 VELOCITY_STRIDE, VELOCITY_TAYLORSEER, VELOCITY_TS_ORDER = 4, True, 1
 VELOCITY_TAIL_DENSE, VELOCITY_TAIL_REBALANCE, VELOCITY_FINAL_REFRESH = 2, True, True
-# ---- 参考图尺寸策略----
-# match：按生成画布像素面积等比只缩不放；max：参考管线独立的 2048 短边。
-# 参考 token 每个采样步都参与注意力，分辨率直接换算成每步开销。
+# ---- Reference-image sizing policy ----
+# match: downscale only to the generated canvas area while preserving aspect ratio;
+# max: independent 2048-pixel short edge for the reference pipeline. Reference tokens
+# participate in attention at every sampling step, so resolution directly affects per-step cost.
 H3_REFERENCE_IMAGE_SIZE_MATCH = "match"
 H3_REFERENCE_IMAGE_SIZE_MAX = "max"
 H3_REFERENCE_IMAGE_SIZE_MODES = (
     H3_REFERENCE_IMAGE_SIZE_MATCH,
     H3_REFERENCE_IMAGE_SIZE_MAX,
 )
-# ---- 实验性帧率条件（实验性；非上游契约，不改 24fps 时序格）----
+# ---- Experimental frame-rate conditioning (not an upstream contract; does not change the 24 fps time grid) ----
 H3_NATIVE_FPS = 24.0
 FRAME_RATE_ROPE_FREQ_PROFILES = ("hard", "linear", "smoothstep")
 FRAME_RATE_ROPE_SIGMA_PROFILES = ("constant", "linear", "smoothstep")
@@ -168,13 +171,13 @@ def classify_weight_filename(name: str) -> tuple[str, str | None] | None:
     return None
 
 
-def int8_dit_filename(partition: str | None = None) -> str:  # MiniMax-H3+模型类型+量化格式
+def int8_dit_filename(partition: str | None = None) -> str:  # MiniMax-H3 + model type + quantization format.
     return f"{MODEL_NAME}-{partition or DEFAULT_PARTITION}-{QUANT_NAME_TAG}.safetensors"
 
 
-def bf16_dit_model_name(partition: str | None = None) -> str:  # 分片 BF16 DiT 逻辑名 → transformer/
+def bf16_dit_model_name(partition: str | None = None) -> str:  # Sharded BF16 DiT logical name → transformer/.
     return f"{MODEL_NAME}-{partition or DEFAULT_PARTITION}"
 
 
-INT8_DIT_FILENAME = int8_dit_filename(DEFAULT_PARTITION)  # 默认 FL2VA，脚本可按分区覆盖
+INT8_DIT_FILENAME = int8_dit_filename(DEFAULT_PARTITION)  # Defaults to FL2VA; scripts can override by partition.
 BF16_DIT_MODEL_NAME = bf16_dit_model_name(DEFAULT_PARTITION)

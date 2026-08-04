@@ -1,4 +1,4 @@
-"""packing 包 facade。"""
+"""packing package facade."""
 from __future__ import annotations
 from ._core import *  # noqa: F403
 from .sequences import *  # noqa: F403

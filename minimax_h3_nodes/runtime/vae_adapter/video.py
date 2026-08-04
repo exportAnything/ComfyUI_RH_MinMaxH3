@@ -1,4 +1,4 @@
-"""vae_adapter.video facade。"""
+"""vae_adapter.video facade."""
 from __future__ import annotations
 from ._impl import (
     MiniMaxH3VideoVAEAdapter,
