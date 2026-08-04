@@ -132,6 +132,25 @@ class QuantMarkerTests(unittest.TestCase):
         self.assertEqual(projection.linear.weight.dtype, torch.float32)
         self.assertEqual(projection.linear.bias.dtype, torch.float32)
 
+        quantized = loader._flush_linear(
+            projection.linear,
+            "blocks.0.adaln_proj.linear.",
+            {
+                "weight": torch.ones(
+                    tuple(projection.linear.weight.shape), dtype=torch.float16
+                ),
+                "bias": torch.ones(
+                    tuple(projection.linear.bias.shape), dtype=torch.float16
+                ),
+            },
+            torch.device("cpu"),
+        )
+
+        self.assertFalse(quantized)
+        self.assertEqual(projection.linear.weight.dtype, torch.float32)
+        self.assertEqual(projection.linear.bias.dtype, torch.float32)
+        self.assertEqual(projection.linear.weight.device.type, "cpu")
+
     def test_fp8_input_scale_is_an_explicit_fp32_parameter(self):
         class FakeDiT:
             use_adaln_curves = True
@@ -255,35 +274,6 @@ class QuantMarkerTests(unittest.TestCase):
                 bag,
                 torch.device("cpu"),
             )
-
-    def test_meta_assign_preserves_nonquantized_linear_dtype(self):
-        class FakeMixedPrecisionLinear(torch.nn.Linear):
-            pass
-
-        module = FakeMixedPrecisionLinear(
-            3,
-            2,
-            bias=True,
-            device="meta",
-            dtype=torch.float32,
-        )
-        bag = {
-            "weight": torch.ones((2, 3), dtype=torch.float16),
-            "bias": torch.ones(2, dtype=torch.float16),
-        }
-
-        quantized = loader._flush_linear(
-            module,
-            "blocks.0.adaln_proj.linear.",
-            bag,
-            torch.device("cpu"),
-        )
-
-        self.assertFalse(quantized)
-        self.assertEqual(module.weight.dtype, torch.float32)
-        self.assertEqual(module.bias.dtype, torch.float32)
-        self.assertEqual(module.weight.device.type, "cpu")
-
 
 @unittest.skipUnless(INSTALLED_FP8.is_file(), "local MiniMax-H3 FP8 file absent")
 class InstalledCheckpointHeaderTests(unittest.TestCase):

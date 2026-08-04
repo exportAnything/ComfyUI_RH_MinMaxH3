@@ -793,7 +793,7 @@ class MiniMaxH3AdalnProj(nn.Module):
         # dtype and ignores this constructor's explicit dtype. Curve-table H3
         # checkpoints require their small low-rank adaLN projections to remain
         # FP32, so keep those projections as native Linears.
-        Linear = nn.Linear if dtype == torch.float32 else _linear_cls(operations)
+        Linear = nn.Linear if config.use_adaln_curves else _linear_cls(operations)
         self.linear = Linear(
             config.time_embed_dim,
             out_features,
