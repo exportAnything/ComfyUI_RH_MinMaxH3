@@ -22,6 +22,7 @@ from minimax_h3_nodes.runtime import attention_backends as backends
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS = ROOT / "examples" / "workflows"
 CJK = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff]")
+C0_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f]")
 
 
 class _FakeSampling:
@@ -439,6 +440,7 @@ class AttentionWorkflowTests(unittest.TestCase):
             "RHMiniMaxH3DecodeAV",
             "StandaloneSageAttentionPatch",
             "SolAttnMiniMaxH3Patcher",
+            "LTXReframeCustomAudioLoader",
         }
         forbidden_prefixes = (
             "RHMiniMaxH3Direct",
@@ -451,8 +453,10 @@ class AttentionWorkflowTests(unittest.TestCase):
                 raw = path.read_text(encoding="utf-8")
                 workflow = json.loads(raw)
                 types = {node["type"] for node in self._all_nodes(workflow)}
+                decoded_text = "\n".join(_flatten_strings(workflow))
 
                 self.assertIsNone(CJK.search(raw))
+                self.assertIsNone(C0_CONTROL.search(decoded_text))
                 self.assertTrue(forbidden_exact.isdisjoint(types))
                 self.assertFalse(
                     any(
@@ -495,6 +499,10 @@ class AttentionWorkflowTests(unittest.TestCase):
                     1,
                     "AUDIO",
                 ),
+            },
+            "ref2va_video_custom_audio.json": {
+                "ref_videos.ref_video_0": ("GetVideoComponents", 0, "IMAGE"),
+                "ref_audios.ref_audio_0": ("TrimAudioDuration", 0, "AUDIO"),
             },
         }
 
@@ -543,7 +551,10 @@ class AttentionWorkflowTests(unittest.TestCase):
                 self.assertEqual((scheduler_link[1], scheduler_link[3]), (patch["id"], scheduler["id"]))
                 self.assertEqual((guider_link[1], guider_link[3]), (patch["id"], guider["id"]))
 
-                if name == "ref2va_video_audio.json":
+                if name in {
+                    "ref2va_video_audio.json",
+                    "ref2va_video_custom_audio.json",
+                }:
                     components = next(
                         node
                         for node in workflow["nodes"]
@@ -552,6 +563,28 @@ class AttentionWorkflowTests(unittest.TestCase):
                     video_link = links[components["inputs"][0]["link"]]
                     self.assertEqual(nodes[video_link[1]]["type"], "LoadVideo")
                     self.assertEqual(video_link[5], "VIDEO")
+
+                if name == "ref2va_video_custom_audio.json":
+                    trim = next(
+                        node
+                        for node in workflow["nodes"]
+                        if node["type"] == "TrimAudioDuration"
+                    )
+                    audio_link = links[trim["inputs"][0]["link"]]
+                    duration_link = links[trim["inputs"][2]["link"]]
+                    prompt = next(
+                        node
+                        for node in workflow["nodes"]
+                        if node["type"] == "PrimitiveStringMultiline"
+                    )["widgets_values"][0]
+
+                    self.assertEqual(nodes[audio_link[1]]["type"], "LoadAudio")
+                    self.assertEqual(nodes[duration_link[1]]["type"], "PrimitiveFloat")
+                    self.assertEqual(trim["widgets_values"][0], 0)
+                    self.assertIn("<Video 1>", prompt)
+                    self.assertIn("<Audio 1>", prompt)
+                    self.assertNotIn("<Video 0>", prompt)
+                    self.assertNotIn("<Audio 0>", prompt)
 
     def test_fl2va_workflows_use_native_keyframe_conditioning(self):
         cases = {

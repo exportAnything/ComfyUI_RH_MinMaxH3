@@ -194,6 +194,7 @@ Ready-to-load graphs live in [`examples/workflows/`](examples/workflows):
 | Ref2VA | [`ref2va_image.json`](examples/workflows/ref2va_image.json) | native graph + one reference image |
 | Ref2VA | [`ref2va_image_audio.json`](examples/workflows/ref2va_image_audio.json) | native graph + image and standalone audio |
 | Ref2VA | [`ref2va_video_audio.json`](examples/workflows/ref2va_video_audio.json) | native graph + 24-fps video and paired soundtrack |
+| Ref2VA | [`ref2va_video_custom_audio.json`](examples/workflows/ref2va_video_custom_audio.json) | native graph + 24-fps video and independent custom audio |
 
 The native graphs default to the 16:9 / 0.4-megapixel resolution preset
 (`864×480`), five seconds, 20 steps, the `simple` scheduler, and
@@ -208,8 +209,10 @@ than anchoring a specific output frame.
 
 **Ref2VA reference order is significant.** Native reference sockets are grouped
 by media type and use one-based prompt tags such as `<Picture 1>`, `<Video 1>`,
-and `<Audio 1>`. The video+audio workflow pairs frames and soundtrack through
-matching native socket suffixes. Its source video must be 24 fps because
+and `<Audio 1>`. `ref2va_video_audio.json` pairs a video's frames and embedded
+soundtrack through matching native socket suffixes. The custom-audio variant
+ignores the video's embedded soundtrack and supplies an independent audio
+reference through core ComfyUI nodes. Reference videos must be 24 fps because
 `GetVideoComponents` does not resample frames.
 
 ## 📝 Node Reference
@@ -291,6 +294,15 @@ turned off independently for rollback.
   and peak VRAM; `OPT_WRITE_SIDECAR` writes a JSON sidecar beside each render.
 
 ## 📋 Changelog
+
+### 0.6.3
+
+- Added a core-only Ref2VA workflow for a 24-fps reference video plus an
+  independently uploaded and trimmed audio reference.
+- Synchronized the custom-audio trim length with the output Duration control and
+  documented the correct one-based `<Video 1>` / `<Audio 1>` prompt tags.
+- Fixed hidden control characters in native workflow helper notes and added a
+  regression check for decoded note text.
 
 ### 0.6.2
 

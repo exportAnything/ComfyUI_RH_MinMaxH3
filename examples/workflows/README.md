@@ -15,6 +15,7 @@ directly onto the canvas or opened with **Load**.
 | Ref2VA | `ref2va_image.json` | Native graph; reference image |
 | Ref2VA | `ref2va_image_audio.json` | Native graph; reference image + standalone audio |
 | Ref2VA | `ref2va_video_audio.json` | Native graph; 24-fps reference video + paired soundtrack |
+| Ref2VA | `ref2va_video_custom_audio.json` | Native graph; 24-fps reference video + independent custom audio |
 
 All default workflows now use native ComfyUI MiniMax H3 conditioning and stock
 sampling. They default to 16:9 / 0.4 megapixels (`864×480`), 5 seconds, 20
@@ -32,7 +33,7 @@ files discovered by ComfyUI.
 Choose an attention workflow:
 
 - `t2va_native_sage_attention.json` uses the fork-owned SageAttention patch.
-- `t2va.json`, the three `fl2va_*` workflows, and the three `ref2va_*`
+- `t2va.json`, the three `fl2va_*` workflows, and the four `ref2va_*`
   workflows use that same bundled SageAttention patch as their safe default.
 - `t2va_native_sol_attn.json` chains the fork-owned SageAttention patch into the
   experimental Sol-style sparse-attention patch. Sol handles eligible middle
@@ -61,7 +62,7 @@ audio schedule internally and is designed to use ComfyUI's stock sampler.
 
 ## Native Reference Variants
 
-The three `ref2va_*` files use `MiniMaxH3ReferenceToVideo` and one-based prompt
+The four `ref2va_*` files use `MiniMaxH3ReferenceToVideo` and one-based prompt
 tags such as `<Picture 1>`, `<Video 1>`, and `<Audio 1>`:
 
 - `ref2va_image.json` connects one image to `ref_images.ref_image_0`.
@@ -70,10 +71,15 @@ tags such as `<Picture 1>`, `<Video 1>`, and `<Audio 1>`:
 - `ref2va_video_audio.json` uses `LoadVideo` and `GetVideoComponents`, pairing
   the frames and soundtrack through matching `ref_video_0` and
   `ref_video_audio_0` suffixes.
+- `ref2va_video_custom_audio.json` uses the reference video's frames but ignores
+  its embedded soundtrack. Core `LoadAudio` and `TrimAudioDuration` provide an
+  independent audio reference through `ref_audios.ref_audio_0`; the trim length
+  follows the workflow's Duration control.
 
 The native reference-video node expects 24-fps frames and does not resample the
-input. Use a 24-fps, 2–15 second MP4 with an audio track for the video+audio
-workflow.
+input. Use a 24-fps, 2–15 second MP4. The paired-soundtrack workflow also
+requires an embedded audio track; the custom-audio workflow accepts a silent
+video and a separate audio file.
 
 ## Before Running
 

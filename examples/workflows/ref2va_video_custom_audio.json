@@ -1,8 +1,8 @@
 {
-  "id": "bf5f2efd-685f-4e19-8c7b-fe546389b64a",
+  "id": "693cdc0d-7ce5-4ec1-99f5-dbeaf410c260",
   "revision": 0,
-  "last_node_id": 141,
-  "last_link_id": 283,
+  "last_node_id": 163,
+  "last_link_id": 324,
   "nodes": [
     {
       "id": 92,
@@ -12,11 +12,11 @@
         4880
       ],
       "size": [
-        1210,
-        126
+        900.390625,
+        698.0625
       ],
       "flags": {},
-      "order": 22,
+      "order": 26,
       "mode": 0,
       "inputs": [
         {
@@ -32,9 +32,13 @@
           "links": null
         }
       ],
-      "properties": {},
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.30.1",
+        "Node name for S&R": "SaveVideo"
+      },
       "widgets_values": [
-        "minimax_h3/ref2va_image",
+        "minimax_h3/ref2va_video_custom_audio",
         "mp4",
         "h264"
       ]
@@ -47,7 +51,7 @@
         5610
       ],
       "size": [
-        270,
+        269.921875,
         170
       ],
       "flags": {},
@@ -73,6 +77,8 @@
       ],
       "title": "Resolution Selector (Size)",
       "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.30.1",
         "Node name for S&R": "ResolutionSelector"
       },
       "widgets_values": [
@@ -92,17 +98,17 @@
       ],
       "size": [
         450,
-        889.6875
+        889.609375
       ],
       "flags": {},
       "order": 1,
       "mode": 0,
       "inputs": [],
       "outputs": [],
-      "title": "Note: Reference Image to Video + Audio",
+      "title": "Note: Reference Video + Custom Audio",
       "properties": {},
       "widgets_values": [
-        "## MiniMax H3 — Native Reference to Video + Audio\n\nThis workflow uses ComfyUI's native MiniMaxH3ReferenceToVideo conditioning and stock `res_multistep` sampling. The older Direct loaders and Dual Sigma sampler are not used.\n\nReference tags are one-based in prompts: <Picture 1>, <Video 1>, and <Audio 1>. The tag must match the connected reference type and order.\n\nThe bundled SageAttention patch is already wired between the model loader and sampler. It falls back safely to ComfyUI's normal attention when a compatible SageAttention library is unavailable.\n\nRequires ComfyUI 0.30.1 or newer.\n## Reference image\n\nReplace `example.png` with an image from ComfyUI's input folder. The image guides identity and appearance; it does not lock a specific output frame.\n\n`ref_image_size=match` scales the reference to the generation's pixel area for a practical speed/identity balance."
+        "## MiniMax H3 — Reference Video + Custom Audio\n\nThis native Ref2VA workflow generates a new video-and-audio clip from a reference video and a separately uploaded audio reference. It does not copy either source frame-for-frame.\n\nUse `<Video 1>` for the reference video and `<Audio 1>` for the custom audio. Reference tags are one-based and must match the connected media order.\n\nUpload a **24-fps, 2–15 second reference video**. `GetVideoComponents` sends only its frames to `ref_videos.ref_video_0`; any soundtrack embedded in that video is intentionally ignored. Upload the independent audio file with `LoadAudio`. `TrimAudioDuration` selects the portion used by `ref_audios.ref_audio_0`, and its duration follows the workflow's Duration control.\n\nThe bundled SageAttention patch is already wired between the model loader and sampler. It safely falls back to ComfyUI's normal attention when a compatible SageAttention library is unavailable. The graph uses stock `res_multistep` sampling and does not use the legacy Direct loaders or Dual Sigma sampler.\n\nRequires ComfyUI 0.30.1 or newer."
       ],
       "color": "#222",
       "bgcolor": "#000"
@@ -115,8 +121,8 @@
         4850
       ],
       "size": [
-        440,
-        740
+        439.921875,
+        739.921875
       ],
       "flags": {},
       "order": 2,
@@ -139,7 +145,7 @@
         5270
       ],
       "size": [
-        640,
+        639.921875,
         70
       ],
       "flags": {},
@@ -157,6 +163,8 @@
         }
       ],
       "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.30.1",
         "Node name for S&R": "VAELoader",
         "models": [
           {
@@ -196,6 +204,8 @@
         }
       ],
       "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.30.1",
         "Node name for S&R": "VAELoader",
         "models": [
           {
@@ -217,13 +227,13 @@
         5180
       ],
       "size": [
-        230,
-        60
+        229.921875,
+        59.921875
       ],
       "flags": {
         "collapsed": false
       },
-      "order": 20,
+      "order": 24,
       "mode": 0,
       "inputs": [
         {
@@ -247,6 +257,8 @@
         }
       ],
       "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.30.1",
         "Node name for S&R": "VAEDecodeAudio"
       },
       "widgets_values": []
@@ -259,13 +271,13 @@
         5060
       ],
       "size": [
-        230,
-        60
+        229.921875,
+        59.921875
       ],
       "flags": {
         "collapsed": false
       },
-      "order": 19,
+      "order": 23,
       "mode": 0,
       "inputs": [
         {
@@ -289,6 +301,8 @@
         }
       ],
       "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.30.1",
         "Node name for S&R": "VAEDecode"
       },
       "widgets_values": []
@@ -301,7 +315,7 @@
         5190
       ],
       "size": [
-        370,
+        369.921875,
         70
       ],
       "flags": {},
@@ -318,6 +332,8 @@
         }
       ],
       "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.30.1",
         "Node name for S&R": "KSamplerSelect"
       },
       "widgets_values": [
@@ -332,11 +348,11 @@
         5310
       ],
       "size": [
-        370,
-        130
+        369.921875,
+        129.921875
       ],
       "flags": {},
-      "order": 14,
+      "order": 18,
       "mode": 0,
       "inputs": [
         {
@@ -355,6 +371,8 @@
         }
       ],
       "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.30.1",
         "Node name for S&R": "BasicScheduler"
       },
       "widgets_values": [
@@ -371,11 +389,11 @@
         5110
       ],
       "size": [
-        230,
-        140
+        229.921875,
+        139.921875
       ],
       "flags": {},
-      "order": 18,
+      "order": 22,
       "mode": 0,
       "inputs": [
         {
@@ -420,6 +438,8 @@
         }
       ],
       "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.30.1",
         "Node name for S&R": "SamplerCustomAdvanced"
       },
       "widgets_values": []
@@ -432,11 +452,11 @@
         5080
       ],
       "size": [
-        360,
-        60
+        359.921875,
+        59.921875
       ],
       "flags": {},
-      "order": 17,
+      "order": 21,
       "mode": 0,
       "inputs": [
         {
@@ -460,6 +480,8 @@
         }
       ],
       "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.30.1",
         "Node name for S&R": "BasicGuider"
       },
       "widgets_values": []
@@ -468,12 +490,12 @@
       "id": 127,
       "type": "UNETLoader",
       "pos": [
-        -1490,
-        4940
+        -1483.83806232912,
+        4739.7365499353855
       ],
       "size": [
-        640,
-        90
+        639.921875,
+        89.921875
       ],
       "flags": {},
       "order": 6,
@@ -489,6 +511,8 @@
         }
       ],
       "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.30.1",
         "Node name for S&R": "UNETLoader",
         "models": [
           {
@@ -511,7 +535,7 @@
         5090
       ],
       "size": [
-        640,
+        639.921875,
         120
       ],
       "flags": {},
@@ -528,6 +552,8 @@
         }
       ],
       "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.30.1",
         "Node name for S&R": "CLIPLoader",
         "models": [
           {
@@ -551,8 +577,8 @@
         4940
       ],
       "size": [
-        360,
-        90
+        359.921875,
+        89.921875
       ],
       "flags": {},
       "order": 8,
@@ -568,6 +594,8 @@
         }
       ],
       "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.30.1",
         "Node name for S&R": "RandomNoise"
       },
       "widgets_values": [
@@ -583,11 +611,11 @@
         5090
       ],
       "size": [
-        270,
-        110
+        269.921875,
+        109.921875
       ],
       "flags": {},
-      "order": 21,
+      "order": 25,
       "mode": 0,
       "inputs": [
         {
@@ -612,6 +640,8 @@
         }
       ],
       "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.30.1",
         "Node name for S&R": "CreateVideo"
       },
       "widgets_values": [
@@ -670,6 +700,8 @@
         }
       ],
       "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.30.1",
         "Node name for S&R": "ComfyMathExpression"
       },
       "widgets_values": [
@@ -684,7 +716,7 @@
         5830
       ],
       "size": [
-        270,
+        269.921875,
         70
       ],
       "flags": {},
@@ -696,12 +728,15 @@
           "name": "FLOAT",
           "type": "FLOAT",
           "links": [
-            261
+            261,
+            321
           ]
         }
       ],
       "title": "Float (Duration)",
       "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.30.1",
         "Node name for S&R": "PrimitiveFloat"
       },
       "widgets_values": [
@@ -718,11 +753,11 @@
         4940
       ],
       "size": [
-        410,
-        530
+        409.90625,
+        433.859375
       ],
       "flags": {},
-      "order": 16,
+      "order": 20,
       "mode": 0,
       "inputs": [
         {
@@ -745,25 +780,18 @@
           "name": "ref_images.ref_image_0",
           "shape": 7,
           "type": "IMAGE",
-          "link": 278
-        },
-        {
-          "label": "ref_image_1",
-          "name": "ref_images.ref_image_1",
-          "shape": 7,
-          "type": "IMAGE",
-          "link": null
-        },
-        {
-          "label": "ref_image_2",
-          "name": "ref_images.ref_image_2",
-          "shape": 7,
-          "type": "IMAGE",
           "link": null
         },
         {
           "label": "ref_video_0",
           "name": "ref_videos.ref_video_0",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": 285
+        },
+        {
+          "label": "ref_video_1",
+          "name": "ref_videos.ref_video_1",
           "shape": 7,
           "type": "IMAGE",
           "link": null
@@ -778,6 +806,20 @@
         {
           "label": "ref_audio_0",
           "name": "ref_audios.ref_audio_0",
+          "shape": 7,
+          "type": "AUDIO",
+          "link": 324
+        },
+        {
+          "label": "ref_audio_1",
+          "name": "ref_audios.ref_audio_1",
+          "shape": 7,
+          "type": "AUDIO",
+          "link": null
+        },
+        {
+          "label": "ref_audio_2",
+          "name": "ref_audios.ref_audio_2",
           "shape": 7,
           "type": "AUDIO",
           "link": null
@@ -813,6 +855,20 @@
             "name": "length"
           },
           "link": 275
+        },
+        {
+          "label": "ref_image_1",
+          "name": "ref_images.ref_image_1",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": null
+        },
+        {
+          "label": "ref_image_2",
+          "name": "ref_images.ref_image_2",
+          "shape": 7,
+          "type": "IMAGE",
+          "link": null
         }
       ],
       "outputs": [
@@ -832,6 +888,8 @@
         }
       ],
       "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.30.1",
         "Node name for S&R": "MiniMaxH3ReferenceToVideo"
       },
       "widgets_values": [
@@ -843,44 +901,6 @@
       ]
     },
     {
-      "id": 137,
-      "type": "LoadImage",
-      "pos": [
-        -930,
-        5630
-      ],
-      "size": [
-        290,
-        330
-      ],
-      "flags": {},
-      "order": 10,
-      "mode": 0,
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "IMAGE",
-          "type": "IMAGE",
-          "links": [
-            278
-          ]
-        },
-        {
-          "name": "MASK",
-          "type": "MASK",
-          "links": null
-        }
-      ],
-      "properties": {
-        "Node name for S&R": "LoadImage"
-      },
-      "widgets_values": [
-        "example.png",
-        "image"
-      ],
-      "title": "Reference image (<Picture 1>)"
-    },
-    {
       "id": 138,
       "type": "PrimitiveStringMultiline",
       "pos": [
@@ -888,11 +908,11 @@
         6000
       ],
       "size": [
-        370,
-        390
+        369.921875,
+        389.921875
       ],
       "flags": {},
-      "order": 11,
+      "order": 10,
       "mode": 0,
       "inputs": [],
       "outputs": [
@@ -906,10 +926,12 @@
       ],
       "title": "Input Text (Prompt)",
       "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.30.1",
         "Node name for S&R": "PrimitiveStringMultiline"
       },
       "widgets_values": [
-        "Use <Picture 1> as the identity, wardrobe, and visual-style reference. Preserve the subject consistently while placing them in a cinematic scene with natural camera motion and synchronized ambient audio. No subtitles, logos, or watermarks."
+        "Use <Video 1> for the subject, motion, and camera language. Use the independent <Audio 1> reference for voice, rhythm, and timing, keeping visible speech synchronized. Generate a coherent new scene in the city during the day, with no subtitles, logos, or watermarks."
       ],
       "color": "#322",
       "bgcolor": "#533"
@@ -926,7 +948,7 @@
         520
       ],
       "flags": {},
-      "order": 13,
+      "order": 11,
       "mode": 0,
       "inputs": [],
       "outputs": [],
@@ -942,15 +964,15 @@
       "id": 141,
       "type": "RHMiniMaxH3SageAttentionPatch",
       "pos": [
-        -1490,
-        4710
+        -1488.4593669069643,
+        4908.722876441705
       ],
       "size": [
-        640,
-        100
+        639.921875,
+        99.921875
       ],
       "flags": {},
-      "order": 23,
+      "order": 14,
       "mode": 0,
       "inputs": [
         {
@@ -969,13 +991,239 @@
           ]
         }
       ],
+      "title": "Bundled SageAttention Patch",
       "properties": {
+        "aux_id": "HM-RunningHub/ComfyUI_RH_MinMaxH3",
+        "ver": "1b61d7fee87526ec2078584033752d991cf841fb",
         "Node name for S&R": "RHMiniMaxH3SageAttentionPatch"
       },
       "widgets_values": [
         true
+      ]
+    },
+    {
+      "id": 142,
+      "type": "LoadVideo",
+      "pos": [
+        -912.6332889715404,
+        5793.744014264131
       ],
-      "title": "Bundled SageAttention Patch"
+      "size": [
+        319.921875,
+        301.90625
+      ],
+      "flags": {},
+      "order": 12,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "VIDEO",
+          "type": "VIDEO",
+          "slot_index": 0,
+          "links": [
+            284
+          ]
+        }
+      ],
+      "title": "Reference Video (24 fps; Video Track Only)",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.30.1",
+        "Node name for S&R": "LoadVideo"
+      },
+      "widgets_values": [
+        "example.mp4"
+      ]
+    },
+    {
+      "id": 143,
+      "type": "GetVideoComponents",
+      "pos": [
+        -503.24249771212726,
+        5793.7441100413635
+      ],
+      "size": [
+        259.921875,
+        139.921875
+      ],
+      "flags": {},
+      "order": 16,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "video",
+          "type": "VIDEO",
+          "link": 284
+        }
+      ],
+      "outputs": [
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "links": [
+            285
+          ]
+        },
+        {
+          "name": "audio",
+          "type": "AUDIO",
+          "links": []
+        },
+        {
+          "name": "fps",
+          "type": "FLOAT",
+          "links": null
+        },
+        {
+          "name": "bit_depth",
+          "type": "INT",
+          "links": null
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.30.1",
+        "Node name for S&R": "GetVideoComponents"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 161,
+      "type": "TrimAudioDuration",
+      "pos": [
+        -124.21274479955059,
+        5822.409063535682
+      ],
+      "size": [
+        388.359375,
+        111.46875
+      ],
+      "flags": {},
+      "order": 17,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "audio",
+          "type": "AUDIO",
+          "link": 300
+        },
+        {
+          "name": "start_index",
+          "type": "FLOAT",
+          "widget": {
+            "name": "start_index"
+          },
+          "link": null
+        },
+        {
+          "name": "duration",
+          "type": "FLOAT",
+          "widget": {
+            "name": "duration"
+          },
+          "link": 321
+        }
+      ],
+      "outputs": [
+        {
+          "name": "AUDIO",
+          "type": "AUDIO",
+          "links": [
+            319,
+            324
+          ]
+        }
+      ],
+      "title": "Custom Audio Window · Start Offset / Duration",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.9.1",
+        "Node name for S&R": "TrimAudioDuration"
+      },
+      "widgets_values": [
+        0,
+        5
+      ],
+      "color": "#323",
+      "bgcolor": "#535"
+    },
+    {
+      "id": 162,
+      "type": "LoadAudio",
+      "pos": [
+        -133.52883094523895,
+        5634.653122748296
+      ],
+      "size": [
+        392.0625,
+        107.5
+      ],
+      "flags": {
+        "collapsed": false
+      },
+      "order": 13,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "AUDIO",
+          "type": "AUDIO",
+          "links": [
+            300
+          ],
+          "slot_index": 0
+        }
+      ],
+      "title": "Custom Audio Reference (<Audio 1>)",
+      "properties": {
+        "Node name for S&R": "LoadAudio"
+      },
+      "widgets_values": [
+        "example.mp3"
+      ],
+      "color": "#323",
+      "bgcolor": "#535"
+    },
+    {
+      "id": 163,
+      "type": "PreviewAudio",
+      "pos": [
+        -126.20834813492172,
+        6022.862178082121
+      ],
+      "size": [
+        396.34375,
+        112.421875
+      ],
+      "flags": {
+        "collapsed": false
+      },
+      "order": 19,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "audio",
+          "type": "AUDIO",
+          "link": 319
+        }
+      ],
+      "outputs": [
+        {
+          "name": "audio",
+          "type": "AUDIO",
+          "links": null
+        }
+      ],
+      "title": "Preview Selected Audio",
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.9.1",
+        "Node name for S&R": "PreviewAudio"
+      },
+      "widgets_values": [],
+      "color": "#323",
+      "bgcolor": "#535"
     }
   ],
   "links": [
@@ -1120,7 +1368,7 @@
       131,
       1,
       136,
-      12,
+      13,
       "INT"
     ],
     [
@@ -1128,7 +1376,7 @@
       115,
       0,
       136,
-      10,
+      11,
       "INT"
     ],
     [
@@ -1136,23 +1384,15 @@
       115,
       1,
       136,
-      11,
+      12,
       "INT"
-    ],
-    [
-      278,
-      137,
-      0,
-      136,
-      3,
-      "IMAGE"
     ],
     [
       279,
       138,
       0,
       136,
-      9,
+      10,
       "STRING"
     ],
     [
@@ -1178,6 +1418,54 @@
       141,
       0,
       "MODEL"
+    ],
+    [
+      284,
+      142,
+      0,
+      143,
+      0,
+      "VIDEO"
+    ],
+    [
+      285,
+      143,
+      0,
+      136,
+      4,
+      "IMAGE"
+    ],
+    [
+      300,
+      162,
+      0,
+      161,
+      0,
+      "AUDIO"
+    ],
+    [
+      319,
+      161,
+      0,
+      163,
+      0,
+      "AUDIO"
+    ],
+    [
+      321,
+      132,
+      0,
+      161,
+      2,
+      "FLOAT"
+    ],
+    [
+      324,
+      161,
+      0,
+      136,
+      7,
+      "AUDIO"
     ]
   ],
   "groups": [
@@ -1245,18 +1533,18 @@
   "config": {},
   "extra": {
     "ds": {
-      "scale": 1,
+      "scale": 0.21762913579014945,
       "offset": [
-        1062.9224582659933,
-        -4889.495457009915
+        3532.867829611108,
+        -3719.883844345934
       ]
     },
-    "frontendVersion": "1.47.11",
+    "frontendVersion": "1.47.12",
     "VHS_latentpreview": false,
     "VHS_latentpreviewrate": 0,
     "VHS_MetadataImage": true,
     "VHS_KeepIntermediate": true,
-    "workflow_note": "Ref2VA image (MiniMax H3, native + bundled SageAttention). One image is connected to ref_images.ref_image_0; stock res_multistep sampling; no legacy Direct loaders or Dual Sigma sampler."
+    "workflow_note": "Ref2VA reference video + independently uploaded audio (MiniMax H3, native + bundled SageAttention). The 24-fps video frames use ref_videos.ref_video_0; trimmed custom audio uses ref_audios.ref_audio_0. Use <Video 1> and <Audio 1>. No external audio loader, legacy Direct loader, or Dual Sigma sampler is required."
   },
   "version": 0.4
 }
