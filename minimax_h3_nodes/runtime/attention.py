@@ -109,7 +109,14 @@ def prepare_checkpoint_tensor(
     the QKV row layout).
     """
 
-    if not (is_qkv_weight_key(key) or is_qkv_scale_key(key)):
+    qkv_weight = is_qkv_weight_key(key)
+    qkv_scale = is_qkv_scale_key(key)
+    if not (qkv_weight or qkv_scale):
+        return tensor
+    # INT8 uses one scale per output row and must follow the QKV row
+    # permutation. Scaled FP8 uses a scalar (or one-element) weight scale,
+    # which has no row layout and must pass through unchanged.
+    if qkv_scale and tensor.numel() == 1:
         return tensor
     if qkv_layout == "qkv":
         return tensor

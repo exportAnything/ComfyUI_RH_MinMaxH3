@@ -1108,12 +1108,25 @@ def _flush_linear(module, prefix: str, bag: dict[str, Any], device) -> bool:
             f"Quantized Linear {prefix} has no mutable factory_kwargs device"
         )
 
-    state = {
-        f"{prefix}{leaf}": tensor.to(
+    state = {}
+    for leaf, tensor in bag.items():
+        value = tensor
+        # Meta loading with assign_to_params_buffers replaces the parameter
+        # outright, so PyTorch does not perform the dtype conversion that a
+        # normal copy_ load would. Preserve the architecture dtype for ordinary
+        # mixed-precision Linears (notably the FP32 low-rank adaLN projections).
+        if quant_config is None and leaf in {"weight", "bias"}:
+            target = getattr(module, leaf, None)
+            if (
+                target is not None
+                and tensor.is_floating_point()
+                and target.is_floating_point()
+                and tensor.dtype != target.dtype
+            ):
+                value = tensor.to(dtype=target.dtype)
+        state[f"{prefix}{leaf}"] = value.to(
             device=torch.device("cpu") if leaf == "comfy_quant" else device
         )
-        for leaf, tensor in bag.items()
-    }
     missing: list[str] = []
     unexpected: list[str] = []
     errors: list[str] = []

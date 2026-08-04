@@ -789,7 +789,11 @@ class MiniMaxH3AdalnProj(nn.Module):
         self.compute_dtype = dtype
         # Curve-table checkpoints bake silu into the sample table; do not apply it again here.
         self.apply_silu = bool(apply_silu)
-        Linear = _linear_cls(operations)
+        # Comfy's mixed_precision_ops binds every Linear to the model compute
+        # dtype and ignores this constructor's explicit dtype. Curve-table H3
+        # checkpoints require their small low-rank adaLN projections to remain
+        # FP32, so keep those projections as native Linears.
+        Linear = nn.Linear if dtype == torch.float32 else _linear_cls(operations)
         self.linear = Linear(
             config.time_embed_dim,
             out_features,
@@ -1699,12 +1703,28 @@ class MiniMaxH3DiTModel(nn.Module):
 
     def fp32_param_names(self) -> frozenset[str]:
         """Return parameter names that must remain fp32 for this checkpoint form."""
-        if not self.use_adaln_curves:
-            return FP32_PARAM_NAMES
-        # Curve-table mode: no time embedder; all low-rank adaLN weights use fp32.
-        base = {name for name in FP32_PARAM_NAMES if not name.startswith("time_embedder.")}
+        if self.use_adaln_curves:
+            # Curve-table mode: no time embedder; all low-rank adaLN weights
+            # use fp32.
+            base = {
+                name
+                for name in FP32_PARAM_NAMES
+                if not name.startswith("time_embedder.")
+            }
+            base.update(
+                name
+                for name, _ in self.named_parameters()
+                if ".adaln_proj.linear." in name
+            )
+        else:
+            base = set(FP32_PARAM_NAMES)
+        # Comfy registers quantized input calibration scales as parameters and
+        # intentionally preserves their checkpoint FP32 dtype. They are cast
+        # to the active input device/dtype by mixed_precision_ops at runtime.
         base.update(
-            name for name, _ in self.named_parameters() if ".adaln_proj.linear." in name
+            name
+            for name, _ in self.named_parameters()
+            if name.endswith(".input_scale")
         )
         return frozenset(base)
 

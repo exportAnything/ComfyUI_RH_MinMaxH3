@@ -9,6 +9,12 @@ import torch
 from safetensors.torch import save_file
 
 from minimax_h3_nodes.runtime.model_loader import _impl as loader
+from minimax_h3_nodes.runtime.attention import prepare_checkpoint_tensor
+from minimax_h3_nodes.runtime.dit import MiniMaxH3DiTModel
+from minimax_h3_nodes.runtime.dit._impl import (
+    MiniMaxH3AdalnProj,
+    MiniMaxH3DiTConfig,
+)
 
 
 INSTALLED_FP8 = Path(
@@ -100,6 +106,61 @@ class HeaderConfigTests(unittest.TestCase):
 
 
 class QuantMarkerTests(unittest.TestCase):
+    def test_curve_adaln_fp32_bypasses_bound_mixed_precision_linear(self):
+        class FakeOperations:
+            class Linear(torch.nn.Module):
+                def __init__(self, *args, **kwargs):
+                    super().__init__()
+                    self.bound_dtype = torch.bfloat16
+
+        config = MiniMaxH3DiTConfig(
+            adaln_curve_grid=1025,
+            time_embed_dim=8,
+        )
+        projection = MiniMaxH3AdalnProj(
+            config,
+            config.adaln_out_features,
+            expand_ratio=6,
+            modality_count=3,
+            dtype=torch.float32,
+            device="meta",
+            operations=FakeOperations,
+            apply_silu=False,
+        )
+
+        self.assertIs(type(projection.linear), torch.nn.Linear)
+        self.assertEqual(projection.linear.weight.dtype, torch.float32)
+        self.assertEqual(projection.linear.bias.dtype, torch.float32)
+
+    def test_fp8_input_scale_is_an_explicit_fp32_parameter(self):
+        class FakeDiT:
+            use_adaln_curves = True
+
+            @staticmethod
+            def named_parameters():
+                return iter(
+                    (
+                        (
+                            "blocks.0.attn.qkv_proj.input_scale",
+                            torch.nn.Parameter(torch.tensor(0.5)),
+                        ),
+                    )
+                )
+
+        names = MiniMaxH3DiTModel.fp32_param_names(FakeDiT())
+
+        self.assertIn("blocks.0.attn.qkv_proj.input_scale", names)
+
+    def test_fp8_scalar_qkv_scale_is_not_row_reordered(self):
+        scale = torch.tensor(0.125, dtype=torch.float32)
+        prepared = prepare_checkpoint_tensor(
+            "blocks.0.attn.qkv_proj.weight_scale",
+            scale,
+            config={},
+        )
+        self.assertEqual(tuple(prepared.shape), ())
+        self.assertEqual(float(prepared), float(scale))
+
     def test_scaled_fp8_marker_is_accepted(self):
         bag = {
             "weight": torch.empty((2, 3), dtype=torch.float8_e4m3fn),
@@ -194,6 +255,34 @@ class QuantMarkerTests(unittest.TestCase):
                 bag,
                 torch.device("cpu"),
             )
+
+    def test_meta_assign_preserves_nonquantized_linear_dtype(self):
+        class FakeMixedPrecisionLinear(torch.nn.Linear):
+            pass
+
+        module = FakeMixedPrecisionLinear(
+            3,
+            2,
+            bias=True,
+            device="meta",
+            dtype=torch.float32,
+        )
+        bag = {
+            "weight": torch.ones((2, 3), dtype=torch.float16),
+            "bias": torch.ones(2, dtype=torch.float16),
+        }
+
+        quantized = loader._flush_linear(
+            module,
+            "blocks.0.adaln_proj.linear.",
+            bag,
+            torch.device("cpu"),
+        )
+
+        self.assertFalse(quantized)
+        self.assertEqual(module.weight.dtype, torch.float32)
+        self.assertEqual(module.bias.dtype, torch.float32)
+        self.assertEqual(module.weight.device.type, "cpu")
 
 
 @unittest.skipUnless(INSTALLED_FP8.is_file(), "local MiniMax-H3 FP8 file absent")
