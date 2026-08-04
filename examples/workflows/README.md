@@ -9,24 +9,25 @@ directly onto the canvas or opened with **Load**.
 | T2VA | `t2va.json` | None |
 | T2VA | `t2va_native_sage_attention.json` | None; native ComfyUI graph with SageAttention |
 | T2VA | `t2va_native_sol_attn.json` | None; native ComfyUI graph with Sol-Attn |
-| FL2VA | `fl2va_first_frame.json` | First-frame image |
-| FL2VA | `fl2va_last_frame.json` | Last-frame image |
-| FL2VA | `fl2va_first_last_frame.json` | First-frame + last-frame images |
+| FL2VA | `fl2va_first_frame.json` | Native graph; first-frame image |
+| FL2VA | `fl2va_last_frame.json` | Native graph; last-frame image |
+| FL2VA | `fl2va_first_last_frame.json` | Native graph; first-frame + last-frame images |
 | Ref2VA | `ref2va_image.json` | Reference image |
 | Ref2VA | `ref2va_image_audio.json` | Reference image → reference audio (ordered chain) |
 | Ref2VA | `ref2va_video_audio.json` | Reference video with an audio track |
 
-Shared defaults: explicit `832×480` resolution, 5 seconds, 50 sigma points,
-shift `12/3`, `accel=off`, and `denoise_video=true`. The Loaders use native FP8
-DiT, NVFP4 Qwen, and single-file VAE names from the documentation. If your local
-installation uses RunningHub INT8-CONVROT or BF16 shards, select the matching
-entries from the dropdowns.
+The native FL2VA workflows default to 16:9 / 0.4 megapixels (`864×480`),
+5 seconds, 20 steps, the `simple` scheduler, and `res_multistep`. The legacy
+Direct examples retain their explicit `832×480`, 50-point Euler defaults.
+Replace placeholder media filenames before queueing.
 
 ## Native Attention Variants
 
-The two `t2va_native_*` workflows use ComfyUI's native MiniMax H3 implementation
-and require ComfyUI 0.30.1 or newer. They are preconfigured for the official
-INT8-CONVROT transformer, NVFP4-AWQ text encoder, and native video/audio VAEs.
+The `t2va_native_*` workflows and all three `fl2va_*` workflows use ComfyUI's
+native MiniMax H3 implementation and require ComfyUI 0.30.1 or newer. They are
+preconfigured for the official INT8-CONVROT transformer, NVFP4-AWQ text encoder,
+and native video/audio VAEs. Their model dropdowns can also select compatible
+native FP8 files discovered by ComfyUI.
 
 Choose an attention workflow:
 
@@ -41,6 +42,20 @@ is missing, the included Sage node safely leaves normal ComfyUI attention active
 The included Sol-style node has no additional dependency beyond ComfyUI's PyTorch
 runtime. Both graphs are already wired between Load Diffusion Model and the
 scheduler/guider.
+
+## Native Keyframe Variants
+
+The three `fl2va_*` files are rebuilt from the native SageAttention graph. Their
+Load Image nodes are already connected to `MiniMaxH3ImageToVideo` inside the
+group as follows:
+
+- `fl2va_first_frame.json`: `first_frame`
+- `fl2va_last_frame.json`: `last_frame`
+- `fl2va_first_last_frame.json`: both inputs
+
+The images are encoded conditioning anchors, not pixel-locked copies. Do not
+insert the legacy Dual Sigma Sampler into these graphs; native H3 derives the
+audio schedule internally and is designed to use ComfyUI's stock sampler.
 
 ## Before Running
 

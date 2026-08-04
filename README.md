@@ -30,9 +30,10 @@ partner; this plugin is developed and maintained by RunningHub.
   generation (FL2VA: first frame, last frame, or both), and ordered
   image/audio/video references (Ref2VA).
 - **Image-to-video is FL2VA with a first frame only** — the supplied image
-  becomes the literal frame 0 of the output.
-- **Joint AV sampling** — a dual-sigma rectified-flow sampler drives video and
-  audio with independent shift schedules, keeping audio locked to motion.
+  conditions frame 0 through ComfyUI's native MiniMax-H3 implementation.
+- **Native keyframe sampling** — the first/last-frame examples use ComfyUI's
+  stock sampler. H3 derives the audio schedule internally, keeping audio locked
+  to motion without a separate workflow-level dual-sigma sampler.
 - **2.5× less denoising work with `res_multistep`** — a second-order exponential
   integrator reaches the quality of 50-step Euler in about 21 sigma points
   (20 DiT calls instead of 49). Same weights, no requantisation; `euler` stays
@@ -169,9 +170,11 @@ partition — an FL2VA node never offers Ref2VA weights.
 
 ## 🚀 Usage
 
-Every task wires three loaders (DiT, Qwen3-VL, dual VAE) into a target, a
-conditioning/encode step, an empty AV latent, the dual-sigma sampler, and the
-AV decode.
+The T2VA Direct and Ref2VA examples use this repository's typed direct-runtime
+loaders and AV nodes. The three FL2VA examples use ComfyUI's native MiniMax-H3
+model, `MiniMaxH3ImageToVideo` conditioning, stock `res_multistep` sampling,
+and the bundled SageAttention patch. This native path is also the recommended
+way to use FP8/NVFP4 or INT8-CONVROT checkpoints for keyframe generation.
 
 ### Example Workflows
 
@@ -182,21 +185,24 @@ Ready-to-load graphs live in [`examples/workflows/`](examples/workflows):
 | T2VA | [`t2va.json`](examples/workflows/t2va.json) | none |
 | T2VA | [`t2va_native_sage_attention.json`](examples/workflows/t2va_native_sage_attention.json) | native Comfy graph + bundled Sage patch |
 | T2VA | [`t2va_native_sol_attn.json`](examples/workflows/t2va_native_sol_attn.json) | native Comfy graph + bundled Sage fallback and Sol-style sparse patch |
-| FL2VA | [`fl2va_first_frame.json`](examples/workflows/fl2va_first_frame.json) | first frame — **this is image-to-video** |
-| FL2VA | [`fl2va_last_frame.json`](examples/workflows/fl2va_last_frame.json) | last frame |
-| FL2VA | [`fl2va_first_last_frame.json`](examples/workflows/fl2va_first_last_frame.json) | first + last frame |
+| FL2VA | [`fl2va_first_frame.json`](examples/workflows/fl2va_first_frame.json) | native graph + first frame — **this is image-to-video** |
+| FL2VA | [`fl2va_last_frame.json`](examples/workflows/fl2va_last_frame.json) | native graph + last frame |
+| FL2VA | [`fl2va_first_last_frame.json`](examples/workflows/fl2va_first_last_frame.json) | native graph + first and last frames |
 | Ref2VA | [`ref2va_image.json`](examples/workflows/ref2va_image.json) | one reference image |
 | Ref2VA | [`ref2va_image_audio.json`](examples/workflows/ref2va_image_audio.json) | image → audio, ordered chain |
 | Ref2VA | [`ref2va_video_audio.json`](examples/workflows/ref2va_video_audio.json) | video carrying an audio track |
 
-Shared defaults: explicit `832×480`, five seconds, 50 sigma points, shifts
-`12/3`, `accel=off`, `denoise_video=true`. Replace the placeholder media
-filenames with files already uploaded to ComfyUI `input/`.
+The native FL2VA graphs default to the 16:9 / 0.4-megapixel resolution preset
+(`864×480`), five seconds, 20 steps, the `simple` scheduler, and
+`res_multistep`. The Direct examples keep their explicit `832×480`, 50-point
+Euler defaults. Replace placeholder media filenames with files already uploaded
+to ComfyUI `input/`.
 
-**Keyframes and references are different mechanisms.** An FL2VA keyframe
-occupies a real frame position in the output (index `0` or the final frame) and
-must match the target canvas. A Ref2VA reference has no frame position, may use
-its own resolution, and steers identity rather than becoming a frame.
+**Keyframes and references are different mechanisms.** Native FL2VA encodes a
+first and/or last image as a conditioning anchor at index `0` or the final frame.
+The model normally reproduces the anchor closely, but it is not a byte-for-byte
+pixel lock. A Ref2VA reference has no frame position and steers identity rather
+than anchoring a specific output frame.
 
 **Ref2VA reference order is significant.** Chain each reference node's
 `references` output into the next one; reordering the chain changes the
@@ -240,8 +246,8 @@ All nodes register under the `RunningHub/MiniMax H3/*` category.
 
 ### Native MODEL attention patches
 
-These nodes use the standard ComfyUI `MODEL` type and are intended for the two
-`t2va_native_*` workflows. They do not attach to the legacy direct-runtime
+These nodes use the standard ComfyUI `MODEL` type and are used by the native
+T2VA and FL2VA workflows. They do not attach to the legacy direct-runtime
 `MINIMAX_H3_DIRECT_MODEL` socket.
 
 | Node | Purpose |
@@ -278,6 +284,17 @@ turned off independently for rollback.
   and peak VRAM; `OPT_WRITE_SIDECAR` writes a JSON sidecar beside each render.
 
 ## 📋 Changelog
+
+### 0.6.1
+
+- Rebuilt all three FL2VA examples on ComfyUI's native MiniMax-H3 conditioning
+  and stock `res_multistep` sampler path. The legacy Direct path could complete
+  without an error while producing collapsed gray output that ignored the
+  endpoint images.
+- Prewired first-frame, last-frame, and first-plus-last-frame image inputs and
+  documented their native conditioning behavior in English inside each graph.
+- Kept the bundled SageAttention patch in the repaired workflows, so no extra
+  attention node pack is required.
 
 ### 0.6.0
 

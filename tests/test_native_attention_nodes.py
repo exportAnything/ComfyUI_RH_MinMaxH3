@@ -425,6 +425,44 @@ class AttentionWorkflowTests(unittest.TestCase):
             self.assertTrue(forbidden.isdisjoint(node["type"] for node in subgraph["nodes"]))
             self.assertIsNone(CJK.search(raw))
 
+    def test_fl2va_workflows_use_native_keyframe_conditioning(self):
+        cases = {
+            "fl2va_first_frame.json": (True, False),
+            "fl2va_last_frame.json": (False, True),
+            "fl2va_first_last_frame.json": (True, True),
+        }
+
+        for name, expected_links in cases.items():
+            with self.subTest(workflow=name):
+                path = WORKFLOWS / name
+                raw = path.read_text(encoding="utf-8")
+                workflow = json.loads(raw)
+                subgraph = workflow["definitions"]["subgraphs"][0]
+                subgraph_types = {node["type"] for node in subgraph["nodes"]}
+
+                self.assertIn("MiniMaxH3ImageToVideo", subgraph_types)
+                self.assertIn("BasicScheduler", subgraph_types)
+                self.assertIn("SamplerCustomAdvanced", subgraph_types)
+                self.assertIn("RHMiniMaxH3SageAttentionPatch", subgraph_types)
+                self.assertNotIn("RHMiniMaxH3DualSigmaSampler", raw)
+                self.assertIsNone(CJK.search(raw))
+
+                group = next(
+                    node for node in workflow["nodes"] if node["type"] == subgraph["id"]
+                )
+                links = {link[0]: link for link in workflow["links"]}
+                top_nodes = {node["id"]: node for node in workflow["nodes"]}
+                for slot, should_be_linked in enumerate(expected_links):
+                    link_id = group["inputs"][slot]["link"]
+                    self.assertEqual(link_id is not None, should_be_linked)
+                    if link_id is not None:
+                        link = links[link_id]
+                        self.assertEqual(
+                            (link[3], link[4], link[5]),
+                            (group["id"], slot, "IMAGE"),
+                        )
+                        self.assertEqual(top_nodes[link[1]]["type"], "LoadImage")
+
 
 if __name__ == "__main__":
     unittest.main()
