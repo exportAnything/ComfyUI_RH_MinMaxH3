@@ -1,0 +1,4 @@
+{
+  "_class_name": "Qwen3VLForConditionalGeneration",
+  "backend": "comfy_native_safetensors"
+}

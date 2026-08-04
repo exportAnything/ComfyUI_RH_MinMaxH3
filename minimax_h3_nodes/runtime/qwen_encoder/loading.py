@@ -27,7 +27,7 @@ def _qwen_causal_lm_class():
             raise H3ComponentError(
                 f"transformers {ver} is outside the supported range "
                 f"[{TRANSFORMERS_MIN_VERSION}, {TRANSFORMERS_MAX_VERSION}]; "
-                "install the version specified in requirements.txt"
+                "use Transformers <=5.8.1 for the legacy loader, or select the native NVFP4 checkpoint"
             )
         from transformers import Qwen3VLForConditionalGeneration
         return Qwen3VLForConditionalGeneration
@@ -166,6 +166,258 @@ def _component_is_quantized(
             if any(key.endswith(QUANT_KEY_SUFFIXES) for key in reader.keys()):
                 return True
     return False
+
+
+_NATIVE_NVFP4_FORMAT = "nvfp4"
+_NATIVE_LANGUAGE_PREFIX = "model.layers."
+_NATIVE_EMBED_PREFIX = "model.embed_tokens."
+_NATIVE_VISUAL_SIGNAL = "visual.deepstack_merger_list.0.norm.weight"
+_NATIVE_NVFP4_PROJECTIONS = (
+    "self_attn.q_proj",
+    "self_attn.k_proj",
+    "self_attn.v_proj",
+    "self_attn.o_proj",
+    "mlp.gate_proj",
+    "mlp.up_proj",
+    "mlp.down_proj",
+)
+
+
+def _decode_comfy_quant_marker(reader: Any, key: str) -> dict[str, Any]:
+    """Decode one tiny Comfy quant marker without materialising its weight."""
+
+    import json
+
+    try:
+        marker = reader.get_tensor(key)
+        value = json.loads(bytes(marker.detach().cpu().tolist()))
+    except Exception as exc:
+        raise H3ComponentError(
+            f"Invalid comfy_quant marker {key!r} in a Qwen checkpoint"
+        ) from exc
+    if not isinstance(value, dict) or not isinstance(value.get("format"), str):
+        raise H3ComponentError(
+            f"Invalid comfy_quant marker {key!r}: expected an object with format"
+        )
+    return value
+
+
+def _text_encoder_checkpoint_profile(shards: Sequence[Path]) -> dict[str, Any]:
+    """Inspect keys and tiny marker tensors only; never read model weight payloads.
+
+    The native Comfy MiniMax checkpoint uses ``model.layers.*`` for the
+    truncated language model and ``visual.*`` for Qwen3-VL.  The older H3
+    runtime path consumes Hugging Face ``model.language_model.*`` checkpoints,
+    so the key namespace is also the safest dispatch signal.
+    """
+
+    from safetensors import safe_open
+
+    keys: set[str] = set()
+    formats: dict[str, int] = defaultdict(int)
+    marker_configs: dict[str, dict[str, Any]] = {}
+    pre_quant_scale_count = 0
+    for shard in shards:
+        with safe_open(str(shard), framework="pt", device="cpu") as reader:
+            for key in reader.keys():
+                if key in keys:
+                    raise H3ComponentError(
+                        f"Duplicate Qwen checkpoint tensor {key!r} across shards"
+                    )
+                keys.add(key)
+                if key.endswith(".pre_quant_scale"):
+                    pre_quant_scale_count += 1
+                if key.endswith(".comfy_quant"):
+                    config = _decode_comfy_quant_marker(reader, key)
+                    marker_configs[key] = config
+                    formats[str(config["format"])] += 1
+
+    layer_marker_counts: dict[int, int] = defaultdict(int)
+    for key, config in marker_configs.items():
+        if config.get("format") != _NATIVE_NVFP4_FORMAT:
+            continue
+        match = re.match(r"^model\.layers\.(\d+)\..+\.comfy_quant$", key)
+        if match:
+            layer_marker_counts[int(match.group(1))] += 1
+
+    return {
+        "keys": frozenset(keys),
+        "formats": dict(formats),
+        "marker_configs": marker_configs,
+        "layer_marker_counts": dict(layer_marker_counts),
+        "pre_quant_scale_count": pre_quant_scale_count,
+    }
+
+
+def _validate_native_nvfp4_profile(
+    profile: dict[str, Any], *, checkpoint: Path
+) -> dict[str, Any]:
+    """Fail closed unless a file is the native truncated MiniMax Qwen3-VL."""
+
+    keys = profile["keys"]
+    formats = profile["formats"]
+    unsupported = sorted(set(formats) - {_NATIVE_NVFP4_FORMAT, INT8_FORMAT})
+    if unsupported:
+        raise H3ComponentError(
+            f"{checkpoint.name} mixes unsupported Qwen quant formats {unsupported!r}"
+        )
+    if formats.get(_NATIVE_NVFP4_FORMAT) != SELECTED_LAYERS * 7:
+        raise H3ComponentError(
+            f"{checkpoint.name} must contain exactly {SELECTED_LAYERS * 7} "
+            f"NVFP4 language Linears, got {formats.get(_NATIVE_NVFP4_FORMAT, 0)}"
+        )
+    expected_layers = set(range(SELECTED_LAYERS))
+    layer_counts = profile["layer_marker_counts"]
+    if set(layer_counts) != expected_layers or any(
+        layer_counts[index] != 7 for index in expected_layers
+    ):
+        raise H3ComponentError(
+            f"{checkpoint.name} does not contain seven NVFP4 projections in "
+            f"each Qwen language layer 0..{SELECTED_LAYERS - 1}"
+        )
+    expected_markers = {
+        f"{_NATIVE_LANGUAGE_PREFIX}{layer}.{projection}.comfy_quant"
+        for layer in expected_layers
+        for projection in _NATIVE_NVFP4_PROJECTIONS
+    }
+    actual_markers = {
+        key
+        for key, config in profile["marker_configs"].items()
+        if config.get("format") == _NATIVE_NVFP4_FORMAT
+    }
+    if actual_markers != expected_markers:
+        raise H3ComponentError(
+            f"{checkpoint.name} has an invalid NVFP4 projection set: "
+            f"missing={sorted(expected_markers - actual_markers)[:8]!r}, "
+            f"unexpected={sorted(actual_markers - expected_markers)[:8]!r}"
+        )
+    incomplete = []
+    for marker in expected_markers:
+        prefix = marker[: -len("comfy_quant")]
+        missing_leaves = [
+            leaf
+            for leaf in ("weight", "weight_scale", "weight_scale_2")
+            if f"{prefix}{leaf}" not in keys
+        ]
+        if missing_leaves:
+            incomplete.append((prefix, missing_leaves))
+    if incomplete:
+        raise H3ComponentError(
+            f"{checkpoint.name} contains incomplete NVFP4 projections: "
+            f"{incomplete[:8]!r}"
+        )
+    required = {
+        _NATIVE_VISUAL_SIGNAL,
+        f"{_NATIVE_EMBED_PREFIX}weight",
+        f"{_NATIVE_EMBED_PREFIX}weight_scale",
+        f"{_NATIVE_EMBED_PREFIX}comfy_quant",
+        f"{_NATIVE_LANGUAGE_PREFIX}{SELECTED_LAYERS - 1}.self_attn.q_proj.weight",
+    }
+    missing = sorted(required - keys)
+    if missing:
+        raise H3ComponentError(
+            f"{checkpoint.name} is missing native MiniMax Qwen3-VL tensors "
+            f"{missing!r}"
+        )
+    embed_config = profile["marker_configs"].get(
+        f"{_NATIVE_EMBED_PREFIX}comfy_quant", {}
+    )
+    if embed_config.get("format") != INT8_FORMAT:
+        raise H3ComponentError(
+            f"{checkpoint.name} must use {INT8_FORMAT!r} for model.embed_tokens"
+        )
+    if formats.get(INT8_FORMAT) != 1:
+        raise H3ComponentError(
+            f"{checkpoint.name} must contain only the one INT8 embedding marker, "
+            f"got {formats.get(INT8_FORMAT, 0)}"
+        )
+    return profile
+
+
+def _native_nvfp4_checkpoint_profile(
+    shards: Sequence[Path], *, checkpoint: Path
+) -> dict[str, Any] | None:
+    """Return a validated native profile, or ``None`` for legacy/BF16 files."""
+
+    profile = _text_encoder_checkpoint_profile(shards)
+    if _NATIVE_NVFP4_FORMAT not in profile["formats"]:
+        return None
+    return _validate_native_nvfp4_profile(profile, checkpoint=checkpoint)
+
+
+def _require_native_minimax_comfy(profile: dict[str, Any]) -> None:
+    """Gate the native path before Comfy attempts to allocate the 32B model."""
+
+    try:
+        import comfy.quant_ops as quant_ops
+        import comfy.sd as comfy_sd
+        import comfy.text_encoders.minimax  # noqa: F401
+    except ImportError as exc:
+        raise H3ComponentError(
+            "NVFP4/AWQ MiniMax-H3 text encoders require a current ComfyUI "
+            "with native comfy.text_encoders.minimax support"
+        ) from exc
+
+    clip_type = getattr(getattr(comfy_sd, "CLIPType", None), "MINIMAX", None)
+    if clip_type is None:
+        raise H3ComponentError(
+            "This ComfyUI build has no CLIPType.MINIMAX; update ComfyUI before "
+            "loading the NVFP4/AWQ Qwen3-VL encoder"
+        )
+    algos = getattr(quant_ops, "QUANT_ALGOS", {})
+    nvfp4 = algos.get(_NATIVE_NVFP4_FORMAT) if isinstance(algos, dict) else None
+    parameters = nvfp4.get("parameters", set()) if isinstance(nvfp4, dict) else set()
+    required = {"weight_scale", "weight_scale_2"}
+    if profile.get("pre_quant_scale_count"):
+        required.add("pre_quant_scale")
+    missing = sorted(required - set(parameters))
+    if missing:
+        raise H3ComponentError(
+            "This ComfyUI build cannot load the NVFP4/AWQ parameter set; "
+            f"missing quant parameters {missing!r}. Update ComfyUI."
+        )
+
+
+def _load_native_minimax_text_encoder(
+    weights: Path,
+    *,
+    component: Path,
+    model_dtype: Any,
+    load_device: Any,
+    offload_device: Any,
+    profile: dict[str, Any],
+):
+    """Load Comfy's native MiniMax CLIP and expose the H3 runtime adapter."""
+
+    _require_native_minimax_comfy(profile)
+    import comfy.sd as comfy_sd
+
+    clip_type = comfy_sd.CLIPType.MINIMAX
+    model_options = {
+        "dtype": model_dtype,
+        "load_device": load_device,
+        "offload_device": offload_device,
+    }
+    clip = comfy_sd.load_clip(
+        [str(weights)],
+        clip_type=clip_type,
+        model_options=model_options,
+    )
+    if not callable(getattr(clip, "tokenize", None)) or not callable(
+        getattr(clip, "encode_from_tokens", None)
+    ):
+        raise H3ComponentError(
+            "ComfyUI's native MiniMax text encoder returned an invalid CLIP handle"
+        )
+
+    from .encoder import MiniMaxH3ComfyTextEncoder
+
+    return MiniMaxH3ComfyTextEncoder(
+        clip=clip,
+        component_path=component,
+        weights_path=weights,
+        quant_format=_NATIVE_NVFP4_FORMAT,
+    )
 
 def _validate_text_encoder_quant_metadata(
     component: Path, *, partition: str | None
@@ -633,32 +885,73 @@ def load_h3_text_encoder(
     """Load the local Qwen3-VL component with no Hub or remote-code fallback."""
 
     import torch
-    from transformers import AutoConfig, AutoProcessor, AutoTokenizer
 
-    # Flat single-file weights: the filename proves the type; the Qwen component is
-    # shared by both partitions and has no partition marker.
-    external_weights = (
-        validate_weight_partition(
-            text_encoder_weights, partition or "fl2va", kind="text_encoder"
+    # Native Comfy MiniMax checkpoints have a content-proven architecture/type
+    # but deliberately use Comfy's regular text_encoders filename convention.
+    # Inspect only their safetensors header and tiny comfy_quant markers before
+    # applying the older converter-filename admission rule.
+    external_weights: Path | None = None
+    native_profile: dict[str, Any] | None = None
+    if text_encoder_weights:
+        candidate = Path(text_encoder_weights).expanduser().resolve()
+        if not candidate.is_file():
+            raise H3ComponentError(
+                f"MiniMax-H3 text_encoder weight file not found: {candidate}"
+            )
+        native_profile = _native_nvfp4_checkpoint_profile(
+            [candidate], checkpoint=candidate
         )
-        if text_encoder_weights
-        else None
-    )
-    if external_weights is not None and not external_weights.is_file():
-        raise H3ComponentError(
-            f"MiniMax-H3 text_encoder weight file not found: {external_weights}"
-        )
+        if native_profile is not None:
+            # The validated key/quant contract proves this is the shared,
+            # layer-50 MiniMax Qwen3-VL encoder; no partition-bearing filename
+            # is necessary for a component shared by FL2VA and Ref2VA.
+            external_weights = candidate
+        else:
+            external_weights = validate_weight_partition(
+                candidate, partition or "fl2va", kind="text_encoder"
+            )
     if not text_encoder_path:  # Prefer the int8 quantized directory when unspecified (26GB vs BF16 62GB).
         auto = model_root_path(model_root) / INT8_TE_DIRNAME
         if auto.is_dir() and (auto / "config.json").is_file():
             text_encoder_path = str(auto)
             LOGGER.info("text_encoder_path not specified; automatically selected quantized directory %s", INT8_TE_DIRNAME)
-    component = resolve_component(
-        model_root,
-        ("text_encoder", "qwen3vl", "qwen"),
-        explicit=text_encoder_path,
-        required_files=("config.json",),
-    )
+    try:
+        component = resolve_component(
+            model_root,
+            ("text_encoder", "qwen3vl", "qwen"),
+            explicit=text_encoder_path,
+            required_files=("config.json",),
+        )
+    except H3ComponentError:
+        if native_profile is None or external_weights is None:
+            raise
+        # The native Comfy architecture and tokenizer are code-defined and do
+        # not need a Transformers config directory.  Preserve a stable
+        # component identity for callers that only have the standalone file.
+        component = external_weights
+
+    model_dtype = _torch_dtype(dtype)
+    load_device = _resolve_device(device)
+    target_offload_device = torch.device(offload_device)
+    if native_profile is not None:
+        assert external_weights is not None
+        LOGGER.info(
+            "Loading native MiniMax Qwen3-VL %s checkpoint %s (%d AWQ pre-scales)",
+            _NATIVE_NVFP4_FORMAT,
+            external_weights,
+            int(native_profile.get("pre_quant_scale_count", 0)),
+        )
+        return _load_native_minimax_text_encoder(
+            external_weights,
+            component=component,
+            model_dtype=model_dtype,
+            load_device=load_device,
+            offload_device=target_offload_device,
+            profile=native_profile,
+        )
+
+    from transformers import AutoConfig, AutoProcessor, AutoTokenizer
+
     tokenizer_component = resolve_component(
         model_root,
         ("tokenizer", "processor", "text_encoder"),
@@ -760,10 +1053,6 @@ def load_h3_text_encoder(
             [str(path) for path in processor_components],
             "; ".join(processor_errors),
         )
-    model_dtype = _torch_dtype(dtype)
-    load_device = _resolve_device(device)
-    target_offload_device = torch.device(offload_device)
-
     config = AutoConfig.from_pretrained(
         str(component),
         local_files_only=True,

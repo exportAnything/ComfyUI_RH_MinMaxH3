@@ -92,6 +92,11 @@ from ..runtime.h3_settings import (
     INT8_DIT_DIRNAME,
     INT8_TE_DIRNAME,
     INT8_TE_FILENAME,
+    NATIVE_AUDIO_VAE_FILENAME,
+    NATIVE_FL2VA_DIT_FILENAME,
+    NATIVE_REF2VA_DIT_FILENAME,
+    NATIVE_TE_FILENAME,
+    NATIVE_VIDEO_VAE_FILENAME,
     SAMPLER_MODE_CHOICES,
     SAMPLER_MODE_EULER,
     VAE_MERGED_DIRNAME,
@@ -102,10 +107,12 @@ from ..runtime.h3_settings import (
     VIDEO_VAE_MODEL_NAME,
     bf16_dit_model_name,
     int8_dit_filename,
+    is_comfy_native_weight_filename,
 )
 from ..sampling import sample_h3
 
 CATEGORY = "RunningHub/MiniMax H3"
+NATIVE_MODEL_ROOT_LABEL = "Native Comfy model folders"
 MODEL_TYPE = "MINIMAX_H3_DIRECT_MODEL"
 TEXT_ENCODER_TYPE = "MINIMAX_H3_TEXT_ENCODER"
 VAE_BUNDLE_TYPE = "MINIMAX_H3_VAE_BUNDLE"
@@ -191,11 +198,23 @@ def _model_root_choices() -> list[str]:
     """Return Loader COMBO options, falling back to a placeholder so object_info can still be generated."""
     try:
         module = _runtime_module("components")
+        choices: list[str] = []
         lister = getattr(module, "list_h3_model_roots", None)
         if callable(lister):
             choices = list(lister())
-            if choices:
-                return choices
+        weight_lister = getattr(module, "list_h3_weight_files", None)
+        if callable(weight_lister):
+            native_available = any(
+                is_comfy_native_weight_filename(path.name, kind)
+                for kind in H3_COMPONENT_KINDS
+                for path in weight_lister(kind)
+            )
+            if native_available:
+                choices = [NATIVE_MODEL_ROOT_LABEL] + [
+                    value for value in choices if value != NATIVE_MODEL_ROOT_LABEL
+                ]
+        if choices:
+            return choices
         logging.getLogger(__name__).warning(
             "runtime.components does not expose list_h3_model_roots; INPUT_TYPES is using the MiniMax-H3 placeholder"
         )
@@ -273,7 +292,7 @@ def _weight_file_choices(
     kind: str,
     partition: str = H3_T2VA_PARTITION,
 ) -> list[Path]:
-    """Flat single-file weights of one kind below ``models/MiniMax-H3``."""
+    """Single-file weights from dedicated and standard Comfy model folders."""
 
     module = _runtime_module("components")
     lister = getattr(module, "list_h3_weight_files", None)
@@ -290,11 +309,15 @@ def _partition_label(partition: str = H3_T2VA_PARTITION) -> str:
 
 
 def _default_dit_model_name(partition: str = H3_T2VA_PARTITION) -> str:
-    return int8_dit_filename(_partition_label(partition))
+    return (
+        NATIVE_FL2VA_DIT_FILENAME
+        if str(partition).strip().lower() == H3_T2VA_PARTITION
+        else NATIVE_REF2VA_DIT_FILENAME
+    )
 
 
 def _default_te_model_name() -> str:
-    return INT8_TE_FILENAME
+    return NATIVE_TE_FILENAME
 
 
 def _default_vae_model_name() -> str:
@@ -302,11 +325,11 @@ def _default_vae_model_name() -> str:
 
 
 def _default_video_vae_model_name() -> str:
-    return VIDEO_VAE_FILENAME
+    return NATIVE_VIDEO_VAE_FILENAME
 
 
 def _default_audio_vae_model_name() -> str:
-    return AUDIO_VAE_FILENAME
+    return NATIVE_AUDIO_VAE_FILENAME
 
 
 def _default_model_name(kind: str, partition: str = H3_T2VA_PARTITION) -> str:
@@ -599,10 +622,72 @@ def _selector_weight_file(
     text = str(value or "").strip()
     if not text:
         return None
+    module = _runtime_module("components")
+    choice_name = getattr(module, "weight_file_choice_name", None)
     for candidate in _weight_file_choices(kind, partition):
-        if candidate.name == text:
+        display = (
+            str(choice_name(candidate, kind))
+            if callable(choice_name)
+            else candidate.name
+        )
+        if display == text or candidate.name == text:
             return candidate
     return None
+
+
+def _native_component_selection(
+    value: str,
+    kind: str,
+    partition: str,
+) -> tuple[Path, Path, Path, dict[str, Any], dict[str, float]] | None:
+    """Resolve a standard Comfy single-file checkpoint and its local descriptor.
+
+    Native FP8/NVFP4/VAE files intentionally live in ComfyUI's normal model
+    folders rather than a copied Diffusers release tree.  Small package-owned
+    descriptors provide the component paths required by the H3 wrapper
+    contract; the selected safetensors file remains the external identity and
+    source of weights.
+    """
+
+    normalized_kind = _normalized_kind(kind)
+    normalized_partition = str(partition).strip().lower()
+    if not is_comfy_native_weight_filename(value, normalized_kind):
+        return None
+    module = _runtime_module("components")
+    resolver = _find_callable(
+        module,
+        ("resolve_weight_file",),
+        _COMPONENT_KIND_LABELS[normalized_kind],
+    )
+    gate = _find_callable(module, ("validate_weight_partition",), "weight partition")
+    weights = Path(
+        gate(
+            resolver(value, normalized_kind, normalized_partition),
+            normalized_partition,
+            kind=normalized_kind,
+        )
+    ).resolve()
+    root = (
+        Path(__file__).resolve().parents[1]
+        / "runtime"
+        / "native_components"
+        / normalized_partition
+    ).resolve()
+    component = (root / normalized_kind).resolve()
+    if not (component / "config.json").is_file():
+        raise RuntimeError(
+            f"Native MiniMax-H3 descriptor is missing for {normalized_kind}: {component}"
+        )
+    return (
+        root,
+        component,
+        weights,
+        {},
+        {
+            "video": float(H3_DEFAULT_VIDEO_SHIFT),
+            "audio": float(H3_DEFAULT_AUDIO_SHIFT),
+        },
+    )
 
 
 def _selector_to_component_dirname(
@@ -660,16 +745,21 @@ def _component_model_choices(
 ) -> list[str]:
     """List selectable model names of one kind; never expose an auto mode.
 
-    Two sources feed one dropdown: flat single-file weights below
-    ``models/MiniMax-H3`` (classified by filename) and sharded release
-    components below ``models/diffusers/...`` (classified by their config).
+    Three sources feed one dropdown: native files in standard Comfy model
+    folders, RunningHub files below ``models/MiniMax-H3`` (both classified by
+    filename), and sharded release components below ``models/diffusers/...``.
     """
 
     kind = _normalized_kind(prefix)
     preferred = _default_model_name(kind, partition)
     names: set[str] = set()
     try:
-        names.update(path.name for path in _weight_file_choices(kind, partition))
+        module = _runtime_module("components")
+        choice_name = getattr(module, "weight_file_choice_name", None)
+        names.update(
+            str(choice_name(path, kind)) if callable(choice_name) else path.name
+            for path in _weight_file_choices(kind, partition)
+        )
         for component_dir in _component_candidates(kind, partition):
             names.add(_model_name_for_component_dir(component_dir, kind, partition))
     except Exception:
@@ -700,7 +790,7 @@ def _component_dir_input(
             "default": choices[0],
             "tooltip": (
                 f"You must explicitly select a {label} model name (weight filename or logical name); "
-                "quantized/BF16 weights are no longer switched automatically."
+                "native FP8/NVFP4, RunningHub INT8-CONVROT, and BF16 weights are never switched automatically."
             ),
         },
     )
@@ -713,8 +803,8 @@ def _video_vae_input(partition: str = H3_T2VA_PARTITION):
         {
             "default": choices[0],
             "tooltip": (
-                "24-channel video VAE weights; the upstream combined artifact is named "
-                f"{VIDEO_VAE_FILENAME}, and the sharded source package uses the logical name {VIDEO_VAE_MODEL_NAME}."
+                "24-channel video VAE weights from Comfy's normal VAE folder or a RunningHub release; "
+                f"legacy names are {VIDEO_VAE_FILENAME} and {VIDEO_VAE_MODEL_NAME}."
             ),
         },
     )
@@ -727,8 +817,8 @@ def _audio_vae_input(partition: str = H3_T2VA_PARTITION):
         {
             "default": choices[0],
             "tooltip": (
-                "32-channel audio VAE weights; the upstream combined artifact is named "
-                f"{AUDIO_VAE_FILENAME}, and the sharded source package uses the logical name {AUDIO_VAE_MODEL_NAME}."
+                "32-channel audio VAE weights from Comfy's normal VAE folder or a RunningHub release; "
+                f"legacy names are {AUDIO_VAE_FILENAME} and {AUDIO_VAE_MODEL_NAME}."
             ),
         },
     )
@@ -744,10 +834,9 @@ def _model_root_input(partition: str | None = None):
         _model_root_choices(),
         {
             "tooltip": (
-                "Select the MiniMax-H3 weight root: either the dedicated models/MiniMax-H3 root "
-                "(<type>/<partition>/<model>, containing quantized and combined artifacts), or the upstream "
-                f"release root under models/diffusers (with FL2VA/Ref2VA sharded subdirectories){partition_hint}. "
-                "All three components must come from the same root."
+                "Select the MiniMax-H3 release root for RunningHub INT8-CONVROT or BF16 shards. "
+                "When you select native FP8/NVFP4/VAE single files from Comfy's standard model folders, "
+                f"this legacy root value is ignored{partition_hint}. All three components must declare the same partition."
             ),
         },
     )

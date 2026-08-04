@@ -9,6 +9,8 @@ Checkpoint contract
 -------------------
 * video VAE: ``video_vae/source/model.safetensors`` (canonical release layout)
 * audio VAE: one or more ``*.safetensors`` under ``audio_vae``
+* standard Comfy single-file VAEs: configuration embedded under the
+  ``minimax_h3_video_vae`` or ``minimax_h3_audio_vae`` safetensors metadata key
 * both component ``config.json`` files must carry per-channel
   ``latents_mean`` and ``latents_std`` values
 * the video wrapper config is paired with
@@ -53,9 +55,21 @@ AUDIO_LATENT_CHANNELS = 32
 AUDIO_SAMPLE_RATE = 32_000
 AUDIO_OUTPUT_CHANNELS = 2
 
+_SINGLE_FILE_METADATA_KEYS = {
+    "video_vae": "minimax_h3_video_vae",
+    "audio_vae": "minimax_h3_audio_vae",
+}
+_SINGLE_FILE_CONFIG_TENSOR_KEYS = frozenset({"latents_mean", "latents_std"})
+
 
 class H3VAEError(RuntimeError):
     """Raised for an invalid component layout, checkpoint, or tensor contract."""
+
+
+@dataclass(frozen=True)
+class _H3SingleFileMetadata:
+    config: dict[str, Any]
+    weight_dtype: torch.dtype
 
 
 @dataclass(frozen=True)
@@ -195,6 +209,95 @@ def _component_config(
         label=f"{component_name} config",
     )
     return _read_json(config_path)
+
+
+def _single_file_metadata_config(
+    checkpoint: Path,
+    component_name: str,
+    *,
+    required: bool,
+) -> _H3SingleFileMetadata | None:
+    """Read one standard Comfy H3 VAE's embedded JSON configuration.
+
+    RunningHub release checkpoints predate this metadata convention.  When
+    ``required`` is false, a checkpoint with no H3 metadata therefore keeps
+    using its external ``config.json`` unchanged.  A checkpoint declaring the
+    opposite H3 component is always rejected instead of being treated as a
+    legacy file.
+    """
+
+    checkpoint = checkpoint.expanduser().resolve()
+    if checkpoint.suffix.lower() != ".safetensors":
+        if required:
+            raise H3VAEError(
+                f"Standalone {component_name} checkpoint must be a .safetensors file: "
+                f"{checkpoint}"
+            )
+        return None
+    try:
+        from safetensors import safe_open
+    except ImportError as exc:
+        raise H3VAEError(
+            "Loading MiniMax H3 weights requires the safetensors package"
+        ) from exc
+    try:
+        with safe_open(str(checkpoint), framework="pt", device="cpu") as handle:
+            metadata = handle.metadata() or {}
+            dtype_names = {
+                str(handle.get_slice(key).get_dtype())
+                for key in handle.keys()
+                if key not in _SINGLE_FILE_CONFIG_TENSOR_KEYS
+            }
+    except Exception as exc:
+        raise H3VAEError(
+            f"Cannot read safetensors metadata from {checkpoint}"
+        ) from exc
+
+    metadata_key = _SINGLE_FILE_METADATA_KEYS[component_name]
+    raw_config = metadata.get(metadata_key)
+    if raw_config is None:
+        other_keys = sorted(
+            key
+            for name, key in _SINGLE_FILE_METADATA_KEYS.items()
+            if name != component_name and key in metadata
+        )
+        if other_keys:
+            raise H3VAEError(
+                f"{checkpoint} declares {other_keys[0]!r}, expected "
+                f"{metadata_key!r}"
+            )
+        if required:
+            raise H3VAEError(
+                f"Standalone {component_name} checkpoint {checkpoint} is missing "
+                f"safetensors metadata key {metadata_key!r}"
+            )
+        return None
+    try:
+        config = json.loads(raw_config)
+    except (TypeError, json.JSONDecodeError) as exc:
+        raise H3VAEError(
+            f"Safetensors metadata {metadata_key!r} in {checkpoint} is not valid JSON"
+        ) from exc
+    if not isinstance(config, dict):
+        raise H3VAEError(
+            f"Safetensors metadata {metadata_key!r} in {checkpoint} must be a JSON object"
+        )
+    dtype_map = {
+        "F16": torch.float16,
+        "BF16": torch.bfloat16,
+        "F32": torch.float32,
+    }
+    floating_dtypes = {dtype_map[name] for name in dtype_names if name in dtype_map}
+    if len(floating_dtypes) != 1:
+        found = ", ".join(sorted(dtype_names)) or "none"
+        raise H3VAEError(
+            f"Standard Comfy {component_name} checkpoint must use one floating "
+            f"weight dtype; found: {found}"
+        )
+    return _H3SingleFileMetadata(
+        config=config,
+        weight_dtype=next(iter(floating_dtypes)),
+    )
 
 
 def _looks_like_component(path: Path, component_name: str) -> bool:
@@ -477,6 +580,73 @@ def _component_weight_files(
     raise H3VAEError(f"No safetensors checkpoint found under {component_dir}")
 
 
+def _component_load_inputs(
+    model_or_component_path: str | Path,
+    component_name: str,
+    weight_files: Sequence[str | Path] | None,
+) -> tuple[Path, dict[str, Any], list[Path], bool, torch.dtype | None]:
+    """Resolve configuration and weights for release or Comfy-native layouts.
+
+    A direct file path requires the matching embedded metadata.  An external
+    weight override keeps the selected release/descriptor ``config.json`` as a
+    fallback, but matching embedded metadata takes precedence for architecture
+    and latent statistics.  Auto-discovered RunningHub directory weights are
+    deliberately left on the historical external-config path.
+    """
+
+    selected = Path(model_or_component_path).expanduser().resolve()
+    explicit_weights = _explicit_weight_files(weight_files, component_name)
+    if selected.is_file():
+        if explicit_weights and explicit_weights != [selected]:
+            raise H3VAEError(
+                f"A standalone {component_name} checkpoint cannot be combined "
+                "with a different weight_files override"
+            )
+        embedded = _single_file_metadata_config(
+            selected,
+            component_name,
+            required=True,
+        )
+        assert embedded is not None
+        return (
+            selected.parent,
+            embedded.config,
+            [selected],
+            True,
+            embedded.weight_dtype,
+        )
+
+    component_dir = resolve_h3_component_dir(selected, component_name)
+    config = _component_config(component_dir, component_name)
+    if explicit_weights:
+        embedded = None
+        if len(explicit_weights) == 1:
+            embedded = _single_file_metadata_config(
+                explicit_weights[0],
+                component_name,
+                required=False,
+            )
+        if embedded is not None:
+            merged_config = dict(config)
+            merged_config.update(embedded.config)
+            config = merged_config
+        return (
+            component_dir,
+            config,
+            explicit_weights,
+            embedded is not None,
+            embedded.weight_dtype if embedded is not None else None,
+        )
+
+    return (
+        component_dir,
+        config,
+        _component_weight_files(component_dir, component_name, config),
+        False,
+        None,
+    )
+
+
 def _resolve_dtype(value: Any, *, default: torch.dtype) -> torch.dtype:
     if value is None:
         return default
@@ -632,6 +802,7 @@ def _construct_and_load(
     weight_dtype: torch.dtype,
     strict: bool,
     low_memory: bool,
+    ignored_checkpoint_keys: Iterable[str] = (),
 ) -> torch.nn.Module:
     use_meta = bool(low_memory and _can_assign_state_dict())
     with _default_dtype(weight_dtype):
@@ -642,6 +813,7 @@ def _construct_and_load(
             model = factory()
 
     model_keys = set(model.state_dict().keys())
+    ignored_keys = set(ignored_checkpoint_keys)
     loaded_keys: set[str] = set()
     unexpected: set[str] = set()
     for weight_file in weight_files:
@@ -649,6 +821,15 @@ def _construct_and_load(
         state = _normalize_checkpoint_keys(
             _load_safetensors(weight_file), model_keys, component_name
         )
+        ignored_present = ignored_keys.intersection(state).difference(model_keys)
+        if ignored_present:
+            LOGGER.info(
+                "Using embedded metadata instead of %s checkpoint tensors: %s",
+                component_name,
+                ", ".join(sorted(ignored_present)),
+            )
+            for key in ignored_present:
+                state.pop(key)
         unexpected.update(set(state) - model_keys)
         usable = {key: value for key, value in state.items() if key in model_keys}
         loaded_keys.update(usable)
@@ -1265,12 +1446,22 @@ def _video_source_config(
 ) -> dict[str, Any]:
     """Read and verify the real bundle's inner visual-VAE config."""
 
-    source_path = _resolve_within_root(
-        component_dir,
-        component_dir / "source" / "config.json",
-        label="video_vae source config",
-    )
-    source = _read_json(source_path)
+    embedded_source = outer_config.get("source_config")
+    if embedded_source is not None:
+        if not isinstance(embedded_source, Mapping):
+            raise H3VAEError(
+                "video_vae safetensors source_config must be a JSON object"
+            )
+        source = dict(embedded_source)
+        source_label = "video_vae safetensors source_config"
+    else:
+        source_path = _resolve_within_root(
+            component_dir,
+            component_dir / "source" / "config.json",
+            label="video_vae source config",
+        )
+        source = _read_json(source_path)
+        source_label = "video_vae/source/config.json"
     outer_source_class = outer_config.get("source_class_name")
     if outer_source_class not in (None, "AutoencoderKLLegacy"):
         raise H3VAEError(
@@ -1285,7 +1476,7 @@ def _video_source_config(
             mismatches.append(f"{key}={source[key]!r} (expected {expected!r})")
     if mismatches:
         raise H3VAEError(
-            "video_vae/source/config.json does not match the MiniMax H3 "
+            f"{source_label} does not match the MiniMax H3 "
             "release architecture: "
             + "; ".join(mismatches[:12])
         )
@@ -1359,9 +1550,32 @@ def _video_vae_factory(
     return factory
 
 
-def _audio_vae_factory():
+def _remove_weight_norm_parametrizations(model: torch.nn.Module) -> int:
+    """Fold the vendored audio model's weight norm into plain weights.
+
+    Standard Comfy H3 audio checkpoints are distributed after this conversion,
+    whereas RunningHub checkpoints retain weight-norm parameters.  Returning
+    the count lets the native path fail loudly if the vendored architecture
+    unexpectedly stops exposing those parametrizations.
+    """
+
+    from torch.nn.utils import parametrize
+
+    removed = 0
+    for module in model.modules():
+        if parametrize.is_parametrized(module, "weight"):
+            parametrize.remove_parametrizations(
+                module,
+                "weight",
+                leave_parametrized=True,
+            )
+            removed += 1
+    return removed
+
+
+def _audio_vae_factory(*, folded_weight_norm: bool = False):
     def factory():
-        return DacAudioVAE(
+        model = DacAudioVAE(
             encoder_dim=64,
             encoder_rates=[2, 4, 4, 5, 5],
             latent_dim=2048,
@@ -1372,6 +1586,14 @@ def _audio_vae_factory():
             attn_proj=True,
             decoder_type="bigvgan",
         )
+        if folded_weight_norm:
+            removed = _remove_weight_norm_parametrizations(model)
+            if removed == 0:
+                raise H3VAEError(
+                    "Standard Comfy audio VAE expected weight-norm "
+                    "parametrizations in the vendored architecture"
+                )
+        return model
 
     return factory
 
@@ -1380,7 +1602,7 @@ def load_video_vae(
     model_or_component_path: str | Path,
     *,
     device: str | torch.device = "cpu",
-    weight_dtype: torch.dtype | str = torch.float32,
+    weight_dtype: torch.dtype | str | None = None,
     compute_dtype: torch.dtype | str | None = None,
     use_tiling: bool = True,
     strict: bool = True,
@@ -1391,13 +1613,24 @@ def load_video_vae(
 
     ``weight_files`` overrides checkpoint discovery with an explicit file, which
     is how the flat ``models/MiniMax-H3`` weights root is consumed: the config
-    still comes from the release component directory.
+    comes from embedded metadata when the file declares
+    ``minimax_h3_video_vae``, otherwise from the release component directory.
+    ``model_or_component_path`` may itself be a standard Comfy single-file VAE.
     """
 
-    component_dir = resolve_h3_component_dir(
-        model_or_component_path, "video_vae"
+    (
+        component_dir,
+        config,
+        resolved_weights,
+        native_single_file,
+        native_weight_dtype,
+    ) = (
+        _component_load_inputs(
+            model_or_component_path,
+            "video_vae",
+            weight_files,
+        )
     )
-    config = _component_config(component_dir, "video_vae")
     class_name = config.get("_class_name")
     if class_name not in (None, "MiniMaxH3VideoVAE"):
         raise H3VAEError(
@@ -1412,10 +1645,22 @@ def load_video_vae(
         expected_channels=VIDEO_LATENT_CHANNELS,
         component_name="video_vae",
     )
-    weight_dtype = _resolve_dtype(weight_dtype, default=torch.float32)
+    weight_dtype = _resolve_dtype(
+        weight_dtype,
+        default=native_weight_dtype or torch.float32,
+    )
+    default_compute_dtype = (
+        native_weight_dtype
+        if native_single_file and native_weight_dtype is not None
+        else (
+            torch.float16
+            if torch.device(device).type == "cuda"
+            else torch.float32
+        )
+    )
     compute_dtype = _resolve_dtype(
         compute_dtype,
-        default=torch.float16 if torch.device(device).type == "cuda" else torch.float32,
+        default=default_compute_dtype,
     )
     model = _construct_and_load(
         _video_vae_factory(
@@ -1423,13 +1668,15 @@ def load_video_vae(
             source_config,
             use_tiling=use_tiling,
         ),
-        _explicit_weight_files(weight_files, "video_vae")
-        or _component_weight_files(component_dir, "video_vae", config),
+        resolved_weights,
         component_name="video_vae",
         device=torch.device(device),
         weight_dtype=weight_dtype,
         strict=strict,
         low_memory=low_memory,
+        ignored_checkpoint_keys=(
+            _SINGLE_FILE_CONFIG_TENSOR_KEYS if native_single_file else ()
+        ),
     )
     return MiniMaxH3VideoVAEAdapter(
         model,
@@ -1443,7 +1690,7 @@ def load_audio_vae(
     model_or_component_path: str | Path,
     *,
     device: str | torch.device = "cpu",
-    weight_dtype: torch.dtype | str = torch.float32,
+    weight_dtype: torch.dtype | str | None = None,
     compute_dtype: torch.dtype | str = torch.float32,
     strict: bool = True,
     low_memory: bool = True,
@@ -1451,13 +1698,23 @@ def load_audio_vae(
 ) -> MiniMaxH3AudioVAEAdapter:
     """Load the released DAC/BigVGAN VAE directly into this ComfyUI process.
 
-    See :func:`load_video_vae` for ``weight_files``.
+    See :func:`load_video_vae` for ``weight_files`` and direct single-file
+    checkpoint behavior.
     """
 
-    component_dir = resolve_h3_component_dir(
-        model_or_component_path, "audio_vae"
+    (
+        component_dir,
+        config,
+        resolved_weights,
+        native_single_file,
+        native_weight_dtype,
+    ) = (
+        _component_load_inputs(
+            model_or_component_path,
+            "audio_vae",
+            weight_files,
+        )
     )
-    config = _component_config(component_dir, "audio_vae")
     class_name = config.get("_class_name")
     if class_name not in (None, "MiniMaxH3AudioVAE"):
         raise H3VAEError(
@@ -1481,17 +1738,22 @@ def load_audio_vae(
         expected_channels=AUDIO_LATENT_CHANNELS,
         component_name="audio_vae",
     )
-    weight_dtype = _resolve_dtype(weight_dtype, default=torch.float32)
+    weight_dtype = _resolve_dtype(
+        weight_dtype,
+        default=native_weight_dtype or torch.float32,
+    )
     compute_dtype = _resolve_dtype(compute_dtype, default=torch.float32)
     model = _construct_and_load(
-        _audio_vae_factory(),
-        _explicit_weight_files(weight_files, "audio_vae")
-        or _component_weight_files(component_dir, "audio_vae", config),
+        _audio_vae_factory(folded_weight_norm=native_single_file),
+        resolved_weights,
         component_name="audio_vae",
         device=torch.device(device),
         weight_dtype=weight_dtype,
         strict=strict,
         low_memory=low_memory,
+        ignored_checkpoint_keys=(
+            _SINGLE_FILE_CONFIG_TENSOR_KEYS if native_single_file else ()
+        ),
     )
     return MiniMaxH3AudioVAEAdapter(
         model,

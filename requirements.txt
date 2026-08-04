@@ -1,5 +1,6 @@
-# Qwen3-VL requires a recent Transformers release; keep this range aligned with h3_settings.TRANSFORMERS_*_VERSION.
-transformers>=4.57.0,<=5.8.1
+# Native NVFP4 uses Comfy's built-in MiniMax encoder. The legacy Transformers
+# loader applies its narrower validated upper bound only when that path is used.
+transformers>=4.57.0
 accelerate>=1.11.0
 safetensors>=0.4.5
 numpy>=1.26

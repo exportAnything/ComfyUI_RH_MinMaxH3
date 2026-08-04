@@ -1,0 +1,5 @@
+{
+  "_class_name": "MiniMaxH3Transformer3DModel",
+  "backend": "comfy_native_safetensors",
+  "partition": "fl2va"
+}

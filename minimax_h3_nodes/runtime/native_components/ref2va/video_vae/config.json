@@ -1,0 +1,4 @@
+{
+  "_class_name": "MiniMaxH3VideoVAE",
+  "backend": "comfy_native_safetensors"
+}

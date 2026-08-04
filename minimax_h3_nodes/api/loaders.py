@@ -26,44 +26,63 @@ def _load_dual_vae(
 ) -> dict:
     """Select and load the 24-channel video and 32-channel audio VAEs together.
 
-    Both released weight sets stay FP32.  The video adapter independently
-    applies FP16 autocast to decode operations where the source runtime does;
-    exposing a generic weight dtype here would incorrectly suggest that BF16
-    VAE weights are part of the H3 contract.
+    Legacy release weights stay FP32. Native Comfy single files preserve their
+    declared storage dtype (currently FP16 video and FP32 audio), while the
+    video adapter independently applies FP16 autocast to decode operations.
     """
 
     is_v2 = schema == H3_VAE_SCHEMA_V2
     normalized_task = normalize_task(task)
     video_selector = video_vae_path or _default_video_vae_model_name()
     audio_selector = audio_vae_path or _default_audio_vae_model_name()
-    # Partition admission needs only one component as a hint; validate the audio side
-    # separately after resolving the root.
-    video_component = _selector_to_component_dirname(
-        video_selector,
-        VIDEO_VAE_DIRNAME,
-        partition_for_task(normalized_task),
-        model_root=model_root,
+    partition_hint = partition_for_task(normalized_task)
+    native_video = _native_component_selection(
+        video_selector, VIDEO_VAE_DIRNAME, partition_hint
     )
-    if is_v2:
-        root, partition, release_info, sigma_scales = _resolve_release(
-            model_root,
-            task=normalized_task,
-            required_component=video_component,
-            required_files=("config.json",),
+    native_audio = _native_component_selection(
+        audio_selector, AUDIO_VAE_DIRNAME, partition_hint
+    )
+    if (native_video is None) != (native_audio is None):
+        raise ValueError(
+            "Select both MiniMax-H3 VAEs from the standard Comfy VAE folder, "
+            "or select both from the same RunningHub release; mixed VAE layouts "
+            "cannot prove a shared release identity."
         )
+    if native_video is not None and native_audio is not None:
+        root, selected_video, video_weights, release_info, sigma_scales = native_video
+        audio_root, selected_audio, audio_weights, _audio_release, _audio_scales = native_audio
+        if audio_root != root:
+            raise ValueError("Native MiniMax-H3 video/audio VAE descriptors do not share a root")
+        partition = partition_hint
     else:
-        root, release_info, sigma_scales = _resolve_t2va_release(
-            model_root,
-            required_component=video_component,
-            required_files=("config.json",),
+        # Partition admission needs only one component as a hint; validate the
+        # audio side separately after resolving the root.
+        video_component = _selector_to_component_dirname(
+            video_selector,
+            VIDEO_VAE_DIRNAME,
+            partition_hint,
+            model_root=model_root,
         )
-        partition = H3_T2VA_PARTITION
-    selected_video, video_weights = _resolve_selected_vae_component(
-        root, video_selector, kind=VIDEO_VAE_DIRNAME, partition=partition
-    )
-    selected_audio, audio_weights = _resolve_selected_vae_component(
-        root, audio_selector, kind=AUDIO_VAE_DIRNAME, partition=partition
-    )
+        if is_v2:
+            root, partition, release_info, sigma_scales = _resolve_release(
+                model_root,
+                task=normalized_task,
+                required_component=video_component,
+                required_files=("config.json",),
+            )
+        else:
+            root, release_info, sigma_scales = _resolve_t2va_release(
+                model_root,
+                required_component=video_component,
+                required_files=("config.json",),
+            )
+            partition = H3_T2VA_PARTITION
+        selected_video, video_weights = _resolve_selected_vae_component(
+            root, video_selector, kind=VIDEO_VAE_DIRNAME, partition=partition
+        )
+        selected_audio, audio_weights = _resolve_selected_vae_component(
+            root, audio_selector, kind=AUDIO_VAE_DIRNAME, partition=partition
+        )
     loader = _find_callable(
         _runtime_module("vae_adapter"),
         ("load_h3_vae_bundle",),
@@ -96,7 +115,11 @@ def _load_dual_vae(
         "audio_vae_path": str(selected_audio),
         **_weights_field("video_vae_weights_path", video_weights),
         **_weights_field("audio_vae_weights_path", audio_weights),
-        "weight_dtype": "float32",
+        "weight_dtype": (
+            "video=float16,audio=float32"
+            if native_video is not None
+            else "float32"
+        ),
         "video_decode_compute": "float16_autocast",
         "partition": partition,
         "task": normalized_task,
@@ -174,22 +197,28 @@ class MiniMaxH3DirectModelLoader:
         transformer_path: str = "",
     ):
         selector = transformer_path or _default_dit_model_name(H3_T2VA_PARTITION)
-        component_dir = _selector_to_component_dirname(
-            selector, "transformer", H3_T2VA_PARTITION, model_root=model_root
+        native = _native_component_selection(
+            selector, "transformer", H3_T2VA_PARTITION
         )
-        root, release_info, sigma_scales = _resolve_t2va_release(
-            model_root,
-            required_component=component_dir,
-            required_files=("config.json",),
-        )
-        selected_transformer, transformer_weights = _resolve_selected_component(
-            root,
-            selector,
-            keys=("transformer", "dit"),
-            label="DiT",
-            partition=H3_T2VA_PARTITION,
-            required_files=("config.json",),
-        )
+        if native is not None:
+            root, selected_transformer, transformer_weights, release_info, sigma_scales = native
+        else:
+            component_dir = _selector_to_component_dirname(
+                selector, "transformer", H3_T2VA_PARTITION, model_root=model_root
+            )
+            root, release_info, sigma_scales = _resolve_t2va_release(
+                model_root,
+                required_component=component_dir,
+                required_files=("config.json",),
+            )
+            selected_transformer, transformer_weights = _resolve_selected_component(
+                root,
+                selector,
+                keys=("transformer", "dit"),
+                label="DiT",
+                partition=H3_T2VA_PARTITION,
+                required_files=("config.json",),
+            )
         module = _runtime_module("model_loader")
         loader = _find_callable(
             module,
@@ -277,22 +306,28 @@ class MiniMaxH3DirectTextEncoderLoader:
         text_encoder_path: str = "",
     ):
         selector = text_encoder_path or _default_te_model_name()
-        component_dir = _selector_to_component_dirname(
-            selector, "text_encoder", H3_T2VA_PARTITION, model_root=model_root
+        native = _native_component_selection(
+            selector, "text_encoder", H3_T2VA_PARTITION
         )
-        root, release_info, sigma_scales = _resolve_t2va_release(
-            model_root,
-            required_component=component_dir,
-            required_files=("config.json",),
-        )
-        selected_text_encoder, text_encoder_weights = _resolve_selected_component(
-            root,
-            selector,
-            keys=("text_encoder", "qwen3vl", "qwen"),
-            label="Text Encoder",
-            partition=H3_T2VA_PARTITION,
-            required_files=("config.json",),
-        )
+        if native is not None:
+            root, selected_text_encoder, text_encoder_weights, release_info, sigma_scales = native
+        else:
+            component_dir = _selector_to_component_dirname(
+                selector, "text_encoder", H3_T2VA_PARTITION, model_root=model_root
+            )
+            root, release_info, sigma_scales = _resolve_t2va_release(
+                model_root,
+                required_component=component_dir,
+                required_files=("config.json",),
+            )
+            selected_text_encoder, text_encoder_weights = _resolve_selected_component(
+                root,
+                selector,
+                keys=("text_encoder", "qwen3vl", "qwen"),
+                label="Text Encoder",
+                partition=H3_T2VA_PARTITION,
+                required_files=("config.json",),
+            )
         module = _runtime_module("qwen_encoder")
         loader = _find_callable(
             module,
@@ -338,10 +373,9 @@ class MiniMaxH3DirectTextEncoderLoader:
 class MiniMaxH3DirectVAELoader:
     """Load the native 24-channel video and 32-channel audio VAEs.
 
-    Both released VAE weight sets stay FP32.  The video adapter independently
-    applies FP16 autocast to decode operations where the source runtime does;
-    exposing a generic weight dtype here would incorrectly suggest that BF16
-    VAE weights are part of the H3 contract.
+    Native single files preserve their declared storage dtype. Legacy release
+    weights remain FP32; the video adapter independently applies FP16 autocast
+    to decode operations where the source runtime does.
     """
 
     @classmethod
@@ -457,23 +491,28 @@ class _MiniMaxH3ExplicitModelLoader:
         task = normalize_task(self.TASK)
         partition_hint = partition_for_task(task)
         selector = transformer_path or _default_dit_model_name(partition_hint)
-        component_dir = _selector_to_component_dirname(
-            selector, "transformer", partition_hint, model_root=model_root
-        )
-        root, partition, release_info, sigma_scales = _resolve_release(
-            model_root,
-            task=task,
-            required_component=component_dir,
-            required_files=("config.json",),
-        )
-        selected_transformer, transformer_weights = _resolve_selected_component(
-            root,
-            selector,
-            keys=("transformer", "dit"),
-            label="DiT",
-            partition=partition,
-            required_files=("config.json",),
-        )
+        native = _native_component_selection(selector, "transformer", partition_hint)
+        if native is not None:
+            root, selected_transformer, transformer_weights, release_info, sigma_scales = native
+            partition = partition_hint
+        else:
+            component_dir = _selector_to_component_dirname(
+                selector, "transformer", partition_hint, model_root=model_root
+            )
+            root, partition, release_info, sigma_scales = _resolve_release(
+                model_root,
+                task=task,
+                required_component=component_dir,
+                required_files=("config.json",),
+            )
+            selected_transformer, transformer_weights = _resolve_selected_component(
+                root,
+                selector,
+                keys=("transformer", "dit"),
+                label="DiT",
+                partition=partition,
+                required_files=("config.json",),
+            )
         loader = _find_callable(
             _runtime_module("model_loader"),
             ("load_h3_model",),
@@ -583,23 +622,30 @@ class _MiniMaxH3ExplicitTextEncoderLoader:
         task = normalize_task(self.TASK)
         partition_hint = partition_for_task(task)
         selector = text_encoder_path or _default_te_model_name()
-        component_dir = _selector_to_component_dirname(
-            selector, "text_encoder", partition_hint, model_root=model_root
+        native = _native_component_selection(
+            selector, "text_encoder", partition_hint
         )
-        root, partition, release_info, sigma_scales = _resolve_release(
-            model_root,
-            task=task,
-            required_component=component_dir,
-            required_files=("config.json",),
-        )
-        selected_text_encoder, text_encoder_weights = _resolve_selected_component(
-            root,
-            selector,
-            keys=("text_encoder", "qwen3vl", "qwen"),
-            label="Text Encoder",
-            partition=partition,
-            required_files=("config.json",),
-        )
+        if native is not None:
+            root, selected_text_encoder, text_encoder_weights, release_info, sigma_scales = native
+            partition = partition_hint
+        else:
+            component_dir = _selector_to_component_dirname(
+                selector, "text_encoder", partition_hint, model_root=model_root
+            )
+            root, partition, release_info, sigma_scales = _resolve_release(
+                model_root,
+                task=task,
+                required_component=component_dir,
+                required_files=("config.json",),
+            )
+            selected_text_encoder, text_encoder_weights = _resolve_selected_component(
+                root,
+                selector,
+                keys=("text_encoder", "qwen3vl", "qwen"),
+                label="Text Encoder",
+                partition=partition,
+                required_files=("config.json",),
+            )
         loader = _find_callable(
             _runtime_module("qwen_encoder"),
             ("load_h3_text_encoder",),
@@ -617,15 +663,23 @@ class _MiniMaxH3ExplicitTextEncoderLoader:
         )
         if handle is None:
             raise RuntimeError("runtime.qwen_encoder returned None")
-        tokenizer_component = Path(
-            getattr(handle, "tokenizer_component_path", selected_text_encoder)
-        ).resolve()
-        processor_value = getattr(handle, "processor_component_path", None)
-        processor_component = (
-            Path(processor_value).resolve()
-            if processor_value is not None
-            else None
-        )
+        if native is not None:
+            # Native Comfy bundles tokenizer/processor assets with its own H3
+            # text encoder implementation.  Keep the wrapper's logical paths
+            # inside the native descriptor root; the handle owns the real
+            # packaged assets.
+            tokenizer_component = selected_text_encoder.resolve()
+            processor_component = selected_text_encoder.resolve()
+        else:
+            tokenizer_component = Path(
+                getattr(handle, "tokenizer_component_path", selected_text_encoder)
+            ).resolve()
+            processor_value = getattr(handle, "processor_component_path", None)
+            processor_component = (
+                Path(processor_value).resolve()
+                if processor_value is not None
+                else None
+            )
         related_paths = {"tokenizer": tokenizer_component}
         if processor_component is not None:
             related_paths["processor"] = processor_component

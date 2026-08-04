@@ -59,8 +59,44 @@ def read_json(path: str | Path) -> dict:
     return value
 
 
-def weights_root_paths(folder_paths_module=None) -> list[Path]:
-    """Probe ``<models>/MiniMax-H3``, the flat single-file weights root."""
+_COMFY_WEIGHT_FOLDER_KINDS = {
+    "transformer": ("diffusion_models", "unet"),
+    "text_encoder": ("text_encoders", "clip"),
+    VIDEO_VAE_DIRNAME: ("vae",),
+    AUDIO_VAE_DIRNAME: ("vae",),
+}
+
+
+def _comfy_weight_folder_paths(module, kind: str | None) -> list[Path]:
+    """Return standard ComfyUI model folders relevant to one H3 component."""
+
+    if module is None or kind is None:
+        return []
+    getter = getattr(module, "get_folder_paths", None)
+    if not callable(getter):
+        return []
+    roots: list[Path] = []
+    for folder_kind in _COMFY_WEIGHT_FOLDER_KINDS.get(kind, ()):
+        try:
+            roots.extend(Path(path) for path in getter(folder_kind))
+        except (KeyError, OSError, TypeError):
+            continue
+    return roots
+
+
+def weights_root_paths(
+    folder_paths_module=None,
+    *,
+    kind: str | None = None,
+) -> list[Path]:
+    """Probe dedicated and standard ComfyUI single-file weight folders.
+
+    RunningHub converter artifacts remain supported below
+    ``<models>/MiniMax-H3``.  Native Comfy checkpoints are discovered where
+    users normally put them: ``diffusion_models``, ``text_encoders`` and
+    ``vae``.  The component filter keeps manifest generation cheap and avoids
+    scanning unrelated model buckets.
+    """
 
     module = folder_paths_module
     if module is None:
@@ -79,6 +115,7 @@ def weights_root_paths(folder_paths_module=None) -> list[Path]:
         models_dir = Path(getattr(module, "models_dir", "") or "")
         if str(models_dir):
             roots.append(models_dir / WEIGHTS_ROOT_DIRNAME)
+        roots.extend(_comfy_weight_folder_paths(module, kind))
     global_models = Path(
         os.environ.get("MINIMAX_H3_GLOBAL_MODELS_DIR", str(RH_GLOBAL_MODELS_DIR))
     ).expanduser()
@@ -90,11 +127,11 @@ def list_h3_weight_files(
     kind: str | None = None,
     partition: str | None = None,
 ) -> list[Path]:
-    """List flat weight files, optionally filtered by component kind/partition.
+    """List single-file weights, optionally filtered by kind and partition.
 
     A file whose name does not follow the converter naming convention is
-    ignored rather than guessed at: the filename is the only type and partition
-    evidence this root carries.
+    ignored rather than guessed at. Standard Comfy model subfolders are scanned
+    recursively and presented through relative dropdown names.
     """
 
     wanted_kind = str(kind).strip().lower() if kind is not None else None
@@ -108,9 +145,9 @@ def list_h3_weight_files(
     )
     out: list[Path] = []
     seen: set[str] = set()
-    for root in weights_root_paths():
+    for root in weights_root_paths(kind=wanted_kind):
         try:
-            children = sorted(root.iterdir())
+            children = sorted(root.rglob("*.safetensors"))
         except OSError:
             continue
         for child in children:
@@ -137,24 +174,51 @@ def list_h3_weight_files(
     return out
 
 
+def weight_file_choice_name(path: str | Path, kind: str) -> str:
+    """Return Comfy's relative dropdown name for one discovered weight file."""
+
+    resolved = Path(path).expanduser().resolve()
+    normalized_kind = str(kind).strip().lower()
+    for root in weights_root_paths(kind=normalized_kind):
+        resolved_root = root.resolve()
+        try:
+            relative = resolved.relative_to(resolved_root)
+        except ValueError:
+            continue
+        return relative.as_posix()
+    return resolved.name
+
+
 def resolve_weight_file(
     name: str,
     kind: str,
     partition: str | None = None,
 ) -> Path:
-    """Resolve one flat weight filename to an absolute path inside a root."""
+    """Resolve one safe relative weight selection to an absolute path."""
 
     text = str(name or "").strip()
     if not text:
         raise H3ComponentError("MiniMax-H3 weight filename cannot be empty")
-    if "/" in text or "\\" in text or text in (".", ".."):
+    relative = Path(text.replace("/", os.sep).replace("\\", os.sep))
+    if relative.is_absolute() or text in (".", "..") or ".." in relative.parts:
         raise H3ComponentError(
-            f"MiniMax-H3 weight selection must be a bare filename: {name!r}"
+            f"MiniMax-H3 weight selection must be a safe relative filename: {name!r}"
         )
-    for candidate in list_h3_weight_files(kind, partition):
-        if candidate.name == text:
-            return candidate
-    searched = ", ".join(str(root) for root in weights_root_paths()) or "<none>"
+    normalized_text = relative.as_posix()
+    matches = [
+        candidate
+        for candidate in list_h3_weight_files(kind, partition)
+        if weight_file_choice_name(candidate, kind) == normalized_text
+        or candidate.name == text
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        raise H3ComponentError(
+            f"MiniMax-H3 {kind} weight filename {text!r} is ambiguous; "
+            "select its relative subfolder path"
+        )
+    searched = ", ".join(str(root) for root in weights_root_paths(kind=kind)) or "<none>"
     raise H3ComponentError(
         f"MiniMax-H3 {kind} weight file {text!r} not found; searched: {searched}"
     )

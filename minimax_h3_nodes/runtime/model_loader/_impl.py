@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, replace
+import json
+import logging
 from pathlib import Path
+import re
 from typing import Any
 
 from ..components import (
@@ -16,7 +19,6 @@ from ..components import (
     validate_task_partition,
     validate_weight_partition,
 )
-import logging
 
 from ..h3_settings import (
     ADALN_CURVE_TABLE_KEY,
@@ -27,10 +29,13 @@ from ..h3_settings import (
     INT8_DIT_DIRNAME,
     INT8_FORMAT,
     OPT_DYNAMIC_ACTIVATION_RESERVE,
-    QUANT_KEY_SUFFIXES,
 )
 
 LOGGER = logging.getLogger(__name__)
+
+_FP8_FORMAT = "float8_e4m3fn"
+_SUPPORTED_QUANT_FORMATS = frozenset({INT8_FORMAT, _FP8_FORMAT})
+_NATIVE_SINGLE_FILE_BACKEND = "comfy_native_safetensors"
 
 _TRANSFORMER_CONFIG_FIELDS = frozenset(
     {
@@ -181,6 +186,31 @@ def _validate_transformer_config(raw: dict, path: Path) -> None:
             f"{path} does not match the official MiniMax-H3 DiT architecture: "
             + "; ".join(mismatches)
         )
+
+
+def _validate_native_config_descriptor(
+    raw: dict[str, Any],
+    path: Path,
+    partition: str,
+) -> bool:
+    """Validate a package-owned pointer to a Comfy single-file checkpoint."""
+
+    if raw.get("backend") != _NATIVE_SINGLE_FILE_BACKEND:
+        return False
+    class_name = raw.get("_class_name")
+    if class_name not in {
+        "MiniMaxH3DiTModel",
+        "MiniMaxH3Transformer3DModel",
+    }:
+        raise H3ComponentError(
+            f"{path} declares unsupported native H3 transformer class {class_name!r}"
+        )
+    declared_partition = str(raw.get("partition") or "").strip().lower()
+    if declared_partition != partition:
+        raise H3ComponentError(
+            f"{path} declares partition {declared_partition!r}, expected {partition!r}"
+        )
+    return True
 
 
 def _validate_adaln_curve_contract(
@@ -441,16 +471,56 @@ def _detect_adaln_curve(
     return grid, rank
 
 
-def _is_quantized_map(weight_map: dict[str, str] | None, shards: list[Path]) -> bool:
-    if weight_map:
-        return any(k.endswith(QUANT_KEY_SUFFIXES) for k in weight_map)
+def _decode_quant_marker(marker: Any, *, prefix: str) -> dict[str, Any]:
+    try:
+        config = json.loads(bytes(marker.detach().cpu().tolist()))
+    except Exception as exc:
+        raise H3ComponentError(f"Invalid comfy_quant marker for {prefix}") from exc
+    if not isinstance(config, dict):
+        raise H3ComponentError(
+            f"comfy_quant marker for {prefix} must decode to an object"
+        )
+    quant_format = config.get("format")
+    if not isinstance(quant_format, str) or not quant_format:
+        raise H3ComponentError(
+            f"comfy_quant marker for {prefix} has no non-empty format"
+        )
+    return config
+
+
+def _checkpoint_quant_formats(
+    weight_map: dict[str, str] | None,
+    shards: list[Path],
+) -> frozenset[str]:
+    """Read small ``comfy_quant`` tensors without materializing model weights."""
+
     from safetensors import safe_open
 
+    marker_keys = (
+        {key for key in weight_map if key.endswith(".comfy_quant")}
+        if weight_map
+        else None
+    )
+    formats: set[str] = set()
     for shard in shards:
-        with safe_open(str(shard), framework="pt") as reader:
-            if any(k.endswith(QUANT_KEY_SUFFIXES) for k in reader.keys()):
-                return True
-    return False
+        with safe_open(str(shard), framework="pt", device="cpu") as reader:
+            for key in reader.keys():
+                if not key.endswith(".comfy_quant"):
+                    continue
+                if marker_keys is not None and key not in marker_keys:
+                    continue
+                config = _decode_quant_marker(
+                    reader.get_tensor(key),
+                    prefix=key[: -len("comfy_quant")],
+                )
+                formats.add(str(config["format"]))
+    return frozenset(formats)
+
+
+def _is_quantized_map(weight_map: dict[str, str] | None, shards: list[Path]) -> bool:
+    """Backward-compatible boolean wrapper around format-aware detection."""
+
+    return bool(_checkpoint_quant_formats(weight_map, shards))
 
 
 def _comfy_version_label() -> str:
@@ -466,34 +536,110 @@ def _comfy_version_label() -> str:
 def _int8_ops_supported(cops) -> bool:
     """Check QUANT_ALGOS first, then fall back to source probing for older Comfy versions."""
     import inspect
+
     for mod_name in ("comfy.quant_ops", "comfy.ops"):
         try:
             mod = __import__(mod_name, fromlist=["QUANT_ALGOS"])
             algos = getattr(mod, "QUANT_ALGOS", None)
-            if isinstance(algos, dict) and INT8_FORMAT in algos: return True
-            if isinstance(algos, (set, list, tuple)) and INT8_FORMAT in algos: return True
-        except ImportError: pass
+            if isinstance(algos, dict) and INT8_FORMAT in algos:
+                return True
+            if isinstance(algos, (set, list, tuple)) and INT8_FORMAT in algos:
+                return True
+        except ImportError:
+            pass
     loader = getattr(cops, "_load_quantized_module", None)
-    if not callable(loader): return False
-    try: return INT8_FORMAT in inspect.getsource(loader)
-    except (OSError, TypeError): return False
+    if not callable(loader):
+        return False
+    try:
+        return INT8_FORMAT in inspect.getsource(loader)
+    except (OSError, TypeError):
+        return False
 
 
-def _require_int8_ops(compute_dtype):
-    """Build mixed_precision_ops; when unsupported, instruct the user to use BF16 rather than silently pretending to load."""
+def _registered_quant_formats() -> set[str]:
+    out: set[str] = set()
+    for mod_name in ("comfy.quant_ops", "comfy.ops"):
+        try:
+            mod = __import__(mod_name, fromlist=["QUANT_ALGOS"])
+        except ImportError:
+            continue
+        algos = getattr(mod, "QUANT_ALGOS", None)
+        if isinstance(algos, dict):
+            out.update(str(name) for name in algos)
+        elif isinstance(algos, (set, list, tuple)):
+            out.update(str(name) for name in algos)
+    return out
+
+
+def _require_quant_ops(compute_dtype, formats: frozenset[str], load_device=None):
+    """Build Comfy mixed-precision ops for the checkpoint's encoded formats."""
+
     try:
         import comfy.ops as cops
     except ImportError as exc:
         raise H3ComponentError(
-            "INT8/convrot checkpoints require ComfyUI (comfy.ops); alternatively use BF16 DiT"
+            "Quantized MiniMax-H3 checkpoints require ComfyUI comfy.ops"
         ) from exc
-    if not _int8_ops_supported(cops):
+
+    unsupported_by_loader = set(formats) - _SUPPORTED_QUANT_FORMATS
+    if unsupported_by_loader:
+        raise H3ComponentError(
+            "MiniMax-H3 loader does not support checkpoint quantization format(s): "
+            + ", ".join(sorted(unsupported_by_loader))
+        )
+    registered = _registered_quant_formats()
+    missing: set[str] = set()
+    for quant_format in formats:
+        supported = (
+            _int8_ops_supported(cops)
+            if quant_format == INT8_FORMAT
+            else quant_format in registered
+        )
+        if not supported:
+            missing.add(quant_format)
+    if missing:
         ver = _comfy_version_label()
         raise H3ComponentError(
-            f"Current ComfyUI{f' {ver}' if ver else ''} does not support {INT8_FORMAT}/convrot. "
-            "Upgrade ComfyUI or use the BF16 transformer (automatic layerwise offload)."
+            f"Current ComfyUI{f' {ver}' if ver else ''} does not support "
+            f"MiniMax-H3 quantization format(s) {sorted(missing)!r}. "
+            "Upgrade ComfyUI or use the BF16 transformer."
         )
-    return cops.mixed_precision_ops({}, compute_dtype=compute_dtype)
+
+    disabled: list[str] = []
+    if _FP8_FORMAT in formats and load_device is not None:
+        try:
+            import comfy.model_management as mm
+            import torch
+
+            selected_device = torch.device(load_device)
+            if selected_device.type != "cuda" or not mm.supports_fp8_compute(
+                selected_device
+            ):
+                # Comfy keeps the compact FP8 storage but dequantizes for the
+                # matrix multiply on devices without native FP8 compute.
+                disabled.append(_FP8_FORMAT)
+        except (AttributeError, ImportError, TypeError, ValueError):
+            pass
+    try:
+        return cops.mixed_precision_ops(
+            {}, compute_dtype=compute_dtype, disabled=disabled
+        )
+    except TypeError as exc:
+        if disabled:
+            raise H3ComponentError(
+                "This ComfyUI build cannot safely emulate FP8 on the selected device; "
+                "upgrade ComfyUI or use BF16 weights"
+            ) from exc
+        return cops.mixed_precision_ops({}, compute_dtype=compute_dtype)
+
+
+def _require_int8_ops(compute_dtype):
+    """Compatibility wrapper retained for existing tests/integrations."""
+
+    return _require_quant_ops(
+        compute_dtype,
+        frozenset({INT8_FORMAT}),
+    )
 
 
 def _tensor_nbytes(tensor) -> int:
@@ -554,6 +700,172 @@ def _strip_outer(key: str) -> list[str]:
     return out
 
 
+def _canonical_checkpoint_shapes(
+    weight_map: dict[str, str] | None,
+    shards: list[Path],
+) -> dict[str, tuple[int, ...]]:
+    """Read only the safetensors header and return canonical H3 key shapes."""
+
+    from safetensors import safe_open
+
+    shapes: dict[str, tuple[int, ...]] = {}
+    for shard in shards:
+        with safe_open(str(shard), framework="pt") as reader:
+            for raw_key in reader.keys():
+                # Every known wrapper is longer than the native H3 key.  Using
+                # the shortest candidate keeps the inference path compatible
+                # with both Comfy and Diffusers single-file exports.
+                key = min(_strip_outer(raw_key), key=len)
+                shape = tuple(int(value) for value in reader.get_slice(raw_key).get_shape())
+                previous = shapes.get(key)
+                if previous is not None and previous != shape:
+                    raise H3ComponentError(
+                        f"Conflicting checkpoint shapes for {key!r}: "
+                        f"{previous!r} and {shape!r}"
+                    )
+                shapes[key] = shape
+    return shapes
+
+
+def _contiguous_block_count(
+    shapes: dict[str, tuple[int, ...]],
+    prefix: str,
+) -> int:
+    pattern = re.compile(rf"^{re.escape(prefix)}(\d+)\.")
+    indices = {
+        int(match.group(1))
+        for key in shapes
+        if (match := pattern.match(key)) is not None
+    }
+    if not indices:
+        raise H3ComponentError(f"Checkpoint has no {prefix}<index> tensors")
+    expected = set(range(max(indices) + 1))
+    if indices != expected:
+        missing = sorted(expected - indices)
+        raise H3ComponentError(
+            f"Checkpoint {prefix} indices are not contiguous; missing={missing[:20]!r}"
+        )
+    return len(indices)
+
+
+def _infer_transformer_config_from_shapes(
+    shapes: dict[str, tuple[int, ...]],
+) -> dict[str, Any]:
+    """Infer the official H3 architecture from a header-only shape mapping.
+
+    MiniMax-H3 has one published DiT architecture.  The checkpoint still has
+    to prove every dimension that can be derived from tensor shapes; fixed
+    fields such as norm epsilons and patch geometry come from the official
+    architecture gate above.  This lets Comfy-style single-file checkpoints
+    run without a duplicated Diffusers ``config.json`` directory.
+    """
+
+    def require(name: str, rank: int | None = None) -> tuple[int, ...]:
+        try:
+            shape = shapes[name]
+        except KeyError as exc:
+            raise H3ComponentError(
+                f"MiniMax-H3 checkpoint header is missing {name!r}"
+            ) from exc
+        if rank is not None and len(shape) != rank:
+            raise H3ComponentError(
+                f"MiniMax-H3 checkpoint tensor {name!r} must have rank {rank}; "
+                f"got shape {shape!r}"
+            )
+        return shape
+
+    video_patch = require("video_patch_proj.weight", 2)
+    audio_patch = require("audio_patch_proj.weight", 2)
+    video_out = require("final_layer.video_out.weight", 2)
+    audio_out = require("final_layer.audio_out.weight", 2)
+    q_norm = require("blocks.0.attn.q_norm.weight", 1)
+    qkv = require("blocks.0.attn.qkv_proj.weight", 2)
+    fc1 = require("blocks.0.mlp.fc1.weight", 2)
+    condition = require("condition_proj.weight", 2)
+    rope = require("rope.inv_freq", 1)
+
+    hidden_size = video_patch[0]
+    if any(
+        value != hidden_size
+        for value in (
+            audio_patch[0],
+            video_out[1],
+            audio_out[1],
+            qkv[1],
+            fc1[1],
+            condition[0],
+        )
+    ):
+        raise H3ComponentError(
+            "MiniMax-H3 checkpoint header has inconsistent hidden dimensions"
+        )
+    if video_out[0] % 4:
+        raise H3ComponentError(
+            "MiniMax-H3 video output width must be divisible by the 1x2x2 patch area"
+        )
+    latents_dim = video_out[0] // 4
+    audio_latents_dim = audio_out[0]
+    if video_patch[1] != latents_dim * 4:
+        raise H3ComponentError(
+            "MiniMax-H3 video patch projection does not match the inferred latent width"
+        )
+    if audio_patch[1] != audio_latents_dim:
+        raise H3ComponentError(
+            "MiniMax-H3 audio patch projection does not match the inferred latent width"
+        )
+    attention_head_dim = q_norm[0]
+    qkv_denominator = 3 * attention_head_dim
+    if attention_head_dim <= 0 or qkv[0] % qkv_denominator:
+        raise H3ComponentError(
+            "MiniMax-H3 QKV projection is incompatible with the inferred head dimension"
+        )
+    if fc1[0] % 2:
+        raise H3ComponentError(
+            "MiniMax-H3 SwiGLU fc1 output width must be even"
+        )
+
+    inferred: dict[str, Any] = {
+        **_OFFICIAL_H3_DIT_ARCHITECTURE,
+        "_class_name": "MiniMaxH3DiTModel",
+        "num_layers": _contiguous_block_count(shapes, "blocks."),
+        "token_refiner_num_layers": _contiguous_block_count(
+            shapes, "token_refiner.blocks."
+        ),
+        "hidden_size": hidden_size,
+        "latents_dim": latents_dim,
+        "audio_latents_dim": audio_latents_dim,
+        "attention_head_dim": attention_head_dim,
+        "num_attention_heads": qkv[0] // qkv_denominator,
+        "ffn_hidden_size": fc1[0] // 2,
+        "text_dim": condition[1],
+        "rope_inv_freq_len": rope[0],
+    }
+    curve = shapes.get(ADALN_CURVE_TABLE_KEY)
+    if curve is not None:
+        if len(curve) != 2 or curve[0] < 2 or curve[1] < 1:
+            raise H3ComponentError(
+                f"{ADALN_CURVE_TABLE_KEY} must be [grid, rank]; got {curve!r}"
+            )
+        inferred["adaln_curve_grid"] = curve[0]
+        inferred["time_embed_dim"] = curve[1]
+    else:
+        proj_in = require("time_embedder.proj_in.weight", 2)
+        proj_out = require("time_embedder.proj_out.weight", 2)
+        inferred["timestep_input_dim"] = proj_in[1]
+        inferred["time_embed_hidden_size"] = proj_in[0]
+        inferred["time_embed_dim"] = proj_out[0]
+    return inferred
+
+
+def _infer_transformer_config(
+    weight_map: dict[str, str] | None,
+    shards: list[Path],
+) -> dict[str, Any]:
+    return _infer_transformer_config_from_shapes(
+        _canonical_checkpoint_shapes(weight_map, shards)
+    )
+
+
 def _match_linear(local: str, linears: dict[str, Any]) -> tuple[str, str] | None:
     for pref in linears:
         if local.startswith(pref):
@@ -591,9 +903,8 @@ def _assign_tensor(module, name: str, value) -> None:
 
 
 def _quantized_linear_config(prefix: str, bag: dict[str, Any]) -> dict | None:
-    """Validate and decode one Comfy ``int8_tensorwise`` marker."""
+    """Validate one Comfy INT8-convrot or scaled-FP8 Linear bag."""
 
-    import json
     import torch
 
     marker = bag.get("comfy_quant")
@@ -603,10 +914,18 @@ def _quantized_linear_config(prefix: str, bag: dict[str, Any]) -> dict | None:
     }
     weight = bag.get("weight")
     if marker is None:
-        if quant_aux or (weight is not None and weight.dtype == torch.int8):
+        low_precision = (
+            weight is not None
+            and weight.dtype
+            in {
+                torch.int8,
+                getattr(torch, "float8_e4m3fn", torch.int8),
+            }
+        )
+        if quant_aux or low_precision:
             raise H3ComponentError(
                 f"Incomplete quantized checkpoint entry for {prefix}: "
-                "int8/scale data is present without comfy_quant"
+                "low-precision/scale data is present without comfy_quant"
             )
         return None
     missing = sorted({"weight", "weight_scale"} - set(bag))
@@ -614,29 +933,48 @@ def _quantized_linear_config(prefix: str, bag: dict[str, Any]) -> dict | None:
         raise H3ComponentError(
             f"Incomplete quantized checkpoint entry for {prefix}: missing={missing!r}"
         )
-    if weight.dtype != torch.int8:
+    config = _decode_quant_marker(marker, prefix=prefix)
+    quant_format = config["format"]
+    if quant_format not in _SUPPORTED_QUANT_FORMATS:
         raise H3ComponentError(
-            f"Quantized checkpoint entry {prefix}weight must be int8, got {weight.dtype}"
+            f"Unsupported comfy_quant marker for {prefix}: format={quant_format!r}"
         )
-    try:
-        config = json.loads(bytes(marker.detach().cpu().tolist()))
-    except Exception as exc:
+    expected_dtype = (
+        torch.int8
+        if quant_format == INT8_FORMAT
+        else getattr(torch, "float8_e4m3fn", None)
+    )
+    if expected_dtype is None or weight.dtype != expected_dtype:
         raise H3ComponentError(
-            f"Invalid comfy_quant marker for {prefix}"
-        ) from exc
-    if not isinstance(config, dict) or config.get("format") != INT8_FORMAT:
-        raise H3ComponentError(
-            f"Unsupported comfy_quant marker for {prefix}: {config!r}"
+            f"Quantized checkpoint entry {prefix}weight for {quant_format!r} "
+            f"must use {expected_dtype}, got {weight.dtype}"
         )
-    if config.get("convrot") is not True:
+    if quant_format == INT8_FORMAT and config.get("convrot") is not True:
         raise H3ComponentError(
             f"H3 INT8 checkpoint requires convrot=true for {prefix}"
         )
+    full_precision = config.get("full_precision_matrix_mult", False)
+    if not isinstance(full_precision, bool):
+        raise H3ComponentError(
+            f"{prefix}full_precision_matrix_mult must be boolean"
+        )
+    if quant_format == _FP8_FORMAT:
+        for name in ("weight_scale", "input_scale"):
+            value = bag.get(name)
+            if value is not None and value.numel() != 1:
+                raise H3ComponentError(
+                    f"Scaled FP8 {prefix}{name} must be a scalar, got {tuple(value.shape)}"
+                )
     return config
 
 
-def _validate_quantized_linear(module, prefix: str, bag: dict[str, Any]) -> None:
-    """Reject the dangerous raw-int8 fallback after a quantized load."""
+def _validate_quantized_linear(
+    module,
+    prefix: str,
+    bag: dict[str, Any],
+    config: dict[str, Any],
+) -> None:
+    """Reject dangerous raw low-precision fallbacks after a quantized load."""
 
     import torch
 
@@ -651,18 +989,22 @@ def _validate_quantized_linear(module, prefix: str, bag: dict[str, Any]) -> None
     if not isinstance(weight, QuantizedTensor):
         raise H3ComponentError(
             f"Quantized Linear {prefix} did not materialize as QuantizedTensor; "
-            "refusing to use a raw int8 weight"
+            "refusing to use a raw low-precision weight"
         )
     qdata = getattr(weight, "_qdata", None)
     params = getattr(weight, "_params", None)
     scale = getattr(params, "scale", None) if params is not None else None
     problems: list[str] = []
-    if getattr(module, "quant_format", None) != INT8_FORMAT:
+    quant_format = str(config["format"])
+    expected_dtype = (
+        torch.int8 if quant_format == INT8_FORMAT else torch.float8_e4m3fn
+    )
+    if getattr(module, "quant_format", None) != quant_format:
         problems.append(
             f"quant_format={getattr(module, 'quant_format', None)!r}"
         )
-    if qdata is None or qdata.dtype != torch.int8:
-        problems.append("missing int8 qdata")
+    if qdata is None or qdata.dtype != expected_dtype:
+        problems.append(f"missing {expected_dtype} qdata")
     elif qdata.device.type == "meta":
         problems.append("qdata is still meta")
     elif tuple(qdata.shape) != tuple(bag["weight"].shape):
@@ -677,8 +1019,26 @@ def _validate_quantized_linear(module, prefix: str, bag: dict[str, Any]) -> None
         problems.append(
             f"scale shape {tuple(scale.shape)} != {tuple(bag['weight_scale'].shape)}"
         )
-    if getattr(params, "convrot", None) is not True:
+    if quant_format == INT8_FORMAT and getattr(params, "convrot", None) is not True:
         problems.append("convrot is not enabled")
+    expected_full_precision = bool(config.get("full_precision_matrix_mult", False))
+    if (
+        bool(getattr(module, "_full_precision_mm_config", False))
+        != expected_full_precision
+    ):
+        problems.append("full_precision_matrix_mult was not preserved")
+    source_input_scale = bag.get("input_scale")
+    if source_input_scale is not None:
+        loaded_input_scale = getattr(module, "input_scale", None)
+        if loaded_input_scale is None:
+            problems.append("missing input_scale")
+        elif loaded_input_scale.device.type == "meta":
+            problems.append("input_scale is still meta")
+        elif tuple(loaded_input_scale.shape) != tuple(source_input_scale.shape):
+            problems.append(
+                f"input_scale shape {tuple(loaded_input_scale.shape)} != "
+                f"{tuple(source_input_scale.shape)}"
+            )
     if problems:
         raise H3ComponentError(
             f"Quantized Linear {prefix} materialization failed: " + "; ".join(problems)
@@ -695,15 +1055,24 @@ def _flush_linear(module, prefix: str, bag: dict[str, Any], device) -> bool:
     # QuantizedTensor materialization validates the encoded qdata against the
     # checkpoint bag, but it cannot infer the architecture's intended Linear
     # dimensions after replacement.  Check the original meta slots first so a
-    # corrupt INT8 matrix cannot silently replace a differently-shaped layer.
+    # corrupt low-precision matrix cannot replace a differently-shaped layer.
     for leaf in ("weight", "bias"):
         tensor = bag.get(leaf)
         target = getattr(module, leaf, None)
-        if tensor is not None and target is not None:
-            if tuple(tensor.shape) != tuple(target.shape):
+        if tensor is not None:
+            target_shape = (
+                tuple(target.shape)
+                if target is not None
+                else (
+                    tuple(getattr(module, "_orig_shape"))
+                    if leaf == "weight" and hasattr(module, "_orig_shape")
+                    else None
+                )
+            )
+            if target_shape is not None and tuple(tensor.shape) != target_shape:
                 raise H3ComponentError(
                     f"Shape mismatch for {prefix}{leaf}: checkpoint "
-                    f"{tuple(tensor.shape)} vs model {tuple(target.shape)}"
+                    f"{tuple(tensor.shape)} vs model {target_shape}"
                 )
 
     quant_config = _quantized_linear_config(prefix, bag)
@@ -762,7 +1131,7 @@ def _flush_linear(module, prefix: str, bag: dict[str, Any], device) -> bool:
             f"Quantized load failed for {prefix}: " + "; ".join(errors[:8])
         )
     if quant_config is not None:
-        _validate_quantized_linear(module, prefix, bag)
+        _validate_quantized_linear(module, prefix, bag, quant_config)
         return True
     for leaf, tensor in bag.items():  # Fallback: forcibly replace any bias/weight still on meta.
         if leaf not in {"weight", "bias"}:
@@ -920,6 +1289,7 @@ class H3ModelHandle:
     metadata: dict
     checkpoint_files: tuple[Path, ...]
     quantized: bool = False
+    quantization_formats: tuple[str, ...] = ()
     activation_hint: dict | None = None  # P0-6 canvas/sequence hint.
     residency_mode: str = "unknown"  # full | layerwise | partial | reject
 
@@ -959,8 +1329,13 @@ class H3ModelHandle:
         act = int(self._activation_reserve_bytes())
         tier = residency_tier(free_bytes=free, weight_bytes=weights, activation_bytes=act)
         LOGGER.info(
-            "DiT residency tier=%s free=%s weights=%s activation=%s quantized=%s",
-            tier, free, weights, act, self.quantized,
+            "DiT residency tier=%s free=%s weights=%s activation=%s quantized=%s formats=%s",
+            tier,
+            free,
+            weights,
+            act,
+            self.quantized,
+            self.quantization_formats,
         )
         return tier
 
@@ -1212,7 +1587,7 @@ def _comfy_patcher(model, load_device, offload_device, size: int):
 
 
 def load_h3_model(
-    model_root: str,
+    model_root: str | Path | None,
     partition: str = "fl2va",
     *,
     task: str = "t2va",
@@ -1226,43 +1601,23 @@ def load_h3_model(
 ) -> H3ModelHandle:
     """Construct on meta and stream H3 DiT shards to the offload device.
 
-    Automatically detect BF16 and int8_convrot (``.comfy_quant`` /
-    ``.weight_scale``) checkpoints. ``transformer_weights`` points to flat
-    single-file weights under ``models/MiniMax-H3``; structure and configuration
-    still come from the ``transformer_path`` component directory, while only
-    tensors come from that file.
+    Automatically detect BF16, INT8-convrot, and scaled FP8 checkpoints.
+    ``transformer_weights`` may point to a discovered single-file checkpoint.
+    A release ``config.json`` remains authoritative when available; otherwise
+    the official H3 architecture is derived and validated from the safetensors
+    header without materializing the model weights.
     """
 
     normalized_partition = str(partition).strip().lower()
     if normalized_partition not in {"fl2va", "ref2va"}:
         raise H3ComponentError("partition must be 'fl2va' or 'ref2va'")
 
-    # Resolve the requested release child first.  All explicit components are
-    # subsequently constrained to this concrete partition root.
-    root = resolve_partition_root(model_root, normalized_partition)
-    metadata = release_metadata(root)
-    validate_task_partition(metadata, task, normalized_partition)
-    if not transformer_path:  # Prefer the int8 directory when unspecified to avoid moving the full BF16 model to GPU and OOM.
-        auto = root / INT8_DIT_DIRNAME
-        if auto.is_dir() and (auto / "config.json").is_file():
-            transformer_path = str(auto)
-            LOGGER.info("transformer_path not specified; automatically selected quantized directory %s", INT8_DIT_DIRNAME)
-    component = resolve_component(
-        root,
-        ("transformer", "dit"),
-        explicit=transformer_path,
-        required_files=("config.json",),
-    )
-    quant_metadata = _validate_quant_meta_partition(
-        component, normalized_partition
-    )
-    config_path = component / "config.json"
-    config_raw = read_json(config_path)
-    _validate_transformer_config(config_raw, config_path)
+    if transformer_weights is None and transformer_path:
+        direct_file = Path(transformer_path).expanduser()
+        if direct_file.is_file():
+            transformer_weights = direct_file
+            transformer_path = None
 
-    # Curve-table detection must happen before model construction: this variant has
-    # no time_embedder and adds an adaln_t_table buffer, so the two forms have
-    # different state_dict key sets. Shard discovery is likewise cheap and allocation-free.
     external_weights = (
         validate_weight_partition(
             transformer_weights, normalized_partition, kind="transformer"
@@ -1270,19 +1625,112 @@ def load_h3_model(
         if transformer_weights
         else None
     )
-    if external_weights is not None:
-        if not external_weights.is_file():
-            raise H3ComponentError(
-                f"MiniMax-H3 DiT weight file not found: {external_weights}"
-            )
-        shards, weight_map = [external_weights], None
-        LOGGER.info(
-            "DiT weights come from flat single file %s; structure/configuration still come from %s",
-            external_weights.name,
-            component,
+    if external_weights is not None and not external_weights.is_file():
+        raise H3ComponentError(
+            f"MiniMax-H3 DiT weight file not found: {external_weights}"
         )
+
+    root: Path | None = None
+    root_error: H3ComponentError | None = None
+    if model_root:
+        try:
+            root = resolve_partition_root(model_root, normalized_partition)
+        except H3ComponentError as exc:
+            root_error = exc
+    if root is None and external_weights is None:
+        if root_error is not None:
+            raise root_error
+        raise H3ComponentError(
+            "MiniMax-H3 model_root is required when no single-file transformer is selected"
+        )
+    if root is None and transformer_path:
+        # An explicit config component is meaningful only below a resolved root;
+        # do not silently discard a misspelled or cross-partition selection.
+        if root_error is not None:
+            raise root_error
+        raise H3ComponentError(
+            "transformer_path requires a resolvable MiniMax-H3 model_root"
+        )
+
+    metadata: dict[str, Any] = {}
+    component: Path | None = None
+    config_path: Path | None = None
+    config_raw: dict[str, Any] | None = None
+    quant_metadata: dict[str, Any] = {}
+    if root is not None:
+        metadata = release_metadata(root)
+        validate_task_partition(metadata, task, normalized_partition)
+        if not transformer_path:
+            # Preserve the existing INT8 preference for directory releases.
+            auto = root / INT8_DIT_DIRNAME
+            if auto.is_dir() and (auto / "config.json").is_file():
+                transformer_path = str(auto)
+                LOGGER.info(
+                    "transformer_path not specified; automatically selected "
+                    "quantized directory %s",
+                    INT8_DIT_DIRNAME,
+                )
+        try:
+            component = resolve_component(
+                root,
+                ("transformer", "dit"),
+                explicit=transformer_path,
+                required_files=("config.json",),
+            )
+        except H3ComponentError:
+            if external_weights is None or transformer_path:
+                raise
+            LOGGER.info(
+                "No release transformer config is available; inferring the "
+                "official H3 config from %s",
+                external_weights.name,
+            )
+        if component is not None:
+            quant_metadata = _validate_quant_meta_partition(
+                component, normalized_partition
+            )
+            config_path = component / "config.json"
+            config_raw = read_json(config_path)
+
+    if external_weights is not None:
+        shards, weight_map = [external_weights], None
+        if component is not None:
+            LOGGER.info(
+                "DiT weights come from flat single file %s; configuration comes from %s",
+                external_weights.name,
+                component,
+            )
     else:
+        assert component is not None
         shards, weight_map = _checkpoint_index(component)
+
+    native_descriptor = (
+        config_raw is not None
+        and config_path is not None
+        and _validate_native_config_descriptor(
+            config_raw,
+            config_path,
+            normalized_partition,
+        )
+    )
+    if config_raw is None or native_descriptor:
+        assert external_weights is not None
+        config_raw = _infer_transformer_config(weight_map, shards)
+        config_path = external_weights
+        if component is None:
+            component = external_weights.parent.resolve()
+        LOGGER.info(
+            "Derived MiniMax-H3 transformer config from safetensors header: %s",
+            external_weights.name,
+        )
+
+    assert config_path is not None
+    assert component is not None
+    _validate_transformer_config(config_raw, config_path)
+
+    # Curve-table detection must happen before model construction: this variant has
+    # no time_embedder and adds an adaln_t_table buffer, so the two forms have
+    # different state_dict key sets. Shard discovery is likewise cheap and allocation-free.
     curve = _detect_adaln_curve(weight_map, shards)
     _validate_adaln_curve_contract(config_raw, config_path, curve)
 
@@ -1307,8 +1755,9 @@ def load_h3_model(
         )
     model_dtype = _dtype(dtype)
     load_device, target_offload = _devices(device, offload_device)
-    quantized = _is_quantized_map(weight_map, shards)
-    if quantized:
+    quant_formats = _checkpoint_quant_formats(weight_map, shards)
+    quantized = bool(quant_formats)
+    if INT8_FORMAT in quant_formats:
         # Flat single-file weights have no quant_meta.json; the filename is the
         # partition evidence and was already checked exactly in validate_weight_partition.
         if not quant_metadata and external_weights is None:
@@ -1320,9 +1769,13 @@ def load_h3_model(
     elif quant_metadata:
         raise H3ComponentError(
             f"{component / 'quant_meta.json'} declares INT8/convrot, but the "
-            "checkpoint contains no quantized tensor markers"
+            f"checkpoint declares quantization formats {sorted(quant_formats)!r}"
         )
-    operations = _require_int8_ops(model_dtype) if quantized else None
+    operations = (
+        _require_quant_ops(model_dtype, quant_formats, load_device)
+        if quantized
+        else None
+    )
 
     model = MiniMaxH3DiTModel.from_config(
         config,
@@ -1428,8 +1881,9 @@ def load_h3_model(
                 f"materialized={loaded_quantized}, expected={expected_quantized}"
             )
         LOGGER.info(
-            "H3 DiT materialized %d complete INT8/convrot QuantizedTensor layers",
+            "H3 DiT materialized %d complete QuantizedTensor layers (%s)",
             loaded_quantized,
+            ", ".join(sorted(quant_formats)),
         )
 
     if "rope.inv_freq" not in loaded and "rope.inv_freq" in expected:
@@ -1471,6 +1925,7 @@ def load_h3_model(
         metadata=metadata,
         checkpoint_files=tuple(shards),
         quantized=quantized,
+        quantization_formats=tuple(sorted(quant_formats)),
     )
 
 

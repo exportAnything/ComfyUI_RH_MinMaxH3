@@ -16,6 +16,11 @@ VAE_MERGED_DIRNAME = "vae"  # Combined video_vae+audio_vae package.
 VIDEO_VAE_FILENAME = f"{MODEL_NAME}-video_vae.safetensors"
 AUDIO_VAE_FILENAME = f"{MODEL_NAME}-audio_vae.safetensors"
 INT8_TE_FILENAME = f"{TEXT_ENCODER_MODEL_SLUG}-{QUANT_NAME_TAG}.safetensors"
+NATIVE_FL2VA_DIT_FILENAME = "minimax_h3_fl2va_pruned_fp8_scaled.safetensors"
+NATIVE_REF2VA_DIT_FILENAME = "minimax_h3_ref2va_pruned_fp8_scaled.safetensors"
+NATIVE_TE_FILENAME = "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
+NATIVE_VIDEO_VAE_FILENAME = "minimax_h3_video_vae_fp16.safetensors"
+NATIVE_AUDIO_VAE_FILENAME = "minimax_h3_audio_vae_fp32.safetensors"
 BF16_TE_MODEL_NAME = TEXT_ENCODER_MODEL_SLUG  # Sharded BF16 logical name → text_encoder/.
 VAE_MERGED_MODEL_NAME = f"{MODEL_NAME}-vae"  # Combined dual-VAE logical name → vae/.
 VIDEO_VAE_DIRNAME, AUDIO_VAE_DIRNAME = "video_vae", "audio_vae"
@@ -149,26 +154,71 @@ def classify_weight_filename(name: str) -> tuple[str, str | None] | None:
     classified.  ``None`` partition means the weights serve both partitions.
     """
 
-    stem = str(name).strip()
-    if not stem.endswith(".safetensors") or "-of-" in stem:
+    stem = str(name).strip().replace("\\", "/").rsplit("/", 1)[-1]
+    if not stem.lower().endswith(".safetensors") or "-of-" in stem.lower():
         return None
     stem = stem[: -len(".safetensors")]
+    # Comfy's native H3 conversions use underscores while the original
+    # RunningHub converter uses hyphens.  Normalize both spellings for type and
+    # partition classification; the original spelling remains available to the
+    # format-specific loader gate below.
     lowered = stem.lower()
-    if lowered.startswith(f"{MODEL_NAME.lower()}-"):
-        suffix = lowered[len(MODEL_NAME) + 1 :]
+    normalized = lowered.replace("_", "-")
+    model_prefix = f"{MODEL_NAME.lower()}-"
+    if normalized.startswith(model_prefix):
+        suffix = normalized[len(model_prefix) :]
         for partition in ("fl2va", "ref2va"):
             if suffix == partition or suffix.startswith(f"{partition}-"):
                 return ("transformer", partition)
-        if suffix == VIDEO_VAE_DIRNAME or suffix.startswith(f"{VIDEO_VAE_DIRNAME}-"):
+        video_name = VIDEO_VAE_DIRNAME.replace("_", "-")
+        audio_name = AUDIO_VAE_DIRNAME.replace("_", "-")
+        if suffix == video_name or suffix.startswith(f"{video_name}-"):
             return (VIDEO_VAE_DIRNAME, None)
-        if suffix == AUDIO_VAE_DIRNAME or suffix.startswith(f"{AUDIO_VAE_DIRNAME}-"):
+        if suffix == audio_name or suffix.startswith(f"{audio_name}-"):
             return (AUDIO_VAE_DIRNAME, None)
         return None
-    if lowered == TEXT_ENCODER_MODEL_SLUG or lowered.startswith(
-        f"{TEXT_ENCODER_MODEL_SLUG}-"
+    converted_text_prefix = TEXT_ENCODER_MODEL_SLUG.replace("_", "-")
+    comfy_text_prefix = "qwen3vl-32b-minimax-h3"
+    if (
+        normalized == converted_text_prefix
+        or normalized.startswith(f"{converted_text_prefix}-")
+        or normalized == comfy_text_prefix
+        or normalized.startswith(f"{comfy_text_prefix}-")
     ):
         return ("text_encoder", None)
     return None
+
+
+def is_comfy_native_weight_filename(
+    name: str,
+    kind: str | None = None,
+) -> bool:
+    """Return whether ``name`` follows Comfy's native single-file H3 naming.
+
+    This deliberately distinguishes native files from RunningHub's
+    ``*-int8_convrot.safetensors`` artifacts.  Both are classified above, but
+    they require different configuration and loading paths.
+    """
+
+    text = str(name).strip().lower().replace("\\", "/").rsplit("/", 1)[-1]
+    if not text.endswith(".safetensors") or "-of-" in text:
+        return False
+    classified = classify_weight_filename(text)
+    if classified is None:
+        return False
+    file_kind, _partition = classified
+    if kind is not None and file_kind != str(kind).strip().lower():
+        return False
+    stem = text[: -len(".safetensors")]
+    if file_kind == "transformer":
+        return stem.startswith("minimax_h3_")
+    if file_kind == "text_encoder":
+        return stem.startswith("qwen3vl_32b_minimax_h3_")
+    if file_kind == VIDEO_VAE_DIRNAME:
+        return stem.startswith("minimax_h3_video_vae_")
+    if file_kind == AUDIO_VAE_DIRNAME:
+        return stem.startswith("minimax_h3_audio_vae_")
+    return False
 
 
 def int8_dit_filename(partition: str | None = None) -> str:  # MiniMax-H3 + model type + quantization format.

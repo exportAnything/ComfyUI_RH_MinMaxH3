@@ -1336,4 +1336,378 @@ class MiniMaxH3TextEncoder:
             presentation="t2va_text_only_v1",
         )
 
+_NATIVE_VISION_PAD_TOKEN_ID = 151655
+
+
+def _native_image_tensor(value: Any):
+    """Convert a prepared PIL/NumPy/Comfy image to one ``[1,H,W,3]`` tensor."""
+
+    import numpy as np
+    import torch
+
+    if isinstance(value, torch.Tensor):
+        tensor = value.detach().cpu()
+    elif isinstance(value, np.ndarray):
+        tensor = torch.from_numpy(np.asarray(value).copy())
+    elif hasattr(value, "convert"):
+        tensor = torch.from_numpy(
+            np.asarray(value.convert("RGB"), dtype=np.uint8).copy()
+        )
+    else:
+        raise H3ComponentError(
+            f"Native MiniMax image has unsupported type {type(value).__name__}"
+        )
+    if tensor.ndim == 3:
+        tensor = tensor.unsqueeze(0)
+    if tensor.ndim != 4 or int(tensor.shape[0]) != 1 or int(tensor.shape[-1]) != 3:
+        raise H3ComponentError(
+            "Native MiniMax images must have shape [H,W,3] or [1,H,W,3], "
+            f"got {tuple(tensor.shape)}"
+        )
+    if not tensor.is_floating_point():
+        tensor = tensor.to(dtype=torch.float32).div_(255.0)
+    else:
+        tensor = tensor.to(dtype=torch.float32)
+    return tensor.clamp_(0.0, 1.0).contiguous()
+
+
+def _native_video_tensor(value: Any):
+    """Convert sampled 2-fps frames to Comfy's native ``[T,H,W,3]`` form."""
+
+    import numpy as np
+    import torch
+
+    if isinstance(value, torch.Tensor):
+        tensor = value.detach().cpu()
+    elif isinstance(value, np.ndarray):
+        tensor = torch.from_numpy(np.asarray(value).copy())
+    else:
+        try:
+            frames = [_native_image_tensor(frame)[0] for frame in value]
+        except Exception as exc:
+            raise H3ComponentError(
+                f"Native MiniMax video has unsupported type {type(value).__name__}"
+            ) from exc
+        if not frames:
+            raise H3ComponentError("Native MiniMax video cannot be empty")
+        tensor = torch.stack(frames)
+    if tensor.ndim == 5 and int(tensor.shape[0]) == 1:
+        tensor = tensor[0]
+    if tensor.ndim != 4 or int(tensor.shape[0]) <= 0 or int(tensor.shape[-1]) != 3:
+        raise H3ComponentError(
+            f"Native MiniMax videos must have shape [T,H,W,3], got {tuple(tensor.shape)}"
+        )
+    if not tensor.is_floating_point():
+        tensor = tensor.to(dtype=torch.float32).div_(255.0)
+    else:
+        tensor = tensor.to(dtype=torch.float32)
+    return tensor.clamp_(0.0, 1.0).contiguous()
+
+
+def _native_token_entries(tokens: Any) -> list[tuple[Any, ...]]:
+    if not isinstance(tokens, dict) or len(tokens) != 1:
+        raise H3ComponentError(
+            "Native MiniMax tokenizer must return one qwen3vl_32b token stream"
+        )
+    batches = next(iter(tokens.values()))
+    if not isinstance(batches, (list, tuple)) or len(batches) != 1:
+        raise H3ComponentError("Native MiniMax conditioning supports batch=1 only")
+    entries = batches[0]
+    if not isinstance(entries, (list, tuple)) or not entries:
+        raise H3ComponentError("Native MiniMax tokenizer returned no tokens")
+    return list(entries)
+
+
+def _expanded_native_input_ids(tokens: Any, token_tags: Any):
+    """Reconstruct aligned ids from Comfy's expanded visual embed spans."""
+
+    import torch
+
+    tags = token_tags.detach().to(device="cpu", dtype=torch.long).flatten()
+    entries = _native_token_entries(tokens)
+    tag_values = tags.tolist()
+    ids: list[int] = []
+    visual_counts: list[int] = []
+    position = 0
+    for entry in entries:
+        if not isinstance(entry, (tuple, list)) or not entry:
+            raise H3ComponentError("Native MiniMax token entry is malformed")
+        value = entry[0]
+        if isinstance(value, dict):
+            try:
+                next_text = next(
+                    index
+                    for index in range(position, len(tag_values))
+                    if int(tag_values[index]) != 0
+                )
+            except StopIteration as exc:
+                raise H3ComponentError(
+                    "Native MiniMax visual span is not followed by prompt text"
+                ) from exc
+            # The last zero-tag position is the explicit vision-end token.
+            count = next_text - position - 1
+            if count <= 0:
+                raise H3ComponentError("Native MiniMax visual span is empty")
+            ids.extend([_NATIVE_VISION_PAD_TOKEN_ID] * count)
+            visual_counts.append(count)
+            position += count
+            continue
+        try:
+            ids.append(int(value))
+        except (TypeError, ValueError) as exc:
+            raise H3ComponentError(
+                f"Native MiniMax token id is invalid: {value!r}"
+            ) from exc
+        position += 1
+    if position != len(tag_values):
+        raise H3ComponentError(
+            "Native MiniMax expanded token ids do not align with encoder output: "
+            f"ids={position}, tags={len(tag_values)}"
+        )
+    return torch.tensor(ids, dtype=torch.long), tuple(visual_counts)
+
+
+class MiniMaxH3ComfyTextEncoder:
+    """Adapter from Comfy's native MiniMax CLIP to this node pack's handle API."""
+
+    def __init__(
+        self,
+        *,
+        clip: Any,
+        component_path: Path,
+        weights_path: Path,
+        quant_format: str,
+    ) -> None:
+        self.clip = clip
+        self.model = getattr(clip, "cond_stage_model", clip)
+        self.tokenizer = getattr(clip, "tokenizer", None)
+        self.component_path = Path(component_path).resolve()
+        self.weights_path = Path(weights_path).resolve()
+        self.tokenizer_component_path = self.component_path
+        self.processor_component_path = None
+        self.quantized = True
+        self.quant_format = str(quant_format)
+        self._lock = threading.RLock()
+
+    @property
+    def device(self):
+        import torch
+
+        patcher = getattr(self.clip, "patcher", None)
+        return torch.device(getattr(patcher, "load_device", "cpu"))
+
+    def load_for_inference(self, **_kwargs) -> "MiniMaxH3ComfyTextEncoder":
+        # encode_from_tokens performs Comfy's token-aware load immediately
+        # before the native forward.
+        return self
+
+    def offload_after_inference(self) -> None:
+        patcher = getattr(self.clip, "patcher", None)
+        if patcher is None:
+            return
+        try:
+            import comfy.model_management as mm
+
+            unload = getattr(mm, "unload_model_and_clones", None)
+            if callable(unload):
+                unload(patcher)
+                return
+        except ImportError:
+            pass
+        detach = getattr(patcher, "detach", None)
+        if callable(detach):
+            detach()
+
+    def _encode_tokens(self, tokens: Any):
+        import torch
+
+        with self._lock, torch.inference_mode():
+            output = self.clip.encode_from_tokens(
+                tokens, return_pooled=False, return_dict=True
+            )
+        if not isinstance(output, dict):
+            raise H3ComponentError(
+                "Native MiniMax CLIP must return a conditioning dictionary"
+            )
+        hidden = output.get("cond")
+        tags = output.get("minimax_token_tags")
+        if not isinstance(hidden, torch.Tensor):
+            raise H3ComponentError("Native MiniMax CLIP returned no cond tensor")
+        if hidden.ndim == 3 and int(hidden.shape[0]) == 1:
+            hidden = hidden[0]
+        if hidden.ndim != 2 or int(hidden.shape[1]) != HIDDEN_SIZE:
+            raise H3ComponentError(
+                f"Native MiniMax features must be [L,{HIDDEN_SIZE}], got "
+                f"{tuple(hidden.shape)}"
+            )
+        if not isinstance(tags, torch.Tensor):
+            raise H3ComponentError(
+                "Native MiniMax CLIP returned no minimax_token_tags tensor"
+            )
+        tags = tags.detach().to(device="cpu", dtype=torch.long).flatten().contiguous()
+        hidden = hidden.detach().to(
+            device="cpu", dtype=torch.bfloat16
+        ).contiguous()
+        if int(tags.shape[0]) != int(hidden.shape[0]):
+            raise H3ComponentError(
+                "Native MiniMax token tags do not align with conditioning"
+            )
+        input_ids, visual_counts = _expanded_native_input_ids(tokens, tags)
+        return hidden, tags, input_ids, visual_counts
+
+    def encode_prompt(self, prompt: str):
+        from ..encode_cache import get_encode_cache, prompt_cache_key
+        from ..h3_settings import OPT_ENCODE_CACHE
+
+        if not isinstance(prompt, str) or not prompt:
+            raise H3ComponentError("MiniMax-H3 prompt must be a non-empty string")
+        cache_key = prompt_cache_key(
+            prompt=prompt,
+            task="t2va",
+            te_fingerprint=str(self.weights_path),
+            tok_fingerprint="comfy-native-qwen3vl-32b",
+        )
+        if OPT_ENCODE_CACHE:
+            hit = get_encode_cache().get(cache_key)
+            if hit is not None:
+                return hit
+        hidden, _tags, _ids, _counts = self._encode_tokens(
+            self.clip.tokenize(prompt)
+        )
+        if OPT_ENCODE_CACHE:
+            get_encode_cache().put(cache_key, hidden)
+        return hidden
+
+    def encode_conditioning(self, prompt: str) -> dict[str, Any]:
+        if not isinstance(prompt, str) or not prompt:
+            raise H3ComponentError("MiniMax-H3 prompt must be a non-empty string")
+        hidden, tags, input_ids, counts = self._encode_tokens(
+            self.clip.tokenize(prompt)
+        )
+        if counts:
+            raise H3ComponentError("T2VA native text encoding produced visual spans")
+        return MiniMaxH3TextEncoder._conditioning_payload(
+            prompt=prompt,
+            hidden=hidden,
+            token_tags=tags,
+            input_ids=input_ids,
+            presentation="t2va_text_only_v1",
+        )
+
+    def encode_fl2va_conditioning(
+        self, prompt: str, images: Sequence[Any]
+    ) -> dict[str, Any]:
+        if not isinstance(prompt, str) or not prompt:
+            raise H3ComponentError("MiniMax-H3 prompt must be a non-empty string")
+        images = list(images)
+        if len(images) not in (1, 2):
+            raise H3ComponentError(
+                "FL2VA Qwen presentation requires exactly one or two keyframes"
+            )
+        native_images = [_native_image_tensor(image) for image in images]
+        hidden, tags, input_ids, counts = self._encode_tokens(
+            self.clip.tokenize(prompt, images=native_images)
+        )
+        if len(counts) != len(images):
+            raise H3ComponentError(
+                "Native MiniMax visual span count does not match FL2VA keyframes"
+            )
+        return MiniMaxH3TextEncoder._conditioning_payload(
+            prompt=prompt,
+            hidden=hidden,
+            token_tags=tags,
+            input_ids=input_ids,
+            presentation="fl2va_multi_image_v1",
+            image_token_counts=counts,
+        )
+
+    def encode_ref2va_conditioning(
+        self,
+        prompt: str,
+        condition_labels: Sequence[tuple[str, int]],
+        *,
+        images: Sequence[Any] = (),
+        videos: Sequence[Any] = (),
+    ) -> dict[str, Any]:
+        if not isinstance(prompt, str) or not prompt:
+            raise H3ComponentError("MiniMax-H3 prompt must be a non-empty string")
+        labels = [(str(kind), int(ordinal)) for kind, ordinal in condition_labels]
+        if not labels:
+            raise H3ComponentError("Ref2VA requires at least one condition label")
+        counters = {"image": 0, "audio": 0, "video": 0}
+        for kind, ordinal in labels:
+            if kind not in counters:
+                raise H3ComponentError(
+                    f"Unsupported Ref2VA Qwen condition label {kind!r}"
+                )
+            counters[kind] += 1
+            if ordinal != counters[kind]:
+                raise H3ComponentError(
+                    f"Ref2VA {kind} ordinals must be consecutive and 1-based"
+                )
+        images = [_native_image_tensor(image) for image in images]
+        videos = [_native_video_tensor(video) for video in videos]
+        if len(images) != counters["image"] or len(videos) != counters["video"]:
+            raise H3ComponentError(
+                "Ref2VA labels do not match the supplied image/video counts"
+            )
+
+        image_index = 0
+        video_index = 0
+        items: list[dict[str, Any]] = []
+        visual_layout: list[tuple[str, int]] = []
+        video_timestamps: list[tuple[float, ...]] = []
+        for kind, _ordinal in labels:
+            if kind == "image":
+                items.append({"type": "image", "data": images[image_index]})
+                visual_layout.append(("image", image_index))
+                image_index += 1
+            elif kind == "audio":
+                items.append({"type": "audio"})
+            else:
+                frames = videos[video_index]
+                timestamps = [index / 2.0 for index in range(int(frames.shape[0]))]
+                block_times = []
+                for index in range(0, len(timestamps), 2):
+                    other = min(index + 1, len(timestamps) - 1)
+                    block_times.append((timestamps[index] + timestamps[other]) / 2.0)
+                    visual_layout.append(("video", video_index))
+                items.append(
+                    {
+                        "type": "video",
+                        "data": frames,
+                        "timestamps": timestamps,
+                    }
+                )
+                video_timestamps.append(tuple(block_times))
+                video_index += 1
+
+        hidden, tags, input_ids, visual_counts = self._encode_tokens(
+            self.clip.tokenize(prompt, minimax_ref_items=items)
+        )
+        if len(visual_counts) != len(visual_layout):
+            raise H3ComponentError(
+                "Native MiniMax visual spans do not match Ref2VA presentation"
+            )
+        image_counts = [0] * len(images)
+        video_counts: list[list[int]] = [[] for _ in videos]
+        for count, (kind, index) in zip(visual_counts, visual_layout):
+            if kind == "image":
+                image_counts[index] = int(count)
+            else:
+                video_counts[index].append(int(count))
+        return MiniMaxH3TextEncoder._conditioning_payload(
+            prompt=prompt,
+            hidden=hidden,
+            token_tags=tags,
+            input_ids=input_ids,
+            presentation="ref2va_ordered_v1",
+            condition_labels=tuple(labels),
+            image_token_counts=tuple(image_counts),
+            video_block_token_counts=tuple(tuple(item) for item in video_counts),
+            video_block_timestamps=tuple(video_timestamps),
+            video_sample_fps=2.0,
+        )
+
+
 __all__ = [n for n in list(globals()) if not n.startswith("__")]

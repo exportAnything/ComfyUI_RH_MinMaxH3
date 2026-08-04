@@ -38,7 +38,8 @@ partner; this plugin is developed and maintained by RunningHub.
   (20 DiT calls instead of 49). Same weights, no requantisation; `euler` stays
   the default. End-to-end gain depends on the workload — text encoding, DiT
   load and VAE decode are not affected.
-- **INT8 or BF16** — single-file INT8 checkpoints or the upstream sharded BF16
+- **FP8, NVFP4, INT8, or BF16** — native Comfy single-file FP8 DiT/NVFP4 Qwen
+  checkpoints, RunningHub INT8-CONVROT files, or the upstream sharded BF16
   release. The loaders never switch between them silently.
 - **24GB-class single GPU** — automatic layerwise DiT offload, adaLN precompute
   with weight release (~40% of DiT weights dropped afterwards), shape-aware
@@ -61,51 +62,60 @@ Restart ComfyUI afterwards — node definitions are read once at start-up.
 
 **Requirements**
 
-- ComfyUI 0.27+ (0.28+ recommended)
+- ComfyUI 0.30.0+ (0.30.1 recommended for native MiniMax-H3 support)
 - A CUDA build of PyTorch matching your ComfyUI, plus Triton and `comfy-kitchen`
 - `ffmpeg` and `ffprobe` on `PATH` for Ref2VA video and audio references
-- `transformers>=4.57.0,<=5.8.1` (Qwen3-VL support)
+- `transformers>=4.57.0`; the legacy Transformers-based Qwen loader validates
+  `<=5.8.1`, while native NVFP4 uses ComfyUI's built-in MiniMax encoder
 
 MiniMax-H3 is a large model. INT8 reduces storage and transfer cost but does
 not make it small — expect substantial host RAM and fast storage on top of VRAM.
 
 ## 📦 Model Download & Installation
 
-Weights live in **two places, and both are required**:
+The fork supports two model layouts. The native Comfy layout is recommended
+for FP8/NVFP4 and does **not** require a copied Diffusers release tree:
 
 | Location | Holds | Why it is needed |
 |----------|-------|------------------|
-| `ComfyUI/models/MiniMax-H3/` | Flat single-file converted weights | The tensors |
-| `ComfyUI/models/diffusers/MiniMax-H3/` | Upstream sharded release | `config.json`, `source/config.json`, tokenizer, `preprocessor_config.json` |
+| `ComfyUI/models/diffusion_models/` | FP8 MiniMax-H3 DiT | Standard Comfy diffusion-model discovery |
+| `ComfyUI/models/text_encoders/` | NVFP4 MiniMax-H3 Qwen3-VL | Standard Comfy text-encoder discovery |
+| `ComfyUI/models/vae/` | Video and audio VAEs | Standard Comfy VAE discovery |
 
-The flat root carries **weights only, with no sidecar files**. Component type
-and partition are decided entirely by the filename; the architecture is read
-from the sharded release that the `model_root` widget points at.
+Folders added through `extra_model_paths.yaml` work too. Native checkpoint type,
+partition, quantization, and architecture are validated from the filename and
+safetensors header. The `model_root` value is retained for old workflows but is
+not used when all selected components are native single files.
+
+The older RunningHub layout remains supported: converted INT8 files go in
+`ComfyUI/models/MiniMax-H3/`, while their matching configuration/tokenizer tree
+goes in `ComfyUI/models/diffusers/MiniMax-H3/`. Both roots are required only for
+that legacy INT8-CONVROT layout.
+
+Use one complete layout per workflow. Native FP8/NVFP4/VAE files cannot be
+mixed with components from a RunningHub release tree because the loaders cannot
+prove that those independently packaged files belong to the same release; the
+cross-node fingerprint check deliberately rejects that combination.
 
 ### Model Directory Structure
 
 ```
 ComfyUI/
 └── models/
-    ├── MiniMax-H3/                                    # converted single-file weights
-    │   ├── MiniMax-H3-FL2VA-int8_convrot.safetensors  # DiT, FL2VA partition (T2VA + FL2VA)
-    │   ├── MiniMax-H3-Ref2VA-int8_convrot.safetensors # DiT, Ref2VA partition
-    │   ├── qwen3-vl-32b-int8_convrot.safetensors      # Qwen3-VL text/multimodal encoder
-    │   ├── MiniMax-H3-video_vae.safetensors           # 24-channel video VAE
-    │   └── MiniMax-H3-audio_vae.safetensors           # 32-channel audio VAE
-    │
-    └── diffusers/
-        └── MiniMax-H3/                                # upstream sharded release
-            ├── FL2VA/
-            │   ├── transformer/                       # BF16 DiT + config.json
-            │   ├── text_encoder/                      # Qwen3-VL + tokenizer/processor
-            │   ├── video_vae/
-            │   └── audio_vae/
-            └── Ref2VA/
-                └── ...                                # same component layout
+    ├── diffusion_models/
+    │   ├── minimax_h3_fl2va_pruned_fp8_scaled.safetensors  # T2VA + FL2VA
+    │   └── minimax_h3_ref2va_pruned_fp8_scaled.safetensors # Ref2VA
+    ├── text_encoders/
+    │   └── qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors
+    └── vae/
+        ├── minimax_h3_video_vae_fp16.safetensors
+        └── minimax_h3_audio_vae_fp32.safetensors
 ```
 
-### Download Methods
+T2VA and keyframe workflows use the **FL2VA** DiT. A Ref2VA-only transformer
+cannot run those graphs; install the matching FL2VA FP8 file as well.
+
+### Legacy INT8-CONVROT Download Methods
 
 #### Method 1: HuggingFace
 
@@ -127,19 +137,23 @@ modelscope download --model Gluttony10/MiniMax-H3-INT8-CONVROT --local_dir Comfy
 | INT8-CONVROT weights | [HuggingFace](https://huggingface.co/Gluttony10/MiniMax-H3-INT8-CONVROT) \| [ModelScope](https://modelscope.cn/models/Gluttony10/MiniMax-H3-INT8-CONVROT) | Converted single-file DiT / text-encoder / VAE weights → `models/MiniMax-H3/` |
 | MiniMax-H3 release | obtain from MiniMax | Sharded components and their configs → `models/diffusers/MiniMax-H3/` |
 
-> The upstream release supplies `config.json`, `source/config.json`, the
-> tokenizer and `preprocessor_config.json`. The converted weights alone are not
-> enough to load the model.
+> For the legacy INT8-CONVROT path, the upstream release supplies
+> `config.json`, `source/config.json`, the tokenizer and
+> `preprocessor_config.json`; those converted weights alone are not enough.
+> Native FP8/NVFP4 checkpoints do not need that release tree.
 
 ### Model Selection Guide
 
 | Selection | Loader dropdown value | Notes |
 |-----------|----------------------|-------|
+| DiT FP8 (native) | `minimax_h3_fl2va_pruned_fp8_scaled.safetensors` / `minimax_h3_ref2va_pruned_fp8_scaled.safetensors` | Normal `diffusion_models` folder; partition is enforced |
 | DiT INT8 | `MiniMax-H3-FL2VA-int8_convrot.safetensors` / `MiniMax-H3-Ref2VA-int8_convrot.safetensors` | Smallest footprint; the partition is proven by the filename |
 | DiT BF16 (sharded) | `MiniMax-H3-FL2VA` / `MiniMax-H3-Ref2VA` | Highest fidelity; layerwise offload keeps it viable on 24GB |
+| Text encoder NVFP4 (native) | `qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors` | Normal `text_encoders` folder; loaded through Comfy's native mixed-precision ops |
 | Text encoder INT8 | `qwen3-vl-32b-int8_convrot.safetensors` | Roughly 26GB versus 62GB for BF16 |
 | Text encoder BF16 | `qwen3-vl-32b` | Sharded component directory |
-| Video / Audio VAE | `MiniMax-H3-video_vae.safetensors` / `MiniMax-H3-audio_vae.safetensors` | Always FP32 weights, selected independently |
+| Video / Audio VAE (native) | `minimax_h3_video_vae_fp16.safetensors` / `minimax_h3_audio_vae_fp32.safetensors` | Normal `vae` folder; configuration and latent statistics come from embedded metadata |
+| Video / Audio VAE (legacy) | `MiniMax-H3-video_vae.safetensors` / `MiniMax-H3-audio_vae.safetensors` | Selected independently from the RunningHub release layout |
 
 Each loader dropdown lists **only its own component type**, filtered by task
 partition — an FL2VA node never offers Ref2VA weights.
@@ -230,6 +244,17 @@ turned off independently for rollback.
   and peak VRAM; `OPT_WRITE_SIDECAR` writes a JSON sidecar beside each render.
 
 ## 📋 Changelog
+
+### 0.5.0
+
+- Native Comfy FP8 MiniMax-H3 transformers and NVFP4/AWQ Qwen3-VL text
+  encoders are discovered in the standard model folders and validated from
+  their safetensors headers.
+- Native FP16 video and FP32 audio VAE single files read their architecture and
+  latent statistics from embedded metadata.
+- RunningHub INT8-CONVROT and sharded BF16 release layouts remain supported.
+- Example workflows now use the native single-file names and explicitly keep
+  FL2VA and Ref2VA transformer partitions separate.
 
 ### 0.4.0
 

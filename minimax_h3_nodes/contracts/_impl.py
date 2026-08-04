@@ -2050,6 +2050,22 @@ def _component_artifact_snapshot(component_path: str | Path) -> dict[str, Any]:
 
     root = Path(component_path).expanduser().resolve()
     snapshot: dict[str, Any] = {"root": str(root), "exists": root.exists()}
+    if root.is_file():
+        try:
+            stat = root.stat()
+        except OSError as exc:
+            raise H3ContractError(
+                f"Cannot stat MiniMax-H3 identity artifact {root}: {exc}"
+            ) from exc
+        snapshot["storage"] = [
+            {
+                "path": root.name,
+                "resolved": str(root),
+                "size": int(stat.st_size),
+                "mtime_ns": int(stat.st_mtime_ns),
+            }
+        ]
+        return snapshot
     if not root.is_dir():
         return snapshot
 
